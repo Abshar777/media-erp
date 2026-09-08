@@ -386,28 +386,92 @@ def copy_object(source_key: str, dest_key: str) -> bool:
         return False
 
 
-def ensure_bucket_cors(origins: list[str]) -> dict:
+def get_bucket_cors() -> list[dict]:
+    """Current CORS rules on the bucket; [] when unset or unreadable."""
+    if not settings.r2_enabled:
+        return []
+    try:
+        return _get_r2_client().get_bucket_cors(
+            Bucket=settings.r2_bucket
+        ).get("CORSRules", [])
+    except Exception:
+        return []          # NoSuchCORSConfiguration, or no permission to read
+
+
+def ensure_bucket_cors(
+    origins: list[str],
+    replace: bool = False,
+    remove: list[str] | None = None,
+) -> dict:
     """
-    Configure the R2 bucket's CORS policy so browsers on the given origins may
-    PUT (upload) directly via pre-signed URLs and GET/HEAD (view) objects.
-    Idempotent — safe to call repeatedly. No-op when R2 is not configured.
+    Allow browsers on `origins` to PUT (pre-signed upload) and GET/HEAD (view).
+
+    **This MERGES by default, and that is not a nicety — it is required.**
+    A bucket has exactly ONE CORS policy and `put_bucket_cors` REPLACES it
+    wholesale. `lms-delta` is shared with the Delta LMS, so writing only
+    mediaERP's origins would silently revoke the LMS's four origins *and* its
+    `Content-Range`/`Accept-Ranges` expose-headers, breaking video seeking
+    there. Merging keeps both tenants working no matter which project runs
+    its own CORS script last.
+
+    Pass replace=True only when you intend to discard the co-tenant's rules.
+
+    `remove` prunes specific stale origins (exact match) after the merge. An
+    origin that also appears in `origins` is never removed — that ordering is
+    what stops a stale-list copy/paste from revoking something still in use.
+
+    Idempotent. No-op when R2 is not configured.
     """
     if not settings.r2_enabled:
         return {"ok": False, "reason": "R2 not enabled"}
-    client = _get_r2_client()
-    cors = {
-        "CORSRules": [
-            {
-                "AllowedOrigins": origins,
-                "AllowedMethods": ["GET", "PUT", "HEAD"],
-                "AllowedHeaders": ["*"],
-                "ExposeHeaders": ["ETag"],
-                "MaxAgeSeconds": 3600,
-            }
-        ]
+
+    wanted_origins = [o.strip() for o in origins if o and o.strip()]
+    doomed = {o.strip() for o in (remove or []) if o and o.strip()} - set(wanted_origins)
+    existing = [] if replace else get_bucket_cors()
+
+    def _merge(field: str, extra: list[str]) -> list[str]:
+        """Union across every existing rule plus `extra`, order preserved."""
+        seen: list[str] = []
+        for rule in existing:
+            for v in rule.get(field, []) or []:
+                if v not in seen:
+                    seen.append(v)
+        for v in extra:
+            if v not in seen:
+                seen.append(v)
+        return seen
+
+    before = _merge("AllowedOrigins", [])
+    merged_origins = [o for o in _merge("AllowedOrigins", wanted_origins)
+                      if o not in doomed]
+    if not merged_origins:
+        # An empty origin list would lock every browser out of the bucket,
+        # including the co-tenant's. Refuse rather than write it.
+        return {"ok": False, "reason": "refusing to write an empty origin list",
+                "kept": before}
+    rule = {
+        "AllowedOrigins": merged_origins,
+        "AllowedMethods": _merge("AllowedMethods", ["GET", "PUT", "HEAD"]),
+        "AllowedHeaders": _merge("AllowedHeaders", ["*"]),
+        # ETag is needed for multipart; the Range/Content-Range trio is the
+        # LMS's, for HLS video seeking. Keep whatever is already there.
+        "ExposeHeaders": _merge("ExposeHeaders", ["ETag"]),
+        "MaxAgeSeconds": max(
+            [r.get("MaxAgeSeconds", 0) or 0 for r in existing] + [3600]
+        ),
     }
-    client.put_bucket_cors(Bucket=settings.r2_bucket, CORSConfiguration=cors)
-    return {"ok": True, "origins": origins}
+
+    _get_r2_client().put_bucket_cors(
+        Bucket=settings.r2_bucket, CORSConfiguration={"CORSRules": [rule]}
+    )
+    return {
+        "ok": True,
+        "mode": "replace" if replace else "merge",
+        "added": [o for o in merged_origins if o not in before],
+        "removed": [o for o in before if o in doomed],
+        "kept": [o for o in before if o in merged_origins],
+        "origins": merged_origins,
+    }
 
 
 def upload_bytes(
