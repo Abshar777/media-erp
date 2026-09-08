@@ -1,5 +1,11 @@
 # Web framework
 fastapi==0.115.6
+# Pinned explicitly, not left to fastapi's transitive range. This Python install
+# is shared with other Delta projects; one of them pulled starlette 1.6.0 in,
+# which removed `on_startup` from `Router.__init__` and made EVERY router in this
+# app raise TypeError on import — the backend could not boot at all. fastapi
+# 0.115.6 requires starlette>=0.40,<0.42.
+starlette==0.41.3
 uvicorn[standard]==0.32.1
 gunicorn==23.0.0
 

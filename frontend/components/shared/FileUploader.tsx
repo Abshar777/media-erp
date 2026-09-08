@@ -13,7 +13,9 @@ import {
   Upload, Loader2, X, Trash2, ExternalLink, Eye,
   File as FileIcon, FileText, FileVideo, FileAudio, ImageIcon,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { uploadFilesDirect, formatBytes, MAX_UPLOAD_BYTES } from "@/lib/directUpload";
+import { SignedImg } from "@/components/shared/SignedImg";
 import type { Attachment } from "@/types/project";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -74,6 +76,14 @@ export function FileUploader({
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState<Uploading[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const qc = useQueryClient();
+
+  // Thumbnails are signed URLs with a 1 h TTL. If one expires while the modal
+  // is open, refetch the queries that carry attachments so it re-signs.
+  const refreshSignedUrls = () => {
+    qc.invalidateQueries({ queryKey: ["projects"] });
+    qc.invalidateQueries({ queryKey: ["chat"] });
+  };
 
   const busy = uploading.length > 0;
   const atLimit = value.length + uploading.length >= maxFiles;
@@ -153,8 +163,20 @@ export function FileUploader({
                 )}
               >
                 {kind(a.content_type) === "image" ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={a.url} alt={a.filename} className="h-full w-full object-cover" />
+                  <SignedImg
+                    src={a.url}
+                    alt={a.filename}
+                    className="h-full w-full object-cover"
+                    onExpired={refreshSignedUrls}
+                    fallback={
+                      <div className="flex flex-col items-center justify-center gap-1 p-1 text-center">
+                        <TypeIcon contentType={a.content_type} className="size-6 text-muted-foreground" />
+                        <span className="line-clamp-2 break-all text-[9px] leading-tight text-muted-foreground">
+                          {a.filename}
+                        </span>
+                      </div>
+                    }
+                  />
                 ) : (
                   <div className="flex flex-col items-center justify-center gap-1 p-1 text-center">
                     <TypeIcon contentType={a.content_type} className="size-6 text-muted-foreground" />

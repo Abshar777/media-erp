@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 from app.utils.timezone import IST  # single source of truth for IST (UTC+05:30)
 from app.utils.timezone import utc_iso
+from app.utils.storage import canonicalize_attachments, sign_attachments
 
 _POLL_INTERVAL_SEC = 60
 _REPORT_HOUR_IST = 21  # 9 PM IST
@@ -49,7 +50,8 @@ def group_message_to_dict(doc: dict) -> dict:
         "from_user_name": doc.get("from_user_name", ""),
         "content": doc.get("content", ""),
         "is_system": bool(doc.get("is_system", False)),
-        "attachments": doc.get("attachments", []),
+        # Private bucket — attachments are signed per read (see utils/storage.py).
+        "attachments": sign_attachments(doc.get("attachments", [])),
         "task_ids": doc.get("task_ids", []),
         "created_at": utc_iso(doc.get("created_at")),
     }
@@ -184,7 +186,8 @@ async def save_group_message(
         "from_user_name": from_user_name,
         "content": content,
         "is_system": is_system,
-        "attachments": attachments or [],
+        # Persist `key`, not the read-time signed URL the client sent back.
+        "attachments": canonicalize_attachments(attachments),
         "task_ids": task_ids or [],
         "created_at": datetime.now(timezone.utc),
     }

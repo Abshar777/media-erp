@@ -1,3 +1,6 @@
+from app.utils.storage import sign_attachments
+
+
 def message_to_dict(doc: dict) -> dict:
     return {
         "id": str(doc["_id"]),
@@ -5,7 +8,8 @@ def message_to_dict(doc: dict) -> dict:
         "to_user_id": doc["to_user_id"],
         "content": doc["content"],
         "read": doc.get("read", False),
-        "attachments": doc.get("attachments", []),
+        # Private bucket — attachments are signed per read (see utils/storage.py).
+        "attachments": sign_attachments(doc.get("attachments", [])),
         "task_ids": doc.get("task_ids", []),
         "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None,
     }

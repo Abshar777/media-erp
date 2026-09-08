@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from bson import ObjectId
 from app.database import get_db
+from app.utils.storage import canonicalize_attachments
 
 
 async def get_messages(
@@ -37,7 +38,8 @@ async def save_message(
         "to_user_id": to_user_id,
         "content": content,
         "read": False,
-        "attachments": attachments or [],
+        # Persist `key`, not the read-time signed URL the client sent back.
+        "attachments": canonicalize_attachments(attachments),
         "task_ids": task_ids or [],
         "created_at": datetime.now(timezone.utc),
     }

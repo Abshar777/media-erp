@@ -10,6 +10,8 @@ from typing import Any
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.utils.storage import canonicalize_attachments, sign_attachments
+
 VALID_STATUSES = {"pending", "upcoming", "currently_working", "updation_needed"}
 VALID_PRIORITIES = {"low", "medium", "high"}
 
@@ -62,6 +64,11 @@ def _serialize(doc: dict) -> dict:
             {**e, "timestamp": _dt_to_utc_iso(e.get("timestamp"))}
             for e in out["history"]
         ]
+    # The R2 bucket is private — mint signed GET URLs for attachments. Every
+    # task read path (list, detail, leader queue, routing) funnels through here,
+    # and each has already run its own access check before calling us.
+    if out.get("attachments"):
+        out["attachments"] = sign_attachments(out["attachments"])
     return out
 
 
@@ -237,7 +244,9 @@ async def create_task(db: AsyncIOMotorDatabase, data: dict) -> dict:
         "assigned_to_name": data.get("assigned_to_name", ""),
         "due_date": data.get("due_date"),
         "team_id": data.get("team_id") or None,
-        "attachments": data.get("attachments") or [],
+        # Strip the read-time signed URLs the client round-tripped back to us —
+        # `key` is what we persist, `url` is re-signed on every read.
+        "attachments": canonicalize_attachments(data.get("attachments")),
         "created_by": actor_id,
         "created_at": now,
         "updated_at": now,
@@ -262,6 +271,8 @@ async def update_task(
         return None
 
     updates = {k: v for k, v in updates.items() if v is not None}
+    if "attachments" in updates:
+        updates["attachments"] = canonicalize_attachments(updates["attachments"])
     updates["updated_at"] = datetime.now(timezone.utc)
 
     result = await db["project_tasks"].find_one_and_update(

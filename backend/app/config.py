@@ -98,9 +98,25 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("r2_bucket", "r2_bucket_name"),
     )
-    # Public base URL for the bucket (R2 public dev URL or custom domain), e.g.
-    #   https://pub-xxxx.r2.dev   or   https://files.yourdomain.com
+    # LEGACY — public base URL for the bucket (R2 public dev URL or custom domain).
+    # The bucket is now PRIVATE, so URLs built from this value return 401. It is
+    # kept only so `key_from_url()` can recover a storage key from rows written
+    # while the bucket was public. Reads go through signed GETs — see
+    # app/utils/storage.py:presign_get.
     r2_public_url:        str = ""
+
+    # TTL (seconds) for read-time signed GET URLs. Long enough to view/download
+    # an attachment, short enough that a leaked URL expires quickly. Clamped
+    # 60 s … 24 h by the validator below.
+    r2_get_url_ttl:       int = 3600
+
+    # Root folder for everything mediaERP writes. The bucket is SHARED with the
+    # Delta LMS (which owns images/ documents/ hls/ videos/ kyc/ …), so all of
+    # our objects live under one namespace: mediaERP/<folder>/<file>. That keeps
+    # the two projects from colliding and — more importantly — means the LMS can
+    # exclude every mediaERP object from its unauthenticated /assets/* proxy by
+    # blocking a single prefix. Set to "" to write at the bucket root (legacy).
+    r2_root_prefix:       str = "mediaERP"
 
     # ── WhatsApp Cloud API ────────────────────────────────────────────────────
     whatsapp_phone_number_id: str = ""
@@ -160,6 +176,16 @@ class Settings(BaseSettings):
             self.linkedin_redirect_uri = f"{cb}/linkedin_ads/callback"
         if not self.tiktok_redirect_uri:
             self.tiktok_redirect_uri = f"{cb}/tiktok_ads/callback"
+
+        # Clamp the signed-URL TTL — a 0/negative value would mint URLs that are
+        # already expired, and an unbounded one defeats the point of signing.
+        self.r2_get_url_ttl = max(60, min(self.r2_get_url_ttl, 86_400))
+
+        # Normalise the root prefix to a bare segment: no leading/trailing
+        # slashes (they would produce "//" or an empty path segment in keys)
+        # and no traversal.
+        root = (self.r2_root_prefix or "").strip().strip("/")
+        self.r2_root_prefix = "" if ".." in root else root
 
         return self
 

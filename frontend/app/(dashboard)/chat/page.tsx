@@ -41,9 +41,11 @@ import {
   type ReportPeriod,
   type SendExtras,
 } from "@/hooks/useChat";
+import { useQueryClient } from "@tanstack/react-query";
 import { useUploadAttachments } from "@/hooks/useUpload";
 import { useTaskDetail } from "@/hooks/useProjects";
 import { TaskDetailModal } from "@/components/projects/TaskDetailModal";
+import { SignedImg } from "@/components/shared/SignedImg";
 import type { ChatAttachment, ChatGroup, ChatMessage, ChatUser, ConversationPair, GroupMessage, TaskRef } from "@/types/chat";
 import { fmtDate as fmtDateIST, fmtTime as fmtTimeIST, istDateKey, istTodayKey } from "@/lib/datetime";
 
@@ -149,15 +151,23 @@ function ChatTaskModal({ taskId, onClose }: { taskId: string; onClose: () => voi
 
 function MessageExtras({ attachments, tasks }: { attachments?: ChatAttachment[]; tasks?: TaskRef[] }) {
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const qc = useQueryClient();
   const hasAny = (attachments && attachments.length) || (tasks && tasks.length);
   if (!hasAny) return null;
+  // Attachment URLs are signed and expire (1 h). If one fails to load, refetch
+  // the chat queries so the backend re-signs and the image recovers itself.
+  const refreshSignedUrls = () => qc.invalidateQueries({ queryKey: ["chat"] });
   return (
     <div className="mt-1.5 space-y-1.5">
       {attachments?.map((a, i) =>
         isImage(a.content_type) ? (
           <a key={i} href={a.url} target="_blank" rel="noreferrer" className="block">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={a.url} alt={a.filename} className="max-h-52 max-w-full rounded-lg border object-cover" />
+            <SignedImg
+              src={a.url}
+              alt={a.filename}
+              className="max-h-52 max-w-full rounded-lg border object-cover"
+              onExpired={refreshSignedUrls}
+            />
           </a>
         ) : (
           <a

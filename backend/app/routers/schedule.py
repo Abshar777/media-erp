@@ -16,11 +16,26 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.utils.response import error_response, success_response
+from app.utils.storage import key_from_url, resolve_media_url
 from app.utils.timezone import utc_iso
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/schedule", tags=["schedule"])
+
+
+def _store_media_url(url: str | None) -> str | None:
+    """
+    Reduce an incoming media URL to a bare storage key before persisting.
+
+    The composer sends back the short-lived signed URL it was given; storing
+    that would leave a dead link in a post that publishes hours later. Keeping
+    the key means schedule_service can sign afresh at publish time. External
+    URLs are stored untouched.
+    """
+    if not url:
+        return url
+    return key_from_url(url) or url
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -69,8 +84,9 @@ def _serialize_post(doc: dict) -> dict:
         "connector_id": doc.get("connector_id", ""),
         "platform": doc.get("platform", ""),
         "caption": doc.get("caption", ""),
-        "image_url": doc.get("image_url"),
-        "video_url": doc.get("video_url"),
+        # Stored as a key; signed here so the composer can preview it.
+        "image_url": resolve_media_url(doc.get("image_url")),
+        "video_url": resolve_media_url(doc.get("video_url")),
         "scheduled_at": _iso(doc.get("scheduled_at")),
         "status": doc.get("status", "pending"),
         "published_at": _iso(doc.get("published_at")),
@@ -133,8 +149,8 @@ async def create_scheduled_post(
         "connector_id": body.connector_id,
         "platform": body.platform,
         "caption": body.caption,
-        "image_url": body.image_url,
-        "video_url": body.video_url,
+        "image_url": _store_media_url(body.image_url),
+        "video_url": _store_media_url(body.video_url),
         "scheduled_at": scheduled_dt,
         "status": "pending",
         "published_at": None,
@@ -264,9 +280,9 @@ async def update_scheduled_post(
     if body.caption is not None:
         updates["caption"] = body.caption
     if body.image_url is not None:
-        updates["image_url"] = body.image_url
+        updates["image_url"] = _store_media_url(body.image_url)
     if body.video_url is not None:
-        updates["video_url"] = body.video_url
+        updates["video_url"] = _store_media_url(body.video_url)
 
     await db["scheduled_posts"].update_one({"_id": oid}, {"$set": updates})
 

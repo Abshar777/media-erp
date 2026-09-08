@@ -392,3 +392,11 @@ different, valid token (proving `refreshAccessToken()` ran and
 `connect()` retried), and a message sent immediately afterward was found
 persisted in the real `messages` collection — the full recovery path works
 end-to-end, not just "the socket reconnects."
+
+
+### SignedImg (shared) — self-healing images for the private R2 bucket (2026-09-08)
+- **File:** `components/shared/SignedImg.tsx`
+- **Why:** attachment URLs are now short-lived signed GETs (1 h). A tab left open past the TTL holds expired URLs, so images 403 on load.
+- **What:** an `<img>` that, on load failure, calls `onExpired()` **once per src** to refetch the query that supplied the URL, then re-renders with the fresh one. A second failure for the same src renders the optional `fallback` instead — a genuinely missing object 404s forever and must not retry in a loop.
+- **Wired into:** `chat/page.tsx` `MessageExtras` (invalidates `["chat"]`) and `FileUploader` thumbnails (invalidates `["projects"]` + `["chat"]`, falling back to the file-type icon + filename).
+- **Also:** removed the dead `NEXT_PUBLIC_R2_PUBLIC_URL` from `frontend/.env` — it was set but never read by any client code, and the bucket is private now.

@@ -89,6 +89,14 @@ def _publish_post(db, post: dict):
 
     access_token = decrypt(connector["encrypted_access_token"])
 
+    # The bucket is private and this runs long after the post was scheduled, so
+    # sign the media NOW — a URL signed at schedule time would have expired.
+    # External URLs pass through unchanged.
+    from app.utils.storage import resolve_media_url
+    _MEDIA_TTL = 3600
+    image_url = resolve_media_url(post.get("image_url"), _MEDIA_TTL)
+    video_url = resolve_media_url(post.get("video_url"), _MEDIA_TTL)
+
     # Use asyncio.run to call async platform functions from sync context
     if platform == "instagram_login":
         ig_user_id = post.get("ig_user_id") or connector.get("platform_account_id")
@@ -99,8 +107,8 @@ def _publish_post(db, post: dict):
             ig_user_id=ig_user_id,
             access_token=access_token,
             caption=post.get("caption", ""),
-            image_url=post.get("image_url"),
-            video_url=post.get("video_url"),
+            image_url=image_url,
+            video_url=video_url,
         ))
     elif platform == "facebook_pages":
         page_id = post.get("page_id")
@@ -111,7 +119,7 @@ def _publish_post(db, post: dict):
             page_id=page_id,
             page_token=access_token,
             message=post.get("caption", ""),
-            image_url=post.get("image_url"),
+            image_url=image_url,
         ))
     else:
         raise ValueError(f"Unsupported platform for scheduling: {platform}")

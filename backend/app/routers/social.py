@@ -8,9 +8,16 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.services.connector_service import get_connector, get_decrypted_tokens
 from app.utils.response import error_response, success_response
+from app.utils.storage import resolve_media_url
 from app.utils.timezone import utc_iso
 
 router = APIRouter(prefix="/api/v1/social", tags=["social"])
+
+# Meta fetches image_url / video_url from its own servers, so the URL must be
+# reachable without our auth. The bucket is private, so we mint a signed GET at
+# publish time — Instagram's fetch (and video processing, up to ~90 s) happens
+# well inside the TTL. Nothing publishable is ever stored as a live URL.
+MEDIA_FETCH_TTL_SECS = 3600
 
 
 def _safe_exc(exc: Exception) -> str:
@@ -125,7 +132,7 @@ async def publish_facebook_post(
             page_token=page["access_token"],
             message=body.message,
             link=body.link,
-            image_url=body.image_url,
+            image_url=resolve_media_url(body.image_url, MEDIA_FETCH_TTL_SECS),
         )
     except Exception as exc:
         return error_response(f"Failed to publish post: {_safe_exc(exc)}", status_code=502)
@@ -204,7 +211,8 @@ async def publish_instagram_post(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Publish a post to Instagram. image_url must be a public URL."""
+    """Publish a post to Instagram. Our own R2 media is signed at publish time
+    so Instagram's servers can fetch it; external URLs pass through."""
     user_id = str(current_user["_id"])
     connector = await get_connector(body.connector_id, user_id, db)
     if not connector:
@@ -220,8 +228,8 @@ async def publish_instagram_post(
             ig_id=body.ig_id,
             page_token=body.page_token,
             caption=body.caption,
-            image_url=body.image_url,
-            video_url=body.video_url,
+            image_url=resolve_media_url(body.image_url, MEDIA_FETCH_TTL_SECS),
+            video_url=resolve_media_url(body.video_url, MEDIA_FETCH_TTL_SECS),
         )
     except ValueError as exc:
         return error_response(str(exc), status_code=400)
@@ -429,7 +437,8 @@ async def publish_instagram_login_post(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Publish a post via Instagram Login. image_url must be a public URL."""
+    """Publish a post via Instagram Login. Our own R2 media is signed at publish
+    time so Instagram's servers can fetch it; external URLs pass through."""
     user_id = str(current_user["_id"])
     connector = await get_connector(body.connector_id, user_id, db)
     if not connector:
@@ -450,8 +459,8 @@ async def publish_instagram_login_post(
             ig_user_id=ig_user_id,
             access_token=tokens["access_token"],
             caption=body.caption,
-            image_url=body.image_url,
-            video_url=body.video_url,
+            image_url=resolve_media_url(body.image_url, MEDIA_FETCH_TTL_SECS),
+            video_url=resolve_media_url(body.video_url, MEDIA_FETCH_TTL_SECS),
         )
     except ValueError as exc:
         return error_response(str(exc), status_code=400)
