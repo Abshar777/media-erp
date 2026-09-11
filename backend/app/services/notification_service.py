@@ -72,6 +72,23 @@ async def push_notification(
         except Exception:
             pass
 
+        # Web push — reaches a browser that is closed or has the app unloaded,
+        # which the socket above cannot. Backgrounded: pywebpush is blocking and
+        # a user may have several devices, so it must not hold up the request.
+        try:
+            from app.services import web_push_service
+            asyncio.create_task(
+                web_push_service.send_to_user(db, user_id, {
+                    "id": str(result.inserted_id),
+                    "type": notification_type,
+                    "title": title,
+                    "message": message,
+                    "metadata": metadata or {},
+                })
+            )
+        except Exception:
+            pass
+
         # Fire email in background — never blocks the request
         asyncio.create_task(
             _send_email_if_opted_in(db, user_id, notification_type, title, message, metadata)

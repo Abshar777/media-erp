@@ -13,7 +13,11 @@ import {
 import { fadeVariants, listItemVariants, listVariants } from "@/lib/animations";
 import { useMarkAllRead, useMarkRead, useNotifications } from "@/hooks/useNotifications";
 import type { Notification } from "@/types/notification";
-import { desktopPermission, requestDesktopPermission } from "@/lib/browserNotifications";
+import {
+  desktopPermission,
+  requestDesktopPermission,
+  subscribeToPush,
+} from "@/lib/browserNotifications";
 import { cn } from "@/lib/utils";
 
 // ── Relative time formatter ───────────────────────────────────────────────────
@@ -109,7 +113,13 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   // Read on mount only — Notification.permission isn't available during SSR.
   const [alertPerm, setAlertPerm] = useState<string>("unsupported");
-  useEffect(() => setAlertPerm(desktopPermission()), []);
+  useEffect(() => {
+    const perm = desktopPermission();
+    setAlertPerm(perm);
+    // Someone who granted permission before web push existed has no
+    // subscription yet; subscribeToPush is idempotent, so just try.
+    if (perm === "granted") void subscribeToPush();
+  }, []);
   const ref = useRef<HTMLDivElement>(null);
   const { data, isLoading } = useNotifications(30);
   const markAll = useMarkAllRead();
@@ -191,7 +201,13 @@ export function NotificationBell() {
             {alertPerm === "default" && (
               <button
                 type="button"
-                onClick={async () => setAlertPerm(await requestDesktopPermission())}
+                onClick={async () => {
+                  const perm = await requestDesktopPermission();
+                  setAlertPerm(perm);
+                  // Also register for Web Push, so alerts still arrive once
+                  // every tab is closed. No-ops if the server has no VAPID keys.
+                  if (perm === "granted") void subscribeToPush();
+                }}
                 className="flex w-full items-center gap-2 border-b bg-primary/5 px-4 py-2.5 text-left text-[11px] text-primary hover:bg-primary/10 transition-colors"
               >
                 <BellRing className="size-3.5 shrink-0" />

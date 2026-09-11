@@ -141,3 +141,88 @@ export function showDesktopNotification(n: {
     /* some browsers throw when constructing off a user gesture — ignore */
   }
 }
+
+// ── Web Push ──────────────────────────────────────────────────────────────────
+
+/**
+ * Web Push adds what the Notification API above cannot do: alert someone with
+ * the browser closed. It needs the service worker (already registered for the
+ * PWA) plus a per-device subscription stored server-side.
+ */
+
+import api from "@/lib/axios";
+
+/** VAPID keys travel as base64url; PushManager wants raw bytes. */
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+  const raw = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+export function pushSupported(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window
+  );
+}
+
+/**
+ * Subscribe this browser. Safe to call repeatedly — an existing subscription is
+ * reused and simply re-sent, since the server upserts on endpoint.
+ * Returns false when push is unavailable or the server has no VAPID keys.
+ */
+export async function subscribeToPush(): Promise<boolean> {
+  if (!pushSupported()) return false;
+  if (desktopPermission() !== "granted") return false;
+
+  try {
+    const { data } = await api.get<{ data: { public_key: string; enabled: boolean } }>(
+      "/push/public-key"
+    );
+    const key = data.data?.public_key;
+    if (!data.data?.enabled || !key) return false;   // server-side push is off
+
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+
+    // A subscription made against a different VAPID key can never receive our
+    // pushes, so replace it rather than silently keeping a dead one.
+    if (sub) {
+      const existing = sub.options?.applicationServerKey;
+      const wanted = urlBase64ToUint8Array(key);
+      const same =
+        existing &&
+        new Uint8Array(existing).length === wanted.length &&
+        new Uint8Array(existing).every((b, i) => b === wanted[i]);
+      if (!same) {
+        await sub.unsubscribe().catch(() => {});
+        sub = null;
+      }
+    }
+
+    sub ??= await reg.pushManager.subscribe({
+      userVisibleOnly: true,      // required by Chrome; we always show one
+      applicationServerKey: urlBase64ToUint8Array(key) as BufferSource,
+    });
+
+    await api.post("/push/subscribe", sub.toJSON());
+    return true;
+  } catch {
+    // Push is an enhancement — the socket and bell still work without it.
+    return false;
+  }
+}
+
+export async function unsubscribeFromPush(): Promise<void> {
+  if (!pushSupported()) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return;
+    await api.delete("/push/subscribe", { data: { endpoint: sub.endpoint } });
+    await sub.unsubscribe();
+  } catch {
+    /* leaving a stale subscription is harmless — the server prunes on 410 */
+  }
+}

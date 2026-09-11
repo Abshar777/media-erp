@@ -124,6 +124,15 @@ class Settings(BaseSettings):
     whatsapp_business_account_id: str = ""
     whatsapp_api_version: str = "v21.0"
 
+    # ── Web Push (VAPID) ──────────────────────────────────────────────────────
+    # Generate a pair once and keep it stable: rotating the public key
+    # invalidates every stored browser subscription. Leave empty to disable
+    # web push entirely — the socket and the bell keep working regardless.
+    vapid_public_key:  str = ""
+    vapid_private_key: str = ""
+    # "mailto:" contact the push service can reach you on, per RFC 8292.
+    vapid_subject:     str = "mailto:admin@deltainstitutions.com"
+
     # ── Stripe ────────────────────────────────────────────────────────────────
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
@@ -135,6 +144,11 @@ class Settings(BaseSettings):
     stripe_price_enterprise_yearly: str = ""
 
     model_config = {"env_file": str(_ENV_FILE), "case_sensitive": False, "extra": "ignore"}
+
+    @property
+    def web_push_enabled(self) -> bool:
+        """True only when both halves of the VAPID pair are configured."""
+        return bool(self.vapid_public_key and self.vapid_private_key)
 
     @property
     def r2_enabled(self) -> bool:
