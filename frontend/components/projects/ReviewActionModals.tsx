@@ -10,6 +10,7 @@
  */
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { CheckCircle2, RotateCcw, Loader2, X, ChevronDown, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,7 @@ import type { Task, UpdateTaskPayload } from "@/types/project";
 import { toast } from "sonner";
 
 function Shell({
-  title, icon, onClose, children, footer, wide,
+  title, icon, onClose, children, footer, wide, onSubmit,
 }: {
   title: string;
   icon: React.ReactNode;
@@ -27,8 +28,16 @@ function Shell({
   children: React.ReactNode;
   footer: React.ReactNode;
   wide?: boolean;
+  /** When given, the panel is a <form> and this runs on submit (Enter included). */
+  onSubmit?: (e: React.FormEvent) => void;
 }) {
-  return (
+  // The panel is a <form> only when a submit handler is supplied. It must live
+  // INSIDE the portal: a submit button rendered through a portal is no longer a
+  // DOM descendant of a <form> left behind in the original tree, so native
+  // submission would never fire.
+  const Panel = onSubmit ? "form" : "div";
+
+  const overlay = (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
@@ -36,20 +45,30 @@ function Shell({
         exit={{ opacity: 0, scale: 0.95 }}
         className={`w-full ${wide ? "max-w-md" : "max-w-sm"} rounded-2xl border bg-card shadow-2xl overflow-hidden`}
       >
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div className="flex items-center gap-2">
-            {icon}
-            <h2 className="text-sm font-semibold">{title}</h2>
+        <Panel onSubmit={onSubmit}>
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <div className="flex items-center gap-2">
+              {icon}
+              <h2 className="text-sm font-semibold">{title}</h2>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-md p-1 hover:bg-muted transition-colors">
+              <X className="size-4" />
+            </button>
           </div>
-          <button onClick={onClose} className="rounded-md p-1 hover:bg-muted transition-colors">
-            <X className="size-4" />
-          </button>
-        </div>
-        <div className="p-5 space-y-4">{children}</div>
-        <div className="flex justify-end gap-3 border-t px-5 py-4">{footer}</div>
+          <div className="p-5 space-y-4">{children}</div>
+          <div className="flex justify-end gap-3 border-t px-5 py-4">{footer}</div>
+        </Panel>
       </motion.div>
     </div>
   );
+
+  // Portal to <body>. KanbanCard sets `transform` / `will-change: transform`
+  // (dnd-kit), and either one makes the card a containing block for
+  // position:fixed descendants — which pinned this overlay inside the card
+  // instead of covering the viewport.
+  return typeof document === "undefined"
+    ? overlay
+    : createPortal(overlay, document.body);
 }
 
 // ── Approve (+ optional routing) ──────────────────────────────────────────────
@@ -215,9 +234,9 @@ export function ReeditModal({
   }
 
   return (
-    <form onSubmit={submit}>
       <Shell
         wide
+        onSubmit={submit}
         title="Send to Reedit"
         icon={<RotateCcw className="size-4 text-rose-500" />}
         onClose={onClose}
@@ -252,6 +271,5 @@ export function ReeditModal({
           />
         </div>
       </Shell>
-    </form>
   );
 }
