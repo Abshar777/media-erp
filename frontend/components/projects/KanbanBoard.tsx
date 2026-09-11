@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { useUpdateTask } from "@/hooks/useProjects";
 import { KanbanCard } from "./KanbanCard";
 import { AddTaskModal } from "./AddTaskModal";
+import { ApproveRouteModal, ReeditModal } from "./ReviewActionModals";
 import { toast } from "sonner";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import type { Task, TaskStatus, BoardColumn } from "@/types/project";
@@ -213,6 +214,10 @@ export function KanbanBoard({
   const [overColumnId, setOverColumnId] = useState<TaskStatus | null>(null);
   const [addOpen,      setAddOpen]      = useState(false);
   const [addStatus,    setAddStatus]    = useState<TaskStatus>("pending");
+  // A pending_review exit is confirmed in a modal, never by the drop itself.
+  const [reviewAction, setReviewAction] = useState<
+    { task: Task; to: "approved" | "reedit" } | null
+  >(null);
 
   const draggingRef = useRef(false);
   const serverRef   = useRef(tasks);
@@ -298,6 +303,15 @@ export function KanbanBoard({
       return;
     }
 
+    // Leaving pending_review needs a decision (route the approval / give a
+    // reedit reason), so hand off to the modal rather than committing the drop.
+    // Snap the card back first — the modal's mutation is what moves it.
+    if (draggedTask.status === "pending_review") {
+      syncFromServer();
+      setReviewAction({ task: draggedTask, to: targetStatus as "approved" | "reedit" });
+      return;
+    }
+
     // Optimistic update. If a server sync was deferred during the drag, start
     // from that fresh list (so tasks added mid-drag appear) and re-apply the
     // optimistic status on top — rather than discarding either one.
@@ -372,6 +386,15 @@ export function KanbanBoard({
       </DndContext>
 
       <AddTaskModal open={addOpen} onClose={() => setAddOpen(false)} defaultStatus={addStatus} />
+
+      <AnimatePresence>
+        {reviewAction?.to === "approved" && (
+          <ApproveRouteModal task={reviewAction.task} onClose={() => setReviewAction(null)} />
+        )}
+        {reviewAction?.to === "reedit" && (
+          <ReeditModal task={reviewAction.task} onClose={() => setReviewAction(null)} />
+        )}
+      </AnimatePresence>
     </>
   );
 }

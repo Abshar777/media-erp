@@ -9,6 +9,9 @@ import type { Task, TaskPriority, TaskStatus } from "@/types/project";
 import { BOARD_COLUMNS, PRIORITY_META, isTaskOverdue, assigneeLabel, statusStyles, allowedColumns } from "@/types/project";
 import { listItemVariants, listVariants } from "@/lib/animations";
 import { fmtDate, fmtDateOnly } from "@/lib/datetime";
+import { useCanApprove } from "@/hooks/useCanApprove";
+import { ApproveRouteModal, ReeditModal } from "./ReviewActionModals";
+import { toast } from "sonner";
 
 type SortKey = "title" | "status" | "priority" | "due_date" | "created_at";
 
@@ -21,6 +24,23 @@ export function TaskTable({ tasks }: Props) {
   const deleteTask  = useDeleteTask();
   const statuses = BOARD_COLUMNS;
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const canApprove = useCanApprove();
+  // Leaving pending_review is confirmed in a modal, as on the board.
+  const [reviewAction, setReviewAction] = useState<
+    { task: Task; to: "approved" | "reedit" } | null
+  >(null);
+
+  function changeStatus(task: Task, next: TaskStatus) {
+    if (task.status === "pending_review" && (next === "approved" || next === "reedit")) {
+      if (!canApprove(task)) {
+        toast.error("Only a team leader can move tasks out of Pending Review.");
+        return;
+      }
+      setReviewAction({ task, to: next });
+      return;
+    }
+    updateTask.mutate({ id: task.id, payload: { status: next } });
+  }
 
   function toggleSort(k: SortKey) {
     if (k === sortKey) setSortAsc(p => !p);
@@ -124,9 +144,7 @@ export function TaskTable({ tasks }: Props) {
                   <td className="px-4 py-3">
                     <select
                       value={task.status}
-                      onChange={e =>
-                        updateTask.mutate({ id: task.id, payload: { status: e.target.value as TaskStatus } })
-                      }
+                      onChange={e => changeStatus(task, e.target.value as TaskStatus)}
                       style={colStyle}
                       className="rounded-full px-2 py-0.5 text-[11px] font-semibold border-0 outline-none cursor-pointer"
                     >
@@ -202,6 +220,15 @@ export function TaskTable({ tasks }: Props) {
           </AnimatePresence>
         </tbody>
       </table>
+
+      <AnimatePresence>
+        {reviewAction?.to === "approved" && (
+          <ApproveRouteModal task={reviewAction.task} onClose={() => setReviewAction(null)} />
+        )}
+        {reviewAction?.to === "reedit" && (
+          <ReeditModal task={reviewAction.task} onClose={() => setReviewAction(null)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

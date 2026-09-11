@@ -1,16 +1,16 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import {
   ClipboardCheck, CheckCircle2, RotateCcw, Inbox, UserPlus,
-  Loader2, X, Calendar, Crown, ChevronDown, Paperclip,
+  Loader2, Calendar, Crown, ChevronDown, Paperclip,
   MessageSquare, Eye, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLeaderQueue, useUpdateTask, type LeaderTeam } from "@/hooks/useProjects";
-import { useAllTeams } from "@/hooks/useTeams";
 import { TaskDetailModal } from "@/components/projects/TaskDetailModal";
+import { ApproveRouteModal, ReeditModal } from "@/components/projects/ReviewActionModals";
 import { useAuthStore } from "@/stores/authStore";
 import type { Task } from "@/types/project";
 import { PRIORITY_META, isTaskOverdue, assigneeLabel } from "@/types/project";
@@ -19,136 +19,6 @@ import { toast } from "sonner";
 import { fmtDateOnly } from "@/lib/datetime";
 
 type Tab = "review" | "assign" | "reedit";
-
-// ── Reedit reason modal ───────────────────────────────────────────────────────
-
-function ReeditModal({ task, onClose }: { task: Task; onClose: () => void }) {
-  const [reason, setReason] = useState("");
-  const update = useUpdateTask();
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!reason.trim()) return;
-    const payload: Record<string, string> = { status: "reedit", reedit_reason: reason.trim() };
-    await update.mutateAsync({ id: task.id, payload });
-    toast.success("Task sent to reedit");
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-        className="w-full max-w-md rounded-2xl border bg-card shadow-2xl overflow-hidden"
-      >
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div className="flex items-center gap-2">
-            <RotateCcw className="size-4 text-rose-500" />
-            <h2 className="text-sm font-semibold">Send to Reedit</h2>
-          </div>
-          <button onClick={onClose} className="rounded-md p-1 hover:bg-muted transition-colors">
-            <X className="size-4" />
-          </button>
-        </div>
-        <form onSubmit={submit} className="p-5 space-y-4">
-          <p className="text-xs text-muted-foreground">
-            Task: <span className="font-medium text-foreground">{task.title}</span>
-          </p>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Reason for reedit *</label>
-            <textarea
-              autoFocus value={reason} onChange={(e) => setReason(e.target.value)} rows={4}
-              placeholder="Explain what needs to change so the original team knows how to fix it…"
-              className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-              required
-            />
-          </div>
-          <div className="flex justify-end gap-3 pt-1">
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={!reason.trim() || update.isPending}
-              className="bg-rose-600 hover:bg-rose-700 text-white">
-              {update.isPending ? <Loader2 className="size-4 animate-spin mr-1.5" /> : <RotateCcw className="size-4 mr-1.5" />}
-              Send to Reedit
-            </Button>
-          </div>
-        </form>
-      </motion.div>
-    </div>
-  );
-}
-
-// ── Approve + route modal ─────────────────────────────────────────────────────
-
-function ApproveRouteModal({ task, onClose }: { task: Task; onClose: () => void }) {
-  const [destTeamId, setDestTeamId] = useState("");
-  const update = useUpdateTask();
-  const { data: allTeams = [] } = useAllTeams();
-
-  async function confirm() {
-    const payload: Record<string, string> = { status: "approved" };
-    if (destTeamId) payload.destination_team_id = destTeamId;
-    await update.mutateAsync({ id: task.id, payload });
-    if (destTeamId) {
-      const teamName = allTeams.find((t) => t.id === destTeamId)?.name ?? "the selected team";
-      toast.success(`Approved — sent to ${teamName}'s Leader Desk`);
-    } else {
-      toast.success("Task approved");
-    }
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-        className="w-full max-w-sm rounded-2xl border bg-card shadow-2xl overflow-hidden"
-      >
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="size-4 text-green-600" />
-            <h2 className="text-sm font-semibold">Approve Task</h2>
-          </div>
-          <button onClick={onClose} className="rounded-md p-1 hover:bg-muted"><X className="size-4" /></button>
-        </div>
-        <div className="p-5 space-y-4">
-          <p className="text-xs text-muted-foreground">
-            Task: <span className="font-medium text-foreground">{task.title}</span>
-          </p>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">
-              Route to team <span className="text-muted-foreground font-normal">(optional)</span>
-            </label>
-            <p className="text-xs text-muted-foreground">
-              A copy of this task will appear in the selected team&apos;s incoming queue.
-            </p>
-            <div className="relative">
-              <select
-                value={destTeamId}
-                onChange={(e) => setDestTeamId(e.target.value)}
-                className="w-full appearance-none rounded-lg border bg-background px-3 py-2 pr-8 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-              >
-                <option value="">No routing — approve only</option>
-                {allTeams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-3 border-t px-5 py-4">
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={confirm} disabled={update.isPending} className="bg-green-600 hover:bg-green-700 text-white">
-            {update.isPending
-              ? <Loader2 className="size-4 animate-spin mr-1.5" />
-              : <CheckCircle2 className="size-4 mr-1.5" />}
-            {destTeamId ? "Approve & Route" : "Approve"}
-          </Button>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
 
 // ── Review card ───────────────────────────────────────────────────────────────
 

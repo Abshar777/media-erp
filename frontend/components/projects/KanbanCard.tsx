@@ -11,6 +11,7 @@ import type { Task, TaskStatus } from "@/types/project";
 import { BOARD_COLUMNS, PRIORITY_META, allowedColumns } from "@/types/project";
 import { useTaskTimer, formatSeconds, formatSecondsHMS } from "@/hooks/useTaskTimer";
 import { TaskDetailModal } from "./TaskDetailModal";
+import { ApproveRouteModal, ReeditModal } from "./ReviewActionModals";
 
 interface Props {
   task: Task;
@@ -61,7 +62,15 @@ export function KanbanCard({ task, overlay = false }: Props) {
   const col        = BOARD_COLUMNS.find((c) => c.key === task.status);
   const accentColor = col?.color ?? "#64748b";
 
+  // Leaving pending_review is a decision (route the approval / give a reedit
+  // reason) — confirm it in the same modal the Leader Desk uses.
+  const [reviewTo, setReviewTo] = useState<"approved" | "reedit" | null>(null);
+
   function handleStatusChange(s: TaskStatus) {
+    if (task.status === "pending_review" && (s === "approved" || s === "reedit")) {
+      setReviewTo(s);
+      return;
+    }
     updateTask.mutate({ id: task.id, payload: { status: s } });
   }
 
@@ -222,6 +231,13 @@ export function KanbanCard({ task, overlay = false }: Props) {
 
       {detailOpen && (
         <TaskDetailModal task={task} onClose={() => setDetailOpen(false)} />
+      )}
+
+      {reviewTo === "approved" && (
+        <ApproveRouteModal task={task} onClose={() => setReviewTo(null)} />
+      )}
+      {reviewTo === "reedit" && (
+        <ReeditModal task={task} onClose={() => setReviewTo(null)} />
       )}
     </div>
   );

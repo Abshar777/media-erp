@@ -123,6 +123,10 @@ export interface UpdateTaskPayload {
   attachments?: Attachment[];
   reedit_reason?: string;
   destination_team_id?: string;
+  /** Assign the routed copy to this specific person in the destination team.
+   *  Backend: app/routers/projects.py (next_leader_id / next_leader_name). */
+  next_leader_id?: string;
+  next_leader_name?: string;
   caption?: string;
 }
 
