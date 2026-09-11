@@ -12,12 +12,78 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { CheckCircle2, RotateCcw, Loader2, X, ChevronDown, Crown, AlertTriangle } from "lucide-react";
+import {
+  CheckCircle2, RotateCcw, Loader2, X, ChevronDown, Crown, AlertTriangle,
+  Users, UserPlus, Send, CalendarDays, ShieldCheck,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask } from "@/hooks/useProjects";
 import { useAllTeams, useTeam } from "@/hooks/useTeams";
 import type { Task, UpdateTaskPayload } from "@/types/project";
+import { PRIORITY_META, assigneeLabel } from "@/types/project";
+import { fmtDateOnly } from "@/lib/datetime";
 import { toast } from "sonner";
+
+// ── Task context ──────────────────────────────────────────────────────────────
+
+/**
+ * The facts a reviewer needs before deciding, without leaving the modal:
+ * who raised it, who did the work and what they said about it, how urgent it
+ * is, where it currently sits, and who is allowed to sign it off.
+ */
+function TaskContext({ task, teamName }: { task: Task; teamName?: string }) {
+  const priority = PRIORITY_META[task.priority] ?? PRIORITY_META.medium;
+  // The creator is stored as an id; its display name only exists on the
+  // "created" history entry, which every task gets at insert time.
+  const creator = task.history?.find((h) => h.action === "created")?.actor_name;
+  const submitter = assigneeLabel(task);
+
+  return (
+    <div className="rounded-xl border bg-muted/30 p-3 space-y-2">
+      <div className="flex items-start gap-2">
+        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold shrink-0", priority.color)}>
+          {priority.label}
+        </span>
+        <p className="text-sm font-medium leading-snug">{task.title}</p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        {teamName && (
+          <span className="flex items-center gap-1">
+            <Users className="size-3" />
+            {teamName}
+            {task.former_team_name && (
+              <span className="text-amber-600"> · routed from {task.former_team_name}</span>
+            )}
+          </span>
+        )}
+        {creator && (
+          <span className="flex items-center gap-1">
+            <UserPlus className="size-3" /> Created by {creator}
+            {task.created_at && <> · {fmtDateOnly(task.created_at)}</>}
+          </span>
+        )}
+        {submitter && (
+          <span className="flex items-center gap-1">
+            <Send className="size-3" /> Submitted by {submitter}
+          </span>
+        )}
+        {task.due_date && (
+          <span className="flex items-center gap-1">
+            <CalendarDays className="size-3" /> Due {fmtDateOnly(task.due_date)}
+          </span>
+        )}
+      </div>
+
+      {task.caption && (
+        <p className="rounded-lg border-l-2 border-primary/40 bg-background/60 px-2.5 py-1.5 text-xs italic text-foreground/80">
+          &ldquo;{task.caption}&rdquo;
+        </p>
+      )}
+    </div>
+  );
+}
 
 function Shell({
   title, icon, onClose, children, footer, wide, onSubmit,
@@ -43,10 +109,12 @@ function Shell({
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className={`w-full ${wide ? "max-w-md" : "max-w-sm"} rounded-2xl border bg-card shadow-2xl overflow-hidden`}
+        className={`w-full ${wide ? "max-w-md" : "max-w-sm"} max-h-[90vh] flex flex-col rounded-2xl border bg-card shadow-2xl overflow-hidden`}
       >
-        <Panel onSubmit={onSubmit}>
-          <div className="flex items-center justify-between border-b px-5 py-4">
+        {/* Header and footer stay pinned; only the body scrolls, so a tall task
+            context can never push the Approve button off a short screen. */}
+        <Panel onSubmit={onSubmit} className="flex flex-col min-h-0 flex-1">
+          <div className="flex items-center justify-between border-b px-5 py-4 shrink-0">
             <div className="flex items-center gap-2">
               {icon}
               <h2 className="text-sm font-semibold">{title}</h2>
@@ -55,8 +123,8 @@ function Shell({
               <X className="size-4" />
             </button>
           </div>
-          <div className="p-5 space-y-4">{children}</div>
-          <div className="flex justify-end gap-3 border-t px-5 py-4">{footer}</div>
+          <div className="flex-1 overflow-y-auto p-5 space-y-4">{children}</div>
+          <div className="flex justify-end gap-3 border-t px-5 py-4 shrink-0">{footer}</div>
         </Panel>
       </motion.div>
     </div>
@@ -90,6 +158,7 @@ export function ApproveRouteModal({
   // on an empty id, so picking "no routing" costs no request.
   const { data: destTeam, isLoading: membersLoading } = useTeam(destTeamId);
   const members = destTeam?.members ?? [];
+  const ownTeamName = allTeams.find((t) => t.id === task.team_id)?.name;
 
   function pickTeam(id: string) {
     setDestTeamId(id);
@@ -151,8 +220,19 @@ export function ApproveRouteModal({
         </>
       }
     >
-      <p className="text-xs text-muted-foreground">
-        Task: <span className="font-medium text-foreground">{task.title}</span>
+      <TaskContext task={task} teamName={ownTeamName} />
+
+      {/* Who may sign THIS task off. Read-only: you are approving it in this
+          same click, so its approver can never be used afterwards — showing the
+          rule is useful, offering a control here would be a no-op. */}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <ShieldCheck className="size-3.5 shrink-0 text-green-600" />
+        Approval by{" "}
+        <span className="font-medium text-foreground">
+          {task.approver_name
+            ? `${task.approver_name} (named approver)`
+            : "this team's leaders"}
+        </span>
       </p>
 
       <div className="space-y-1.5">
@@ -267,6 +347,8 @@ export function ReeditModal({
 }) {
   const [reason, setReason] = useState("");
   const update = useUpdateTask();
+  const { data: allTeams = [] } = useAllTeams();
+  const teamName = allTeams.find((t) => t.id === task.team_id)?.name;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -303,9 +385,7 @@ export function ReeditModal({
           </>
         }
       >
-        <p className="text-xs text-muted-foreground">
-          Task: <span className="font-medium text-foreground">{task.title}</span>
-        </p>
+        <TaskContext task={task} teamName={teamName} />
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Reason</label>
           <textarea
