@@ -28,6 +28,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   const [priority, setPriority]     = useState<TaskPriority>("medium");
   const [teamId, setTeamId]         = useState(defaultTeamId);
   const [assignedTo, setAssignedTo] = useState("");
+  const [approverId, setApproverId] = useState("");
   const [dueDate, setDueDate]       = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
@@ -63,10 +64,22 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
     return (usersData?.users ?? []).map((u) => ({ id: u.id, name: u.name || u.email }));
   }, [teamId, teamDetail, usersData]);
 
+  // Approver candidates come from the team's own member list — the server
+  // rejects anyone outside it (workflow.is_team_member).
+  const approverOptions = useMemo(() => {
+    if (!teamId || !teamDetail?.members) return [];
+    return teamDetail.members.map((m) => ({
+      id: m.user_id,
+      name: m.name || m.email,
+      role: m.role,
+      designation: m.designation,
+    }));
+  }, [teamId, teamDetail]);
+
   function reset() {
     setTitle(""); setDesc(""); setPriority("medium");
     setTeamId(defaultTeamId);
-    setAssignedTo(""); setDueDate(""); setAttachments([]);
+    setAssignedTo(""); setApproverId(""); setDueDate(""); setAttachments([]);
     setShowLinkForm(false); setLinkUrl(""); setLinkLabel("");
   }
 
@@ -118,6 +131,14 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
       assigned_to_name: finalAssigneeName,
       due_date: dueDate || null,
       attachments,
+      // Only send when the user may actually set it; the server enforces the
+      // same rule and would 403 otherwise.
+      ...(canAssignOthers && approverId
+        ? {
+            approver_id: approverId,
+            approver_name: approverOptions.find((o) => o.id === approverId)?.name ?? "",
+          }
+        : {}),
     });
     close();
   }
@@ -258,6 +279,37 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                   />
                 </div>
               </div>
+
+              {/* Approver — leader/admin only, matching the server gate */}
+              {canAssignOthers && teamId && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Approved By
+                  </label>
+                  <select
+                    value={approverId}
+                    onChange={e => setApproverId(e.target.value)}
+                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
+                  >
+                    <option value="">Team leaders only (default)</option>
+                    {approverOptions.map(o => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}{o.role === "leader" ? " · Leader" : ""}
+                        {o.designation ? ` — ${o.designation}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground">
+                    Lets a chosen member approve this task, not just team leaders.
+                    Leaders keep their approval rights either way.
+                  </p>
+                  {approverId && approverId === assignedTo && (
+                    <p className="text-[11px] text-amber-600">
+                      This person would approve their own work.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Attachments */}
               <div className="space-y-2">

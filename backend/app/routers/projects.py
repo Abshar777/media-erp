@@ -151,6 +151,16 @@ async def _fire_notifications(
         for lid in leader_ids:
             await push_notification(db, lid, ntype, ntitle, nmsg, meta)
 
+    # A named approver may be an ordinary member, so they are not in leader_ids
+    # and would otherwise never hear that work is waiting on them.
+    if event == "pending_review":
+        approver_id = task.get("approver_id") or ""
+        if approver_id and approver_id != actor_id and approver_id not in leader_ids:
+            await push_notification(
+                db, approver_id, "pending_review", "Task awaiting your approval",
+                f'{assigned_name} submitted "{task_title}" for your approval.', meta,
+            )
+
     # ── 3. Notify elevated roles (Admin, Coordinator, Super Admin) ────────────
     # "created" — new task in any team (so admins can see it in Assign Work)
     # "pending_review" / "approved" / "reedit" — workflow oversight
@@ -359,6 +369,26 @@ async def add_task(
                 status_code=422,
             )
 
+    # ── Named approver ────────────────────────────────────────────────────────
+    # Designating an approver grants approval rights, so it is a leader/admin
+    # action. A member creating their own task must never be able to name
+    # themselves approver — that would let them approve their own work.
+    approver_id = (data.get("approver_id") or "").strip()
+    if approver_id:
+        if not await workflow.can_assign_to_others(current_user, data.get("team_id"), db):
+            return error_response(
+                "Only a team leader can choose who approves a task.", status_code=403
+            )
+        if not await workflow.is_team_member(db, data["team_id"], approver_id):
+            return error_response(
+                "The approver must be a leader or member of the selected team.",
+                status_code=422,
+            )
+        data["approver_id"] = approver_id
+    else:
+        data.pop("approver_id", None)
+        data.pop("approver_name", None)
+
     task = await create_task(db, data)
 
     await _fire_notifications(
@@ -526,6 +556,8 @@ async def edit_task(
     destination_team_id = updates.pop("destination_team_id", None)
     next_leader_id   = updates.pop("next_leader_id", None)
     next_leader_name = updates.pop("next_leader_name", None)
+    next_approver_id   = updates.pop("next_approver_id", None)
+    next_approver_name = updates.pop("next_approver_name", None)
 
     try:
         oid = ObjectId(task_id)
@@ -568,6 +600,28 @@ async def edit_task(
     if "assigned_to" in updates and updates["assigned_to"] != current.get("assigned_to"):
         if not await workflow.can_assign_to_others(current_user, current.get("team_id"), db):
             return error_response("Only a team leader can assign tasks to others.", status_code=403)
+
+    # Changing who approves a task grants approval rights, so it is gated the
+    # same way. Note can_assign_to_others deliberately does NOT include the
+    # named approver, so an approver cannot re-point approval at someone else
+    # (or keep it on themselves after a leader revokes it).
+    if "approver_id" in updates and (updates.get("approver_id") or "") != (current.get("approver_id") or ""):
+        if not await workflow.can_assign_to_others(current_user, current.get("team_id"), db):
+            return error_response(
+                "Only a team leader can choose who approves a task.", status_code=403
+            )
+        new_approver = (updates.get("approver_id") or "").strip()
+        if new_approver:
+            if not await workflow.is_team_member(db, current.get("team_id"), new_approver):
+                return error_response(
+                    "The approver must be a leader or member of this task's team.",
+                    status_code=422,
+                )
+            updates["approver_id"] = new_approver
+        else:
+            # Clearing the approver falls back to leader-only approval.
+            updates["approver_id"] = ""
+            updates["approver_name"] = ""
 
     # ── Reedit return-to-origin ────────────────────────────────────────────────
     # When a leader sends a *routed* task back to reedit, it returns to the
@@ -718,6 +772,13 @@ async def edit_task(
 
         # The whole routing chain shares one root, so the full cross-team history
         # can be aggregated regardless of which copy is opened.
+        # The routed approver must belong to the DESTINATION team, else approval
+        # rights would be handed to someone outside it.
+        if next_approver_id and not await workflow.is_team_member(
+            db, destination_team_id, next_approver_id
+        ):
+            next_approver_id, next_approver_name = None, None
+
         root_task_id = str(current.get("root_task_id") or current["_id"])
         _received_note = f"Received from {former_team_name}" if former_team_name else "Received via routing"
         if next_leader_name:
@@ -729,6 +790,10 @@ async def edit_task(
             "status": "pending",
             "assigned_to": next_leader_id or "",
             "assigned_to_name": next_leader_name or "",
+            # Who may approve the routed copy once it comes back for review.
+            # Validated below against the destination team's member list.
+            "approver_id": next_approver_id or "",
+            "approver_name": next_approver_name or "",
             "due_date": None,
             "team_id": destination_team_id,
             "attachments": task.get("attachments", []),

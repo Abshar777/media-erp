@@ -59,10 +59,23 @@ def transition_error(current: str, target: str) -> str:
 
 
 async def can_approve(current_user: dict, task: dict, db: AsyncIOMotorDatabase) -> bool:
-    """True if the user may approve / rework a pending_review task."""
+    """
+    True if the user may approve / rework a pending_review task.
+
+    Allowed for: Super Admin / Admin / Coordinator, the task's named approver,
+    or a leader of the task's team.
+
+    A named approver is *additive* — leaders keep their rights on the task. If
+    the approver goes away or leaves the team, the task must still be
+    approvable by someone, or it strands in pending_review with no way out.
+    """
     role_doc  = current_user.get("_role") or {}
     role_name = role_doc.get("role_name", "")
     if role_name in ("Super Admin", "Admin", "Coordinator"):
+        return True
+    uid = str(current_user["_id"])
+    # Named approver — deliberately may be an ordinary member, not just a leader.
+    if task.get("approver_id") and task.get("approver_id") == uid:
         return True
     team_id = task.get("team_id")
     if not team_id:
@@ -73,7 +86,6 @@ async def can_approve(current_user: dict, task: dict, db: AsyncIOMotorDatabase) 
         team = None
     if not team:
         return False
-    uid = str(current_user["_id"])
     return any(
         m.get("user_id") == uid and m.get("role") == "leader"
         for m in team.get("members", [])
@@ -103,6 +115,25 @@ async def can_assign_to_others(current_user: dict, team_id, db: AsyncIOMotorData
         m.get("user_id") == uid and m.get("role") == "leader"
         for m in team.get("members", [])
     )
+
+
+async def is_team_member(db: AsyncIOMotorDatabase, team_id, user_id: str) -> bool:
+    """
+    True when user_id is on the team's member list (leader or member).
+
+    Used to keep a task's named approver inside its own team — otherwise any
+    user id could be written into approver_id and gain approval rights on a
+    team they have nothing to do with.
+    """
+    if not team_id or not user_id:
+        return False
+    try:
+        team = await db["teams"].find_one({"_id": ObjectId(team_id)}, {"members": 1})
+    except Exception:
+        return False
+    if not team:
+        return False
+    return any(m.get("user_id") == user_id for m in team.get("members", []))
 
 
 def apply_timing(

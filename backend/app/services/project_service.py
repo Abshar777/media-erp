@@ -179,7 +179,17 @@ async def list_tasks(
 
     # Visibility filter (role-based)
     if visibility == "own" and user_id:
-        query["assigned_to"] = user_id
+        # A named approver is usually an ordinary member, so "own" would hide
+        # the very task they were asked to approve. Show tasks assigned to them
+        # OR waiting on their approval.
+        # Nested under $and: `search` above already occupies a top-level $or,
+        # and assigning another would silently drop the search terms.
+        query.setdefault("$and", []).append({
+            "$or": [
+                {"assigned_to": user_id},
+                {"approver_id": user_id},
+            ]
+        })
     elif visibility == "leader_teams" and leader_team_ids:
         # Team Leader with no explicit team_id — scope to all teams they lead
         query["team_id"] = {"$in": leader_team_ids}
@@ -248,6 +258,9 @@ async def create_task(db: AsyncIOMotorDatabase, data: dict) -> dict:
         # `key` is what we persist, `url` is re-signed on every read.
         "attachments": canonicalize_attachments(data.get("attachments")),
         "created_by": actor_id,
+        # Named approver (optional) — validated by the router before we get here.
+        "approver_id": data.get("approver_id", ""),
+        "approver_name": data.get("approver_name", ""),
         "created_at": now,
         "updated_at": now,
         "timing": {"intervals": [], "total_seconds": None},

@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/button";
 import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
 import { TaskHistoryReport } from "@/components/projects/TaskHistoryReport";
 import { FileUploader } from "@/components/shared/FileUploader";
-import { useTeams } from "@/hooks/useTeams";
+import { useTeams, useTeam } from "@/hooks/useTeams";
+import { useCanApprove } from "@/hooks/useCanApprove";
 import type { Task, Attachment, TaskHistoryEntry, TeamFlowStep } from "@/types/project";
 import { PRIORITY_META, BOARD_COLUMNS, assigneeLabel } from "@/types/project";
 import { cn } from "@/lib/utils";
@@ -262,6 +263,30 @@ export function TaskDetailModal({
   const [showCaptionInput, setShowCaptionInput] = useState(false);
   const [dirty, setDirty] = useState(false);
 
+  // Changing the approver is a leader/admin action (workflow.can_assign_to_others).
+  // canApprove is the closest client-side mirror; the server is the real gate.
+  const canApprove = useCanApprove();
+  const maySetApprover = !readOnly && canApprove({ team_id: task.team_id }) && !!task.team_id;
+  const { data: taskTeam } = useTeam(maySetApprover ? (task.team_id ?? "") : "");
+  const [approverId, setApproverId] = useState(task.approver_id ?? "");
+
+  async function saveApprover(next: string) {
+    const prev = approverId;
+    setApproverId(next);
+    try {
+      await update.mutateAsync({
+        id: task.id,
+        payload: {
+          approver_id: next,
+          approver_name: taskTeam?.members.find((m) => m.user_id === next)?.name ?? "",
+        },
+      });
+      toast.success(next ? "Approver updated" : "Approver cleared — leaders only");
+    } catch {
+      setApproverId(prev);   // the server refused; don't show a state it rejected
+    }
+  }
+
   const meta = PRIORITY_META[task.priority];
   const statusColor = BOARD_COLUMNS.find((c) => c.key === task.status)?.color ?? "#6366f1";
   const statusLabel = BOARD_COLUMNS.find((c) => c.key === task.status)?.label ?? task.status;
@@ -488,6 +513,33 @@ export function TaskDetailModal({
                     </p>
                     <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">
                       {task.reedit_reason}
+                    </p>
+                  </div>
+                )}
+
+                {/* Approver — who may approve besides the team's leaders */}
+                {maySetApprover && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      Approved By
+                    </p>
+                    <select
+                      value={approverId}
+                      onChange={(e) => saveApprover(e.target.value)}
+                      disabled={update.isPending}
+                      className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
+                    >
+                      <option value="">Team leaders only (default)</option>
+                      {(taskTeam?.members ?? []).map((m) => (
+                        <option key={m.user_id} value={m.user_id}>
+                          {m.name}{m.role === "leader" ? " · Leader" : ""}
+                          {m.designation ? ` — ${m.designation}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-muted-foreground">
+                      Lets a chosen member approve this task. Team leaders keep
+                      their approval rights either way.
                     </p>
                   </div>
                 )}

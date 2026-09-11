@@ -83,6 +83,10 @@ export interface Task {
   status: TaskStatus;
   assigned_to: string;
   assigned_to_name?: string;
+  /** Named approver — may be any team member, not only a leader. Additive:
+   *  the team's leaders can still approve. Mirrors workflow.can_approve. */
+  approver_id?: string;
+  approver_name?: string;
   due_date: string | null;
   team_id?: string | null;
   attachments?: Attachment[];
@@ -109,6 +113,9 @@ export interface CreateTaskPayload {
   due_date?: string | null;
   team_id?: string | null;
   attachments?: Attachment[];
+  /** Named approver (leader/admin only — server rejects otherwise). */
+  approver_id?: string;
+  approver_name?: string;
 }
 
 export interface UpdateTaskPayload {
@@ -127,6 +134,12 @@ export interface UpdateTaskPayload {
    *  Backend: app/routers/projects.py (next_leader_id / next_leader_name). */
   next_leader_id?: string;
   next_leader_name?: string;
+  /** Change who may approve THIS task (leader/admin only, server-enforced). */
+  approver_id?: string;
+  approver_name?: string;
+  /** Who may approve the ROUTED COPY created in the destination team. */
+  next_approver_id?: string;
+  next_approver_name?: string;
   caption?: string;
 }
 

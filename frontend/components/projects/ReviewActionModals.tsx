@@ -12,7 +12,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { CheckCircle2, RotateCcw, Loader2, X, ChevronDown, Crown } from "lucide-react";
+import { CheckCircle2, RotateCcw, Loader2, X, ChevronDown, Crown, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask } from "@/hooks/useProjects";
 import { useAllTeams, useTeam } from "@/hooks/useTeams";
@@ -82,6 +82,7 @@ export function ApproveRouteModal({
 }) {
   const [destTeamId, setDestTeamId] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
+  const [approverId, setApproverId] = useState("");
   const update = useUpdateTask();
   const { data: allTeams = [] } = useAllTeams();
 
@@ -92,7 +93,11 @@ export function ApproveRouteModal({
 
   function pickTeam(id: string) {
     setDestTeamId(id);
-    setAssigneeId("");      // a stale member from the previous team must not survive
+    // Stale people from the previous team must not survive the switch — the
+    // server would reject them anyway, since both must be members of the
+    // destination team.
+    setAssigneeId("");
+    setApproverId("");
   }
 
   async function confirm() {
@@ -103,6 +108,11 @@ export function ApproveRouteModal({
       if (m) {
         payload.next_leader_id = m.user_id;
         payload.next_leader_name = m.name;
+      }
+      const ap = members.find((x) => x.user_id === approverId);
+      if (ap) {
+        payload.next_approver_id = ap.user_id;
+        payload.next_approver_name = ap.name;
       }
     }
     await update.mutateAsync({ id: task.id, payload });
@@ -201,6 +211,43 @@ export function ApproveRouteModal({
           {assigneeId && members.find((m) => m.user_id === assigneeId)?.role === "leader" && (
             <p className="flex items-center gap-1 text-[11px] text-amber-600">
               <Crown className="size-3" /> Team leader
+            </p>
+          )}
+        </div>
+      )}
+
+      {destTeamId && (
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">
+            Approved by <span className="text-muted-foreground font-normal">(optional)</span>
+          </label>
+          <p className="text-xs text-muted-foreground">
+            This person may approve the routed task even if they are not a team
+            leader. Leave unset and only the destination team&apos;s leaders can.
+          </p>
+          <div className="relative">
+            <select
+              value={approverId}
+              onChange={(e) => setApproverId(e.target.value)}
+              disabled={membersLoading || members.length === 0}
+              className="w-full appearance-none rounded-lg border bg-background px-3 py-2 pr-8 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
+            >
+              <option value="">
+                {membersLoading ? "Loading members…" : "Team leaders only (default)"}
+              </option>
+              {members.map((m) => (
+                <option key={m.user_id} value={m.user_id}>
+                  {m.name}{m.role === "leader" ? " · Leader" : ""}
+                  {m.designation ? ` — ${m.designation}` : ""}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+          </div>
+          {approverId && approverId === assigneeId && (
+            <p className="flex items-center gap-1 text-[11px] text-amber-600">
+              <AlertTriangle className="size-3" />
+              This person would approve their own work.
             </p>
           )}
         </div>

@@ -21,6 +21,10 @@ class CreateTaskRequest(BaseModel):
     due_date: Optional[str] = None    # ISO date string YYYY-MM-DD
     team_id: Optional[str] = None     # optional team association
     attachments: Optional[list[Attachment]] = None
+    # Named approver — may be any member of the team, not only a leader.
+    # Setting it requires leader/admin rights (see workflow.can_assign_to_others).
+    approver_id: Optional[str] = None
+    approver_name: Optional[str] = None
 
 
 class UpdateTaskRequest(BaseModel):
@@ -37,4 +41,8 @@ class UpdateTaskRequest(BaseModel):
     destination_team_id: Optional[str] = None # route a copy to this team on approve
     next_leader_id: Optional[str] = None      # assign the routed copy to this leader
     next_leader_name: Optional[str] = None
+    approver_id: Optional[str] = None         # who may approve THIS task
+    approver_name: Optional[str] = None
+    next_approver_id: Optional[str] = None    # who may approve the ROUTED COPY
+    next_approver_name: Optional[str] = None
     caption: Optional[str] = None             # submission note added when sending to pending_review
