@@ -283,13 +283,23 @@ export function useCreateTeam() {
 export function useUpdateTeam(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { name?: string; description?: string; color?: string }) => {
+    mutationFn: async (payload: {
+      name?: string;
+      description?: string;
+      color?: string;
+      // Backend UpdateTeamRequest accepts this too; it was missing here, so
+      // the Teams-list edit modal couldn't change a team's active state.
+      status?: "active" | "inactive";
+    }) => {
       const { data } = await api.put<{ success: boolean; data: Team }>(`/teams/${teamId}`, payload);
       return data.data;
     },
     onSuccess() {
       qc.invalidateQueries({ queryKey: QK.list });
       qc.invalidateQueries({ queryKey: QK.detail(teamId) });
+      // useAllTeams powers the routing/approver pickers — a rename or a team
+      // going inactive must show up there too.
+      qc.invalidateQueries({ queryKey: ["teams", "all"] });
       toast.success("Team updated");
     },
     onError() {

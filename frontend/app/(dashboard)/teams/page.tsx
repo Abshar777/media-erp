@@ -4,13 +4,13 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, Plus, Crown, User, Trash2, ChevronRight,
-  Search, X, Loader2, Shield, AlertCircle, Palette,
+  Search, X, Loader2, Shield, AlertCircle, Palette, Pencil,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  useTeams, useCreateTeam, useDeleteTeam, useAssignableUsers,
+  useTeams, useCreateTeam, useUpdateTeam, useDeleteTeam, useAssignableUsers,
   type Team,
 } from "@/hooks/useTeams";
 import { UserPicker } from "@/components/teams/UserPicker";
@@ -176,9 +176,122 @@ function CreateTeamModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Edit team modal ───────────────────────────────────────────────────────────
+
+/**
+ * Quick edit from the Teams list.
+ *
+ * Covers exactly the fields the API accepts (UpdateTeamRequest: name,
+ * description, colour, status). Membership is deliberately not here — it lives
+ * on the team detail page, which has the add/remove and role-change flows.
+ */
+function EditTeamModal({ team, onClose }: { team: Team; onClose: () => void }) {
+  const [name, setName]               = useState(team.name);
+  const [description, setDescription] = useState(team.description ?? "");
+  const [color, setColor]             = useState(team.color);
+  const [status, setStatus]           = useState<"active" | "inactive">(
+    team.status === "inactive" ? "inactive" : "active"
+  );
+
+  const update = useUpdateTeam(team.id);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    await update.mutateAsync({
+      name: name.trim(),
+      description,
+      color,
+      status,
+    });
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="w-full max-w-lg max-h-[90vh] flex flex-col rounded-2xl border bg-card shadow-2xl overflow-hidden"
+      >
+        <div className="flex items-center justify-between border-b px-6 py-4 shrink-0">
+          <h2 className="text-base font-semibold">Edit Team</h2>
+          <button onClick={onClose} className="rounded-md p-1 hover:bg-muted transition-colors">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1">
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Team Name *</label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Status</label>
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as "active" | "inactive")}
+                  className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-1.5">
+                  <Palette className="size-3.5" /> Colour
+                </label>
+                <div className="flex gap-1.5 flex-wrap pt-1.5">
+                  {TEAM_COLORS.slice(0, 8).map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setColor(c)}
+                      className="size-5 rounded-full transition-all hover:scale-110"
+                      style={{ background: c, boxShadow: color === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : "none" }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Members and their roles are managed on the team&apos;s own page.
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-3 border-t px-6 py-4 shrink-0">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!name.trim() || update.isPending}>
+              {update.isPending ? <Loader2 className="size-4 animate-spin mr-2" /> : null}
+              Save Changes
+            </Button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  );
+}
+
 // ── Team card ─────────────────────────────────────────────────────────────────
 
-function TeamCard({ team, onDelete }: { team: Team; onDelete: (id: string) => void }) {
+function TeamCard({ team, onEdit, onDelete }: { team: Team; onEdit: (t: Team) => void; onDelete: (id: string) => void }) {
   const router  = useRouter();
   const leaders = team.members?.filter((m) => m.role === "leader") ?? [];
   const isAdmin = team.my_role === "admin";
@@ -212,15 +325,32 @@ function TeamCard({ team, onDelete }: { team: Team; onDelete: (id: string) => vo
               )}
             </div>
           </div>
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onDelete(team.id); }}
-              className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-destructive/10 hover:text-destructive transition-all text-muted-foreground"
-            >
-              <Trash2 className="size-3.5" />
-            </button>
-          )}
+          <div className="flex items-center gap-0.5 shrink-0">
+            {/* Edit mirrors the server's _can_manage: elevated roles OR this
+                team's own leader. Delete stays admin-only. */}
+            {(isAdmin || isLeader) && (
+              <button
+                type="button"
+                title="Edit team"
+                aria-label={`Edit ${team.name}`}
+                onClick={(e) => { e.stopPropagation(); onEdit(team); }}
+                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-primary/10 hover:text-primary transition-all text-muted-foreground"
+              >
+                <Pencil className="size-3.5" />
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                type="button"
+                title="Delete team"
+                aria-label={`Delete ${team.name}`}
+                onClick={(e) => { e.stopPropagation(); onDelete(team.id); }}
+                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-destructive/10 hover:text-destructive transition-all text-muted-foreground"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Stats */}
@@ -269,6 +399,7 @@ function TeamCard({ team, onDelete }: { team: Team; onDelete: (id: string) => vo
 export default function TeamsPage() {
   const [search, setSearch]       = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<Team | null>(null);
   const { data: teams = [], isLoading, isError } = useTeams();
   const deleteTeam    = useDeleteTeam();
   const { hasPermission } = useAuthStore();
@@ -359,13 +490,20 @@ export default function TeamsPage() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((team) => (
-            <TeamCard key={team.id} team={team} onDelete={handleDelete} />
+            <TeamCard key={team.id} team={team} onEdit={setEditing} onDelete={handleDelete} />
           ))}
         </div>
       )}
 
       <AnimatePresence>
         {showCreate && <CreateTeamModal onClose={() => setShowCreate(false)} />}
+        {editing && (
+          <EditTeamModal
+            key={editing.id}
+            team={editing}
+            onClose={() => setEditing(null)}
+          />
+        )}
       </AnimatePresence>
     </div>
   );
