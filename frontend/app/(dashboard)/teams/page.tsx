@@ -192,8 +192,20 @@ function EditTeamModal({ team, onClose }: { team: Team; onClose: () => void }) {
   const [status, setStatus]           = useState<"active" | "inactive">(
     team.status === "inactive" ? "inactive" : "active"
   );
+  // Seed the pickers from the team's current roster.
+  const [leaderIds, setLeaderIds] = useState<string[]>(
+    () => (team.members ?? []).filter((m) => m.role === "leader").map((m) => m.user_id)
+  );
+  const [memberIds, setMemberIds] = useState<string[]>(
+    () => (team.members ?? []).filter((m) => m.role !== "leader").map((m) => m.user_id)
+  );
 
   const update = useUpdateTeam(team.id);
+  const { data: users = [], isLoading: usersLoading } = useAssignableUsers();
+
+  function toggle(list: string[], setList: (v: string[]) => void, id: string) {
+    setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -203,6 +215,9 @@ function EditTeamModal({ team, onClose }: { team: Team; onClose: () => void }) {
       description,
       color,
       status,
+      leader_ids: leaderIds,
+      // a user picked as leader shouldn't also be a plain member
+      member_ids: memberIds.filter((id) => !leaderIds.includes(id)),
     });
     onClose();
   }
@@ -269,16 +284,54 @@ function EditTeamModal({ team, onClose }: { team: Team; onClose: () => void }) {
               </div>
             </div>
 
-            <p className="text-xs text-muted-foreground">
-              Members and their roles are managed on the team&apos;s own page.
-            </p>
+            {/* Team Leaders */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-1.5">
+                <Crown className="size-3.5 text-amber-500" /> Team Leaders (Managers)
+              </label>
+              <UserPicker
+                users={users}
+                selectedIds={leaderIds}
+                onToggle={(id) => {
+                  toggle(leaderIds, setLeaderIds, id);
+                  // promoting to leader drops them from the members list
+                  setMemberIds((m) => m.filter((x) => x !== id));
+                }}
+                loading={usersLoading}
+                placeholder="Search users..."
+              />
+              {leaderIds.length === 0 && (
+                <p className="flex items-center gap-1 text-[11px] text-amber-600">
+                  <AlertCircle className="size-3" />
+                  A team needs at least one leader.
+                </p>
+              )}
+            </div>
+
+            {/* Team Members */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-1.5">
+                <User className="size-3.5" /> Team Members
+              </label>
+              <UserPicker
+                users={users}
+                selectedIds={memberIds}
+                onToggle={(id) => toggle(memberIds, setMemberIds, id)}
+                excludeIds={leaderIds}
+                loading={usersLoading}
+                placeholder="Search users..."
+              />
+            </div>
           </div>
 
           <div className="flex justify-end gap-3 border-t px-6 py-4 shrink-0">
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!name.trim() || update.isPending}>
+            <Button
+              type="submit"
+              disabled={!name.trim() || leaderIds.length === 0 || update.isPending}
+            >
               {update.isPending ? <Loader2 className="size-4 animate-spin mr-2" /> : null}
               Save Changes
             </Button>

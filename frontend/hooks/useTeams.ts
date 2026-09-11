@@ -290,6 +290,9 @@ export function useUpdateTeam(teamId: string) {
       // Backend UpdateTeamRequest accepts this too; it was missing here, so
       // the Teams-list edit modal couldn't change a team's active state.
       status?: "active" | "inactive";
+      // Full roster replacement — omit to leave membership untouched.
+      leader_ids?: string[];
+      member_ids?: string[];
     }) => {
       const { data } = await api.put<{ success: boolean; data: Team }>(`/teams/${teamId}`, payload);
       return data.data;

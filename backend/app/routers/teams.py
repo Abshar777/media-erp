@@ -348,7 +348,75 @@ async def update_team(
         return error_response("Leader or admin access required", status_code=403)
 
     updates = body.model_dump(exclude_none=True)
-    updates["updated_at"] = datetime.now(timezone.utc)
+    leader_ids = updates.pop("leader_ids", None)
+    member_ids = updates.pop("member_ids", None)
+    now = datetime.now(timezone.utc)
+    updates["updated_at"] = now
+
+    # ── Membership reconciliation ─────────────────────────────────────────────
+    # Replacing the roster in one write must not become a way around the rules
+    # the per-member endpoints enforce, so every one of them is re-checked here.
+    if leader_ids is not None or member_ids is not None:
+        existing = {m["user_id"]: m for m in team.get("members", [])}
+        existing_leaders = {u for u, m in existing.items() if m.get("role") == "leader"}
+
+        desired_leaders = {u for u in (leader_ids or []) if u}
+        # A user picked as leader is never also a plain member.
+        desired_members = {u for u in (member_ids or []) if u} - desired_leaders
+
+        # Mirrors remove_member's "cannot remove the only team leader".
+        if not desired_leaders:
+            return error_response(
+                "A team must have at least one leader.", status_code=400
+            )
+
+        all_desired = desired_leaders | desired_members
+        for u in all_desired:
+            if not ObjectId.is_valid(u):
+                return error_response("Invalid user ID in members list", status_code=422)
+        found = await db["users"].find(
+            {"_id": {"$in": [ObjectId(u) for u in all_desired]}}, {"role_id": 1}
+        ).to_list(len(all_desired) or 1)
+        found_by_id = {str(u["_id"]): u for u in found}
+        missing = all_desired - set(found_by_id)
+        if missing:
+            return error_response("One or more selected users no longer exist", status_code=422)
+
+        if not _can_manage_any_team(current_user):
+            # Mirrors add_member / update_member_role: a Team Leader may not
+            # create leaders, only demote existing ones.
+            new_leaders = desired_leaders - existing_leaders
+            if new_leaders:
+                return error_response(
+                    "Team Leaders cannot add or promote team leaders — contact an Admin or Coordinator.",
+                    status_code=403,
+                )
+            # Mirrors add_member: a Team Leader may only bring in Employees.
+            for u in all_desired - set(existing):
+                rid = found_by_id[u].get("role_id", "")
+                rname = ""
+                if rid and ObjectId.is_valid(rid):
+                    rdoc = await db["roles"].find_one({"_id": ObjectId(rid)}, {"role_name": 1})
+                    rname = (rdoc or {}).get("role_name", "")
+                if rname != "Employee":
+                    return error_response(
+                        "Team Leaders can only add Employees to their team.",
+                        status_code=403,
+                    )
+
+        # Preserve joined_at for people who were already on the team.
+        def _entry(u: str, role: str) -> dict:
+            return {
+                "user_id": u,
+                "role": role,
+                "joined_at": existing.get(u, {}).get("joined_at", now),
+            }
+
+        updates["members"] = (
+            [_entry(u, "leader") for u in desired_leaders]
+            + [_entry(u, "member") for u in desired_members]
+        )
+
     try:
         oid = ObjectId(team_id)
     except InvalidId:

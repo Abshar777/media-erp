@@ -16,6 +16,11 @@ class UpdateTeamRequest(BaseModel):
     description: Optional[str] = None
     color: Optional[str] = None
     status: Optional[str] = None
+    # Full membership replacement. Omit both to leave membership untouched;
+    # sending them reconciles the roster in one atomic write, subject to the
+    # same rules the per-member endpoints enforce.
+    leader_ids: Optional[list[str]] = None
+    member_ids: Optional[list[str]] = None
 
 
 class AddMemberRequest(BaseModel):
