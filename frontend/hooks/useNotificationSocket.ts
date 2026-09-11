@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { refreshAccessToken } from "@/lib/axios";
 import type { NotificationsData } from "@/types/notification";
+import { showDesktopNotification } from "@/lib/browserNotifications";
 
 /**
  * App-wide socket that listens for notification pushes only.
@@ -51,6 +52,11 @@ export function useNotificationSocket(currentUserId: string | null) {
         if (data.type !== "notification" || !data.notification) return;
 
         const incoming = data.notification;
+
+        // Desktop alert + sound for the interrupt-worthy types (mention, work
+        // assigned, awaiting your approval). No-ops without permission.
+        showDesktopNotification(incoming);
+
         qc.setQueriesData<NotificationsData>(
           { queryKey: ["notifications"] },
           (prev) => {

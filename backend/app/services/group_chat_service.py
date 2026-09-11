@@ -229,6 +229,7 @@ async def save_group_message(
     is_system: bool = False,
     attachments: list | None = None,
     task_ids: list | None = None,
+    mention_user_ids: list | None = None,
 ) -> dict:
     doc = {
         "group_id": group_id,
@@ -239,6 +240,7 @@ async def save_group_message(
         # Persist `key`, not the read-time signed URL the client sent back.
         "attachments": canonicalize_attachments(attachments),
         "task_ids": task_ids or [],
+        "mention_user_ids": mention_user_ids or [],
         "created_at": datetime.now(timezone.utc),
     }
     result = await db["messages"].insert_one(doc)

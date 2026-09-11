@@ -8,6 +8,8 @@ export type NotificationType =
   | "task_reedit"         // task sent back for revision
   | "team_task_assigned"  // new task added to your team (→ leader)
   | "due_date_reminder"   // task is due tomorrow
+  // ── Chat ──────────────────────────────────────────────────────────────────
+  | "mention"             // someone @mentioned you in a message
   // ── Data sync ─────────────────────────────────────────────────────────────
   | "sync_success"
   | "sync_error"

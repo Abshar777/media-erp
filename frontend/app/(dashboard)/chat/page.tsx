@@ -219,8 +219,26 @@ function ChatComposer({
   const [tasks, setTasks] = useState<TaskRef[]>([]);
   const [showMention, setShowMention] = useState(false);
   const [mentionSearch, setMentionSearch] = useState("");
+  const [mentionTab, setMentionTab] = useState<"people" | "tasks">("people");
+  // Who was @mentioned. Kept as ids alongside the text, so the server can
+  // notify them without having to parse names back out of the message body.
+  const [mentionedPeople, setMentionedPeople] = useState<ChatUser[]>([]);
   const upload = useUploadAttachments();
   const { data: mentionTasks = [], isLoading: tasksLoading } = useMentionableTasks(mentionSearch);
+  const { data: allChatUsers = [] } = useChatUsers();
+
+  const mentionPeople = allChatUsers.filter((u) =>
+    !mentionSearch.trim() || u.name.toLowerCase().includes(mentionSearch.trim().toLowerCase())
+  );
+
+  function togglePerson(u: ChatUser) {
+    setMentionedPeople((prev) => {
+      if (prev.some((p) => p.id === u.id)) return prev.filter((p) => p.id !== u.id);
+      // Drop the handle into the message so the mention reads naturally.
+      setText((t) => (t.endsWith(" ") || !t ? t : t + " ") + `@${u.name} `);
+      return [...prev, u];
+    });
+  }
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -228,10 +246,19 @@ function ChatComposer({
 
   function doSend() {
     if (!canSend) return;
-    onSend(text.trim(), { attachments, taskIds: tasks.map((t) => t.id) });
+    onSend(text.trim(), {
+      attachments,
+      taskIds: tasks.map((t) => t.id),
+      // Only people still named in the text — deleting the handle should
+      // withdraw the mention rather than silently notifying them anyway.
+      mentionUserIds: mentionedPeople
+        .filter((p) => text.includes(`@${p.name}`))
+        .map((p) => p.id),
+    });
     setText("");
     setAttachments([]);
     setTasks([]);
+    setMentionedPeople([]);
     setShowMention(false);
     if (taRef.current) taRef.current.style.height = "auto";
   }
@@ -299,15 +326,61 @@ function ChatComposer({
       {/* Mention picker */}
       {showMention && (
         <div className="mb-2 rounded-xl border bg-card shadow-lg">
+          <div className="flex gap-1 border-b p-1.5">
+            {(["people", "tasks"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => { setMentionTab(tab); setMentionSearch(""); }}
+                className={cn(
+                  "flex-1 rounded-lg px-2 py-1 text-xs font-medium capitalize transition-colors",
+                  mentionTab === tab ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"
+                )}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
           <div className="border-b p-2">
             <input
               autoFocus
               value={mentionSearch}
               onChange={(e) => setMentionSearch(e.target.value)}
-              placeholder="Search tasks to mention…"
+              placeholder={mentionTab === "people" ? "Search people to mention…" : "Search tasks to mention…"}
               className="w-full rounded-lg bg-muted/50 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
             />
           </div>
+
+          {mentionTab === "people" ? (
+            <div className="max-h-48 overflow-y-auto p-1">
+              {mentionPeople.length === 0 ? (
+                <p className="py-4 text-center text-xs text-muted-foreground">No people found</p>
+              ) : (
+                mentionPeople.slice(0, 30).map((u) => {
+                  const picked = mentionedPeople.some((p) => p.id === u.id);
+                  return (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => togglePerson(u)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors",
+                        picked ? "bg-primary/10" : "hover:bg-muted"
+                      )}
+                    >
+                      <Avatar name={u.name} online={u.online} size="sm" />
+                      <span className="flex-1 truncate">{u.name}</span>
+                      {u.designation && (
+                        <span className="shrink-0 text-[10px] text-muted-foreground truncate max-w-24">
+                          {u.designation}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          ) : (
           <div className="max-h-48 overflow-y-auto p-1">
             {tasksLoading ? (
               <div className="flex justify-center py-4"><Loader2 className="size-4 animate-spin text-muted-foreground/50" /></div>
@@ -336,6 +409,7 @@ function ChatComposer({
               })
             )}
           </div>
+          )}
         </div>
       )}
 

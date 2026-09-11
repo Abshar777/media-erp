@@ -15,6 +15,7 @@ Server → client frames:
 
 import io
 import json
+import logging
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
@@ -36,6 +37,7 @@ from app.utils.jwt import decode_access_token
 from app.utils.timezone import utc_iso
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 # ── Super Admin guard ─────────────────────────────────────────────────────────
@@ -125,6 +127,34 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+async def _notify_mentions(
+    db, mention_ids: list[str], actor_id: str, actor_name: str,
+    content: str, where: str, meta_extra: dict | None = None,
+) -> None:
+    """
+    Tell each @mentioned person, except the author mentioning themselves.
+
+    Never raises: a chat message must still send if the notification write
+    fails, so this is best-effort exactly like the DM push.
+    """
+    if not mention_ids:
+        return
+    from app.services.notification_service import push_notification
+    preview = (content or "").strip()
+    if len(preview) > 140:
+        preview = preview[:137] + "…"
+    for uid in {m for m in mention_ids if m and m != actor_id}:
+        try:
+            await push_notification(
+                db, uid, "mention",
+                f"{actor_name} mentioned you",
+                f"{where}: {preview}" if preview else f"{actor_name} mentioned you in {where}",
+                {"from_user_id": actor_id, "from_user_name": actor_name, **(meta_extra or {})},
+            )
+        except Exception as exc:
+            logger.warning("mention notification failed: %s", exc)
+
+
 # ── WebSocket endpoint ────────────────────────────────────────────────────────
 
 @router.websocket("/ws")
@@ -159,9 +189,20 @@ async def chat_ws(ws: WebSocket, token: str = Query(...)) -> None:
                 client_id = str(data.get("client_id", "")).strip()
                 if not to_id or not (content or attachments or task_ids):
                     continue
-                doc = await db_save_message(user_id, to_id, content, attachments, task_ids)
+                mention_ids = [str(m) for m in (data.get("mention_user_ids") or []) if m]
+                doc = await db_save_message(
+                    user_id, to_id, content, attachments, task_ids, mention_ids
+                )
                 from app.services.chat_service import resolve_task_snapshots
                 snapshots = await resolve_task_snapshots(task_ids)
+                if mention_ids:
+                    _db = get_db()
+                    sender = await _db["users"].find_one({"_id": ObjectId(user_id)}, {"name": 1})
+                    await _notify_mentions(
+                        _db, mention_ids, user_id,
+                        (sender or {}).get("name", "Someone"),
+                        content, "in a direct message",
+                    )
                 envelope = {"type": "message", **message_to_dict(doc), "tasks": snapshots, "client_id": client_id}
                 await manager.send(user_id, envelope)
                 await manager.send(to_id, envelope)
@@ -186,10 +227,19 @@ async def chat_ws(ws: WebSocket, token: str = Query(...)) -> None:
                         sender_name = sender.get("name", "Unknown")
                 except (InvalidId, Exception):
                     pass
+                mention_ids = [str(m) for m in (data.get("mention_user_ids") or []) if m]
                 doc = await groups.save_group_message(
                     db, gid, user_id, sender_name, content,
                     attachments=attachments, task_ids=task_ids,
+                    mention_user_ids=mention_ids,
                 )
+                if mention_ids:
+                    group_doc = await groups.get_group(db, gid)
+                    await _notify_mentions(
+                        db, mention_ids, user_id, sender_name, content,
+                        f"in {(group_doc or {}).get('name', 'a group')}",
+                        {"group_id": gid},
+                    )
                 from app.services.chat_service import resolve_task_snapshots
                 snapshots = await resolve_task_snapshots(task_ids)
                 envelope = {"type": "group_message", **groups.group_message_to_dict(doc), "tasks": snapshots, "client_id": client_id}

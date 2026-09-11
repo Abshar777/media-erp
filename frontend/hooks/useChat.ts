@@ -19,6 +19,8 @@ import type { NotificationsData } from "@/types/notification";
 export interface SendExtras {
   attachments?: ChatAttachment[];
   taskIds?: string[];
+  /** Ids of people @mentioned — the server notifies each of them. */
+  mentionUserIds?: string[];
 }
 
 function newClientId(): string {
@@ -451,6 +453,7 @@ export function useChatSocket(currentUserId: string | null) {
             content,
             attachments: extras?.attachments ?? [],
             task_ids: extras?.taskIds ?? [],
+            mention_user_ids: extras?.mentionUserIds ?? [],
             client_id: clientId,
           })
         );
@@ -490,6 +493,7 @@ export function useChatSocket(currentUserId: string | null) {
             content,
             attachments: extras?.attachments ?? [],
             task_ids: extras?.taskIds ?? [],
+            mention_user_ids: extras?.mentionUserIds ?? [],
             client_id: clientId,
           })
         );

@@ -31,6 +31,7 @@ async def save_message(
     content: str,
     attachments: list | None = None,
     task_ids: list | None = None,
+    mention_user_ids: list | None = None,
 ) -> dict:
     db = get_db()
     doc = {
@@ -41,6 +42,7 @@ async def save_message(
         # Persist `key`, not the read-time signed URL the client sent back.
         "attachments": canonicalize_attachments(attachments),
         "task_ids": task_ids or [],
+        "mention_user_ids": mention_user_ids or [],
         "created_at": datetime.now(timezone.utc),
     }
     result = await db["messages"].insert_one(doc)

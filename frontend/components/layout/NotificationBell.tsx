@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  BellRing,
+  AtSign,
   Bell, CheckCheck, RefreshCw, ServerCrash, Wifi,
   ClipboardList, Play, Coffee, Eye, CheckCircle2,
   RotateCcw, Users, Clock,
@@ -11,6 +13,7 @@ import {
 import { fadeVariants, listItemVariants, listVariants } from "@/lib/animations";
 import { useMarkAllRead, useMarkRead, useNotifications } from "@/hooks/useNotifications";
 import type { Notification } from "@/types/notification";
+import { desktopPermission, requestDesktopPermission } from "@/lib/browserNotifications";
 import { cn } from "@/lib/utils";
 
 // ── Relative time formatter ───────────────────────────────────────────────────
@@ -43,6 +46,8 @@ function typeConfig(type: string): { icon: React.ReactNode; bg: string } {
       return { icon: <Users className="size-3.5 text-purple-500" />,          bg: "bg-purple-100 dark:bg-purple-900/30" };
     case "due_date_reminder":
       return { icon: <Clock className="size-3.5 text-red-500" />,             bg: "bg-red-100 dark:bg-red-900/30" };
+    case "mention":
+      return { icon: <AtSign className="size-3.5 text-sky-500" />,            bg: "bg-sky-100 dark:bg-sky-900/30" };
     case "sync_success":
       return { icon: <Wifi className="size-3.5 text-emerald-500" />,          bg: "bg-emerald-100 dark:bg-emerald-900/30" };
     case "sync_error":
@@ -102,6 +107,9 @@ function NotifRow({ item, onClose }: { item: Notification; onClose: () => void }
 // ── Main bell component ───────────────────────────────────────────────────────
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
+  // Read on mount only — Notification.permission isn't available during SSR.
+  const [alertPerm, setAlertPerm] = useState<string>("unsupported");
+  useEffect(() => setAlertPerm(desktopPermission()), []);
   const ref = useRef<HTMLDivElement>(null);
   const { data, isLoading } = useNotifications(30);
   const markAll = useMarkAllRead();
@@ -177,6 +185,24 @@ export function NotificationBell() {
                 </button>
               )}
             </div>
+
+            {/* Desktop alerts — only shown while the browser can still be asked.
+                Once granted or blocked there is nothing useful to offer here. */}
+            {alertPerm === "default" && (
+              <button
+                type="button"
+                onClick={async () => setAlertPerm(await requestDesktopPermission())}
+                className="flex w-full items-center gap-2 border-b bg-primary/5 px-4 py-2.5 text-left text-[11px] text-primary hover:bg-primary/10 transition-colors"
+              >
+                <BellRing className="size-3.5 shrink-0" />
+                Turn on desktop alerts for mentions, assignments and approvals
+              </button>
+            )}
+            {alertPerm === "denied" && (
+              <p className="border-b px-4 py-2 text-[11px] text-muted-foreground">
+                Desktop alerts are blocked in your browser settings for this site.
+              </p>
+            )}
 
             {/* Body */}
             <div className="max-h-[360px] overflow-y-auto">
