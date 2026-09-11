@@ -14,6 +14,7 @@ import type {
   TaskRef,
   WsIncoming,
 } from "@/types/chat";
+import type { NotificationsData } from "@/types/notification";
 
 export interface SendExtras {
   attachments?: ChatAttachment[];
@@ -281,6 +282,25 @@ export function useChatSocket(currentUserId: string | null) {
       try {
         data = JSON.parse(evt.data);
       } catch {
+        return;
+      }
+
+      if (data.type === "notification") {
+        // Splice it into every cached notifications page rather than refetching,
+        // so the bell reacts instantly and we don't add a request per event.
+        // Guard on id: the 60s poll may already have picked this one up.
+        qc.setQueriesData<NotificationsData>(
+          { queryKey: ["notifications"] },
+          (prev) => {
+            if (!prev) return prev;
+            if (prev.items.some((n) => n.id === data.notification.id)) return prev;
+            return {
+              ...prev,
+              items: [data.notification, ...prev.items],
+              unread_count: prev.unread_count + 1,
+            };
+          }
+        );
         return;
       }
 

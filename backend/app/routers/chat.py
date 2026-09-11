@@ -55,46 +55,71 @@ def _require_super_admin(current_user: dict = Depends(get_current_user)) -> dict
 # ── WebSocket connection manager ──────────────────────────────────────────────
 
 class ConnectionManager:
-    """Tracks live WebSocket connections keyed by user_id string."""
+    """
+    Tracks live WebSocket connections, keyed by user_id.
+
+    A user may hold several at once — the app-wide notification socket plus the
+    chat page's own, and one per browser tab. Keeping a set rather than a single
+    socket means a second connection no longer silently evicts the first (which
+    previously broke chat as soon as it was open in two tabs).
+    """
 
     def __init__(self) -> None:
-        self._conns: dict[str, WebSocket] = {}
+        self._conns: dict[str, set[WebSocket]] = {}
 
     async def connect(self, user_id: str, ws: WebSocket) -> None:
         await ws.accept()
-        self._conns[user_id] = ws
-        await self._broadcast(
-            {"type": "status", "user_id": user_id, "online": True},
-            exclude=user_id,
-        )
+        first = not self._conns.get(user_id)
+        self._conns.setdefault(user_id, set()).add(ws)
+        # Only announce presence on the user's first socket, so opening a second
+        # tab doesn't flood everyone with redundant "online" frames.
+        if first:
+            await self._broadcast(
+                {"type": "status", "user_id": user_id, "online": True},
+                exclude=user_id,
+            )
 
-    def disconnect(self, user_id: str) -> None:
-        self._conns.pop(user_id, None)
+    def disconnect(self, user_id: str, ws: WebSocket | None = None) -> bool:
+        """Drop one socket. Returns True when that was the user's last one."""
+        conns = self._conns.get(user_id)
+        if not conns:
+            return False
+        if ws is None:
+            conns.clear()
+        else:
+            conns.discard(ws)
+        if not conns:
+            self._conns.pop(user_id, None)
+            return True
+        return False
 
     def is_online(self, user_id: str) -> bool:
-        return user_id in self._conns
+        return bool(self._conns.get(user_id))
 
     def online_ids(self) -> list[str]:
-        return list(self._conns.keys())
+        return [uid for uid, conns in self._conns.items() if conns]
 
     async def send(self, user_id: str, payload: dict) -> None:
-        ws = self._conns.get(user_id)
-        if ws is None:
+        conns = self._conns.get(user_id)
+        if not conns:
             return
-        try:
-            await ws.send_text(json.dumps(payload, default=str))
-        except Exception:
-            self.disconnect(user_id)
-
-    async def _broadcast(self, payload: dict, exclude: str | None = None) -> None:
         text = json.dumps(payload, default=str)
-        for uid, ws in list(self._conns.items()):
-            if uid == exclude:
-                continue
+        for ws in list(conns):
             try:
                 await ws.send_text(text)
             except Exception:
-                self.disconnect(uid)
+                self.disconnect(user_id, ws)
+
+    async def _broadcast(self, payload: dict, exclude: str | None = None) -> None:
+        text = json.dumps(payload, default=str)
+        for uid, conns in list(self._conns.items()):
+            if uid == exclude:
+                continue
+            for ws in list(conns):
+                try:
+                    await ws.send_text(text)
+                except Exception:
+                    self.disconnect(uid, ws)
 
 
 manager = ConnectionManager()
@@ -181,10 +206,11 @@ async def chat_ws(ws: WebSocket, token: str = Query(...)) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        manager.disconnect(user_id)
-        await manager._broadcast({
-            "type": "status", "user_id": user_id, "online": False
-        })
+        was_last = manager.disconnect(user_id, ws)
+        if was_last:
+            await manager._broadcast({
+                "type": "status", "user_id": user_id, "online": False
+            })
 
 
 # ── REST endpoints ────────────────────────────────────────────────────────────

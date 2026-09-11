@@ -779,10 +779,16 @@ function GroupChatWindow({
         <div className="min-w-0">
           <p className="text-sm font-semibold leading-tight truncate">{group.name}</p>
           <p className="text-[11px] text-muted-foreground truncate">
-            {group.member_count} member{group.member_count !== 1 ? "s" : ""} · Daily report at 9 PM IST
+            {group.member_count} member{group.member_count !== 1 ? "s" : ""}
+            {/* The company-wide group carries no scheduled report, so the
+                report-group subtitle would be a plain lie there. */}
+            {!group.is_common && " · Daily report at 9 PM IST"}
           </p>
         </div>
-        {isPrivileged && <SendReportMenu groupId={group.id} groupName={group.name} />}
+        {/* Reports are per-team; the company-wide group has no team to report on. */}
+        {isPrivileged && !group.is_common && (
+          <SendReportMenu groupId={group.id} groupName={group.name} />
+        )}
       </div>
 
       {/* Messages */}
@@ -796,7 +802,11 @@ function GroupChatWindow({
             <UsersRound className="size-10" />
             <div className="text-center">
               <p className="text-sm font-medium">No messages yet</p>
-              <p className="text-xs mt-0.5">The daily report posts here at 9 PM IST.</p>
+              <p className="text-xs mt-0.5">
+                {group.is_common
+                  ? "Say something to the whole company."
+                  : "The daily report posts here at 9 PM IST."}
+              </p>
             </div>
           </div>
         ) : (
@@ -1186,7 +1196,7 @@ function PeoplePanel({
         {filteredGroups.length > 0 && (
           <>
             <p className="px-2 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-              Team Groups
+              Groups
             </p>
             {filteredGroups.map((g) => (
               <GroupRow

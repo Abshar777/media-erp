@@ -48,6 +48,30 @@ async def push_notification(
     try:
         doc = notification_doc(user_id, notification_type, title, message, metadata)
         result = await db["notifications"].insert_one(doc)
+
+        # Push it down the chat WebSocket so the bell updates immediately
+        # instead of waiting up to 60s for the next poll. Best-effort: the row
+        # is already written, so a socket failure only costs immediacy, and the
+        # poll remains the backstop for anyone who is offline right now.
+        try:
+            # Lazy import — app.routers.chat imports services at module load,
+            # so a top-level import here would be circular.
+            from app.routers.chat import manager
+            await manager.send(user_id, {
+                "type": "notification",
+                "notification": {
+                    "id": str(result.inserted_id),
+                    "type": notification_type,
+                    "title": title,
+                    "message": message,
+                    "read": False,
+                    "metadata": metadata or {},
+                    "created_at": utc_iso(doc["created_at"]),
+                },
+            })
+        except Exception:
+            pass
+
         # Fire email in background — never blocks the request
         asyncio.create_task(
             _send_email_if_opted_in(db, user_id, notification_type, title, message, metadata)

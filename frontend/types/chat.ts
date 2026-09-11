@@ -43,6 +43,8 @@ export interface ChatGroup {
   members: string[];
   member_count: number;
   is_report_group: boolean;
+  /** The single company-wide group everyone belongs to. */
+  is_common?: boolean;
   last_message: string;
   last_sender_name: string;
   last_at: string | null;
@@ -68,7 +70,10 @@ export type WsIncoming =
   | ({ type: "group_message" } & GroupMessage)
   | { type: "status"; user_id: string; online: boolean }
   | { type: "online_users"; user_ids: string[] }
-  | { type: "read"; by: string };
+  | { type: "read"; by: string }
+  // Pushed by the server when a notification is created, so the bell updates
+  // immediately rather than on the next 60s poll.
+  | { type: "notification"; notification: import("./notification").Notification };
 
 // ── Super Admin monitor ───────────────────────────────────────────────────────
 

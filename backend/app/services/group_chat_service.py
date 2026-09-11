@@ -66,6 +66,7 @@ def _serialize_group(doc: dict) -> dict:
         "members": doc.get("members", []),
         "member_count": len(doc.get("members", [])),
         "is_report_group": bool(doc.get("is_report_group", True)),
+        "is_common": bool(doc.get("is_common", False)),
     }
 
 
@@ -105,6 +106,54 @@ async def ensure_team_groups(db: AsyncIOMotorDatabase) -> None:
                 "created_at": now,
                 "updated_at": now,
             })
+
+
+COMMON_GROUP_NAME = "Everyone"
+
+
+async def ensure_common_group(db: AsyncIOMotorDatabase) -> dict:
+    """
+    Upsert the single company-wide group and keep its roster in sync with the
+    active user list, so people joining or leaving are picked up without anyone
+    maintaining it by hand.
+
+    Identified by is_common rather than by name, so renaming it doesn't cause a
+    second one to be created. Idempotent — safe on every list/scheduler tick.
+    """
+    now = datetime.now(timezone.utc)
+    users = await db["users"].find(
+        {"$and": [
+            {"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]},
+            {"$or": [{"status": {"$ne": "inactive"}}, {"status": {"$exists": False}}]},
+        ]},
+        {"_id": 1},
+    ).to_list(5000)
+    member_ids = [str(u["_id"]) for u in users]
+
+    existing = await db["chat_groups"].find_one({"is_common": True})
+    if existing:
+        await db["chat_groups"].update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"members": member_ids, "updated_at": now}},
+        )
+        return await db["chat_groups"].find_one({"_id": existing["_id"]})
+
+    doc = {
+        "name": COMMON_GROUP_NAME,
+        # No team_id: this group belongs to the company, not a team, which also
+        # keeps ensure_team_groups from ever matching and overwriting it.
+        "team_id": None,
+        "color": "#0ea5e9",
+        "members": member_ids,
+        "is_common": True,
+        "is_report_group": False,
+        "created_by": "",
+        "created_at": now,
+        "updated_at": now,
+    }
+    res = await db["chat_groups"].insert_one(doc)
+    doc["_id"] = res.inserted_id
+    return doc
 
 
 _ELEVATED_ROLES = {"Super Admin", "Admin", "Coordinator"}
@@ -148,6 +197,7 @@ async def list_groups_for_user(
 ) -> list[dict]:
     """Groups the user belongs to (or all groups for elevated roles), with a preview."""
     await ensure_team_groups(db)
+    await ensure_common_group(db)
     query = {} if include_all else {"members": user_id}
     docs = await db["chat_groups"].find(query).sort("name", 1).to_list(500)
     out = []

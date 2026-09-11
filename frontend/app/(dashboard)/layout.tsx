@@ -9,6 +9,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
+import { useNotificationSocket } from "@/hooks/useNotificationSocket";
 import { useOnboardingStatus, useCompleteOnboarding, useStopImpersonation } from "@/hooks/useAuth";
 
 export default function DashboardLayout({
@@ -22,6 +23,10 @@ export default function DashboardLayout({
   const router = useRouter();
   const pathname = usePathname();
   const [hydrated, setHydrated] = useState(false);
+
+  // App-wide, so the bell reacts on every screen — the chat page's own socket
+  // only exists while that page is open.
+  useNotificationSocket(user?.id ?? null);
 
   const { data: onboardingData, isLoading: onboardingLoading } = useOnboardingStatus();
   const completeOnboarding = useCompleteOnboarding();
