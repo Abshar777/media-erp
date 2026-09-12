@@ -19,7 +19,7 @@ import { TaskDetailModal } from "@/components/projects/TaskDetailModal";
 import { ApproveRouteModal, ReeditModal } from "@/components/projects/ReviewActionModals";
 import { useAuthStore } from "@/stores/authStore";
 import type { Task } from "@/types/project";
-import { PRIORITY_META, isTaskOverdue, assigneeLabel } from "@/types/project";
+import { PRIORITY_META, isTaskOverdue, assigneeLabel, TASK_SCOPES } from "@/types/project";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fmtDateOnly } from "@/lib/datetime";
@@ -358,7 +358,7 @@ const DATE_CHIPS: { value: string; label: string }[] = [
 
 export default function LeaderPage() {
   const [qFilters, setQFilters] = useState<LeaderQueueFilters>({
-    search: "", priority: "", date_filter: "", assigned: "",
+    search: "", priority: "", date_filter: "", assigned: "", scope: "",
   });
   // Debounced so a search doesn't refire the query on every keystroke.
   const [searchInput, setSearchInput] = useState("");
@@ -368,8 +368,10 @@ export default function LeaderPage() {
   }, [searchInput]);
 
   const { data, isLoading } = useLeaderQueue(undefined, qFilters);
-  const filtersActive =
-    !!(qFilters.search || qFilters.priority || qFilters.date_filter || qFilters.assigned);
+  const filtersActive = !!(
+    qFilters.search || qFilters.priority || qFilters.date_filter ||
+    qFilters.assigned || qFilters.scope
+  );
   const [tab, setTab] = useState<Tab>("review");
   const [reeditTask, setReeditTask] = useState<Task | null>(null);
   const [approveTask, setApproveTask] = useState<Task | null>(null);
@@ -479,9 +481,10 @@ export default function LeaderPage() {
             <option value="low">Low</option>
           </select>
 
-          {/* Only meaningful on Assign Work, which is the tab that distinguishes
-              distributed work from work still waiting to be handed out. */}
-          {tab === "assign" && (
+          {/* Only meaningful on Assign Work, and only while "Assigned to me" is
+              off — that scope already means assigned, so offering
+              "Unassigned only" alongside it just contradicts itself. */}
+          {tab === "assign" && qFilters.scope !== "assigned_to_me" && (
             <select
               value={qFilters.assigned ?? ""}
               onChange={(e) => setQFilters((f) => ({ ...f, assigned: e.target.value }))}
@@ -496,12 +499,44 @@ export default function LeaderPage() {
           {filtersActive && (
             <button
               type="button"
-              onClick={() => { setSearchInput(""); setQFilters({ search: "", priority: "", date_filter: "", assigned: "" }); }}
+              onClick={() => { setSearchInput(""); setQFilters({ search: "", priority: "", date_filter: "", assigned: "", scope: "" }); }}
               className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
             >
               Clear filters
             </button>
           )}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {TASK_SCOPES.map((sc) => {
+            const active = qFilters.scope === sc.value;
+            return (
+              <button
+                key={sc.value}
+                type="button"
+                onClick={() =>
+                  setQFilters((f) => {
+                    const next = active ? "" : sc.value;
+                    return {
+                      ...f,
+                      scope: next,
+                      // "Assigned to me" implies assigned; keeping the
+                      // unassigned-only default would return nothing.
+                      assigned: next === "assigned_to_me" ? "all" : f.assigned,
+                    };
+                  })
+                }
+                className={cn(
+                  "rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors",
+                  active
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background hover:bg-muted text-muted-foreground border-border"
+                )}
+              >
+                {sc.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex flex-wrap gap-1.5">

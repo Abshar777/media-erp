@@ -432,6 +432,7 @@ async def leader_queue(
     date_from: str = Query(default=""),
     date_to: str = Query(default=""),
     assigned: str = Query(default=""),      # "assigned" | "unassigned"
+    scope: str = Query(default=""),         # assigned_to_me | needs_my_approval | created_by_me
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
@@ -514,12 +515,25 @@ async def leader_queue(
             start = ist_period_start_utc(date_filter)
             if start:
                 f["created_at"] = {"$gte": start}
+        # Same three quick scopes as the Projects board, so the chips mean the
+        # same thing on both screens.
+        if scope == "assigned_to_me":
+            f.setdefault("$and", []).append({"assigned_to": uid})
+        elif scope == "created_by_me":
+            f["created_by"] = uid
+        elif scope == "needs_my_approval":
+            # Waiting on you specifically. The Review desk is already
+            # pending_review, so this narrows it to tasks you were named on;
+            # on the other desks it correctly yields nothing.
+            f["approver_id"] = uid
         return f
 
-    base = _filters()
+    # Called per query, not shared: the dict carries a mutable $and list, and
+    # spreading one instance into all three desks would let an append in the
+    # second leak into the third.
 
     review = await db["project_tasks"].find(
-        {"status": "pending_review", "team_id": {"$in": team_ids}, **base}
+        {"status": "pending_review", "team_id": {"$in": team_ids}, **_filters()}
     ).sort("updated_at", -1).to_list(500)
 
     # Only work that is still UNASSIGNED belongs in the "Assign Work" queue.
@@ -529,11 +543,15 @@ async def leader_queue(
     #  leader's self-assigned work here forever and made self-assign look broken.)
     # `assigned` widens this beyond the default unassigned-only view, so a
     # leader can also look at work they have already handed out.
-    incoming_q: dict = {"status": "pending", "team_id": {"$in": team_ids}, **base}
+    incoming_q: dict = {"status": "pending", "team_id": {"$in": team_ids}, **_filters()}
+    # Nested under $and rather than assigned to the key directly: a scope like
+    # assigned_to_me has already set `assigned_to`, and writing it again here
+    # silently threw that away — the chip appeared active while the desk went
+    # on listing unassigned work.
     if assigned == "assigned":
-        incoming_q["assigned_to"] = {"$nin": ["", None]}
+        incoming_q.setdefault("$and", []).append({"assigned_to": {"$nin": ["", None]}})
     elif assigned != "all":
-        incoming_q["assigned_to"] = {"$in": ["", None]}
+        incoming_q.setdefault("$and", []).append({"assigned_to": {"$in": ["", None]}})
     incoming = await db["project_tasks"].find(incoming_q).sort("created_at", -1).to_list(500)
 
     # Reedit desk — tasks returned for revision that now live in one of this
@@ -541,7 +559,7 @@ async def leader_queue(
     # sends it back to reedit, it is returned to the routing leader's team (see
     # edit_task), so it surfaces here for the leader who originally routed it.
     reedit = await db["project_tasks"].find(
-        {"status": "reedit", "team_id": {"$in": team_ids}, **base}
+        {"status": "reedit", "team_id": {"$in": team_ids}, **_filters()}
     ).sort("updated_at", -1).to_list(500)
 
     return success_response(

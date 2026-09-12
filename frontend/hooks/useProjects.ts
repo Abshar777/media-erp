@@ -53,6 +53,8 @@ export interface LeaderQueueFilters {
   date_to?: string;
   /** "" / "unassigned" = the default queue, "assigned" or "all" widen it. */
   assigned?: string;
+  /** Same chips as the Projects board: assigned_to_me | needs_my_approval | created_by_me */
+  scope?: string;
 }
 
 export function useLeaderQueue(
