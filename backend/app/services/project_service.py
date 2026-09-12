@@ -58,6 +58,16 @@ def _serialize(doc: dict) -> dict:
             "intervals": serialized_intervals,
             "total_seconds": timing.get("total_seconds"),
         }
+    # Verifier sign-offs carry an `at` datetime. Every read path funnels through
+    # here, so normalising it once covers the board, the detail view, the leader
+    # queue and the verification page alike — missing it 500s the response
+    # *after* the write has landed, which looks like a failure that wasn't one.
+    if out.get("verifications"):
+        out["verifications"] = [
+            {**v, "at": _dt_to_utc_iso(v["at"]) if v.get("at") else None}
+            for v in out["verifications"]
+        ]
+
     # Serialize history entries
     if out.get("history"):
         out["history"] = [

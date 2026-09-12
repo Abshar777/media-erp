@@ -51,4 +51,11 @@ class UpdateTaskRequest(BaseModel):
     transfer_to_id: Optional[str] = None
     transfer_to_name: Optional[str] = None
     transfer_reason: Optional[str] = None
+    # ── Verification ──────────────────────────────────────────────────────────
+    # Who must sign the work off before it can be approved. Named as individual
+    # users and/or whole teams; a team is expanded to its members at the moment
+    # the task enters pending_review, so the roster is current when it matters.
+    verify_users: Optional[list[str]] = None
+    verify_teams: Optional[list[str]] = None
+    verify_instructions: Optional[str] = None
     caption: Optional[str] = None             # submission note added when sending to pending_review

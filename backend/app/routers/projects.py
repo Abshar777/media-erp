@@ -641,6 +641,8 @@ async def edit_task(
     transfer_to_id   = updates.pop("transfer_to_id", None)
     transfer_to_name = updates.pop("transfer_to_name", None)
     transfer_reason  = (updates.pop("transfer_reason", "") or "").strip()
+    verify_users  = updates.pop("verify_users", None)
+    verify_teams  = updates.pop("verify_teams", None)
 
     try:
         oid = ObjectId(task_id)
@@ -662,6 +664,16 @@ async def edit_task(
                     "Only a team leader can approve a task or send it to reedit.",
                     status_code=403,
                 )
+        # Verification gate. Applies to approval only — sending work back for
+        # rework while people are still checking it is perfectly reasonable.
+        if new_status == "approved" and not workflow.all_verified(current):
+            waiting = workflow.pending_verifiers(current)
+            names = ", ".join(v.get("name") or "someone" for v in waiting[:4])
+            more = f" and {len(waiting) - 4} more" if len(waiting) > 4 else ""
+            return error_response(
+                f"Still waiting on verification from {names}{more}.",
+                status_code=400,
+            )
         # Sending to reedit requires a reason
         if new_status == "reedit":
             if not (updates.get("reedit_reason") or "").strip():
@@ -796,9 +808,62 @@ async def edit_task(
             }}},
         )
 
+    # ── Verifier selection ────────────────────────────────────────────────────
+    # Stored as chosen; teams stay as team ids and are expanded later, so the
+    # roster is resolved when people are actually asked rather than frozen at
+    # the moment someone happened to fill the field in.
+    if verify_users is not None or verify_teams is not None:
+        if not await workflow.can_assign_task(current_user, current.get("team_id"), db):
+            return error_response(
+                "You must be a member of this task's team to set verifiers.",
+                status_code=403,
+            )
+        if verify_users is not None:
+            updates["verify_users"] = [u for u in verify_users if u]
+        if verify_teams is not None:
+            updates["verify_teams"] = [t for t in verify_teams if t]
+
+    # ── Entering review: expand the verifier list and ask them ────────────────
+    # Only those who rejected are re-armed; anyone who already passed is not
+    # asked to look at the same work twice.
+    verifiers_to_notify: list[dict] = []
+    if new_status == "pending_review" and new_status != cur_status:
+        chosen_users = updates.get("verify_users", current.get("verify_users") or [])
+        chosen_teams = updates.get("verify_teams", current.get("verify_teams") or [])
+        fresh = await workflow.resolve_verifiers(
+            db, chosen_users, chosen_teams,
+            exclude_user_id=current.get("assigned_to", "") or "",
+        )
+        merged = workflow.merge_verifications(current.get("verifications") or [], fresh)
+        updates["verifications"] = merged
+        verifiers_to_notify = [
+            v for v in merged if v.get("status") == workflow.VERIFY_PENDING
+        ]
+
     task = await update_task(db, task_id, updates)
     if not task:
         return error_response("Task not found", status_code=404)
+
+    # Ask the verifiers, once the submission has actually landed.
+    if verifiers_to_notify:
+        from app.services.notification_service import push_notification
+        from app.config import settings as _settings
+        title = task.get("title", "Task")
+        for v in verifiers_to_notify:
+            try:
+                await push_notification(
+                    db, v["user_id"], "verify_requested",
+                    "A task needs your verification",
+                    f'{actor_name} submitted "{title}" and needs you to verify it.',
+                    {
+                        "task_id": task_id,
+                        "task_title": title,
+                        "team_id": current.get("team_id", ""),
+                        "verify_url": f"{_settings.frontend_url}/verify/{task_id}",
+                    },
+                )
+            except Exception as exc:
+                print(f"[verify] notify failed for {v['user_id']}: {exc}", flush=True)
 
     # Tell both sides. Fired after the write so neither is told about a change
     # that failed to land.

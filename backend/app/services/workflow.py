@@ -191,6 +191,98 @@ async def is_team_member(db: AsyncIOMotorDatabase, team_id, user_id: str) -> boo
     return any(m.get("user_id") == user_id for m in team.get("members", []))
 
 
+# ── Verification ──────────────────────────────────────────────────────────────
+# A task may require named people to sign it off before it can be approved.
+# Verifiers are chosen as individuals and/or whole teams; teams are expanded
+# when the task reaches pending_review, so the roster is the current one at the
+# moment people are actually asked.
+
+VERIFY_PENDING  = "pending"
+VERIFY_PASSED   = "passed"
+VERIFY_REJECTED = "rejected"
+
+
+async def resolve_verifiers(
+    db: AsyncIOMotorDatabase,
+    user_ids: list[str] | None,
+    team_ids: list[str] | None,
+    exclude_user_id: str = "",
+) -> list[dict]:
+    """
+    Expand the chosen users + teams into one de-duplicated verifier list.
+
+    The assignee is excluded: signing off your own work is exactly what this
+    feature exists to prevent, and it would otherwise be trivial to satisfy by
+    naming a team you happen to be on.
+    """
+    ids: list[str] = []
+    for u in (user_ids or []):
+        if u and u not in ids:
+            ids.append(u)
+
+    for t in (team_ids or []):
+        if not t or not ObjectId.is_valid(t):
+            continue
+        team = await db["teams"].find_one({"_id": ObjectId(t)}, {"members": 1})
+        for m in (team or {}).get("members", []):
+            mid = m.get("user_id")
+            if mid and mid not in ids:
+                ids.append(mid)
+
+    ids = [i for i in ids if i and i != exclude_user_id]
+    if not ids:
+        return []
+
+    valid = [ObjectId(i) for i in ids if ObjectId.is_valid(i)]
+    users = await db["users"].find({"_id": {"$in": valid}}, {"name": 1, "email": 1}).to_list(500)
+    names = {str(u["_id"]): (u.get("name") or u.get("email", "")) for u in users}
+
+    return [
+        {
+            "user_id": i,
+            "name": names.get(i, ""),
+            "status": VERIFY_PENDING,
+            "reason": "",
+            "at": None,
+        }
+        for i in ids
+        if i in names   # a stale id would otherwise block approval forever
+    ]
+
+
+def merge_verifications(existing: list[dict], fresh: list[dict]) -> list[dict]:
+    """
+    Re-arm only the people who objected.
+
+    On resubmission someone who already passed should not be asked again — they
+    looked at it and were happy, and re-polling everyone turns a one-line fix
+    into another full round of chasing. Rejections reset to pending; passes are
+    carried over untouched.
+    """
+    by_id = {v["user_id"]: v for v in (existing or [])}
+    out = []
+    for v in fresh:
+        prev = by_id.get(v["user_id"])
+        if prev and prev.get("status") == VERIFY_PASSED:
+            out.append(prev)
+        else:
+            out.append(v)
+    return out
+
+
+def pending_verifiers(task: dict) -> list[dict]:
+    """Verifiers who have not passed yet — what blocks approval."""
+    return [
+        v for v in (task.get("verifications") or [])
+        if v.get("status") != VERIFY_PASSED
+    ]
+
+
+def all_verified(task: dict) -> bool:
+    """True when nobody is left to sign off (including when nobody was asked)."""
+    return not pending_verifiers(task)
+
+
 def apply_timing(
     current_status: str,
     new_status: str,
