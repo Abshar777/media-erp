@@ -12,6 +12,26 @@ export interface VerificationView {
   verifications: TaskVerification[];
 }
 
+export interface VerifyInboxItem extends Task {
+  my_verification: TaskVerification;
+  awaiting_me: boolean;
+}
+
+/** Every task that lists you as a verifier. Defaults to those still needing you. */
+export function useMyVerifications(scope: "pending" | "done" | "all" = "pending") {
+  return useQuery<VerifyInboxItem[]>({
+    queryKey: ["verify", "inbox", scope],
+    queryFn: async () => {
+      const { data } = await api.get<{ success: boolean; data: VerifyInboxItem[] }>(
+        "/verify", { params: { scope } }
+      );
+      return data.data;
+    },
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+}
+
 export function useVerification(taskId: string) {
   return useQuery<VerificationView>({
     queryKey: ["verify", taskId],

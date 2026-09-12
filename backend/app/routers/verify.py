@@ -50,6 +50,50 @@ async def _load(db, task_id: str):
     return task, None
 
 
+@router.get("")
+async def my_verifications(
+    scope: str = "pending",   # pending | done | all
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Every task that lists the caller as a verifier — their verification inbox.
+
+    Defaults to what still needs them. A task only needs looking at while it is
+    actually in review, so anything that has since moved on is reported as done
+    rather than left sitting in the queue.
+    """
+    uid = str(current_user["_id"])
+    docs = await db["project_tasks"].find(
+        {"verifications.user_id": uid}
+    ).sort("updated_at", -1).to_list(500)
+
+    out = []
+    for d in docs:
+        mine = next((v for v in d.get("verifications", []) if v.get("user_id") == uid), None)
+        if not mine:
+            continue
+        awaiting = (
+            mine.get("status") == workflow.VERIFY_PENDING
+            and d.get("status") == "pending_review"
+        )
+        if scope == "pending" and not awaiting:
+            continue
+        if scope == "done" and awaiting:
+            continue
+        out.append({
+            **_serialize(d),
+            "my_verification": _out([mine])[0],
+            "awaiting_me": awaiting,
+        })
+
+    return success_response(
+        data=out,
+        message="Verifications retrieved",
+        meta={"awaiting": sum(1 for t in out if t["awaiting_me"])},
+    )
+
+
 @router.get("/{task_id}")
 async def get_verification(
     task_id: str,

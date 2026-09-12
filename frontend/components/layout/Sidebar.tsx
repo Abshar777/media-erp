@@ -38,6 +38,7 @@ import { useLogout } from "@/hooks/useAuth";
 import { useUnreadCounts } from "@/hooks/useChat";
 import { useTeams } from "@/hooks/useTeams";
 import { useLeaderQueue } from "@/hooks/useProjects";
+import { useMyVerifications } from "@/hooks/useVerify";
 import ThemeToggle from "@/components/shared/ThemeToggle";
 import InstallAppRow from "@/components/InstallAppRow";
 import {
@@ -58,6 +59,7 @@ const NAV_ITEMS = [
   { label: "Media Schedule", href: "/media-schedule", icon: CalendarClock },
   { label: "Teams",         href: "/teams",          icon: UsersRound,      module: "teams" },
   { label: "Leader Desk",   href: "/leader",         icon: ClipboardCheck },
+  { label: "Verifications", href: "/verify",         icon: ShieldCheck },
   { label: "AI Queries",    href: "/ai",             icon: Sparkles,        module: "ai", hidden: true },
   { label: "Publish",       href: "/social",         icon: Share2,                              hidden: true },
   { label: "Send DM",       href: "/social/dm",      icon: Send,                                hidden: true },
@@ -173,6 +175,12 @@ function SidebarContent({
   const isSuperAdmin = !!(user?.role?.is_system_role && user?.role?.role_name === "Super Admin");
   const showLeaderDesk = isSuperAdmin || teams.some((t) => t.my_role === "leader");
 
+  // Always shown. Hiding it until you had something waiting meant nobody could
+  // find the page at all — including the people who needed to look at it before
+  // anything had been assigned to them.
+  const { data: myVerifications = [] } = useMyVerifications("pending");
+  const verifyBadge = myVerifications.length;
+
   // Badge: pending reviews + unassigned incoming + reedit tasks (only fetched when user can see Leader Desk)
   const { data: leaderData } = useLeaderQueue({ enabled: showLeaderDesk });
   const leaderBadge = showLeaderDesk
@@ -243,6 +251,7 @@ function SidebarContent({
             badge={
               item.href === "/chat" ? totalUnread :
               item.href === "/leader" ? (leaderBadge || undefined) :
+              item.href === "/verify" ? (verifyBadge || undefined) :
               undefined
             }
           />
