@@ -62,18 +62,24 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   // themselves and sign off their own work.
   const canSetApprover = isElevated || isLeaderOfTeam;
 
-  // Anyone in the company, not just the chosen team's members — the server no
-  // longer requires the assignee to belong to the team. They still see the
-  // task: "own" visibility matches on assigned_to, not on team.
-  const assigneeOptions = useMemo(
-    () =>
-      directory.map((u) => ({
-        id: u.id,
-        name: u.name || u.email,
-        designation: u.designation,
-      })),
-    [directory]
-  );
+  // Scoped to the chosen team once there is one — that is almost always who
+  // you mean, and picking from 4 names beats picking from 24. With no team
+  // chosen there is nothing to scope by, so the whole company is offered.
+  //
+  // Cross-team assignment is still allowed by the server; this only decides
+  // what the list defaults to showing.
+  const assigneeOptions = useMemo(() => {
+    const all = directory.map((u) => ({
+      id: u.id,
+      name: u.name || u.email,
+      designation: u.designation,
+    }));
+    if (!teamId || !teamDetail?.members) return all;
+    const inTeam = new Set(teamDetail.members.map((m) => m.user_id));
+    const scoped = all.filter((u) => inTeam.has(u.id));
+    // An empty team would otherwise leave nobody to assign to at all.
+    return scoped.length > 0 ? scoped : all;
+  }, [directory, teamId, teamDetail]);
 
   // Approver candidates come from the team's own member list — the server
   // rejects anyone outside it (workflow.is_team_member).
@@ -223,7 +229,11 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                   <label className="text-xs font-medium text-muted-foreground">Team *</label>
                   <select
                     value={teamId}
-                    onChange={e => { setTeamId(e.target.value); setAssignedTo(""); }}
+                    onChange={e => {
+                      setTeamId(e.target.value);
+                      // Whoever was picked may not be on the newly chosen team.
+                      setAssignedTo("");
+                    }}
                     className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
                   >
                     <option value="">Select a team…</option>
