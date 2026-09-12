@@ -55,7 +55,16 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   const { data: usersData } = useUsersList({ limit: 100 });
 
   const isLeaderOfTeam = !!teamId && (teamDetail?.my_role === "leader" || teamDetail?.my_role === "admin");
-  const canAssignOthers = isElevated || isLeaderOfTeam;
+  // Mirrors workflow.can_assign_task: any member of the chosen team may raise
+  // work for a colleague, not just its leader. `my_role` is only set for teams
+  // the user actually belongs to, so its presence IS the membership test.
+  const isMemberOfTeam = !!teamId && !!teamDetail?.my_role;
+  const canAssignOthers = isElevated || isLeaderOfTeam || isMemberOfTeam;
+
+  // Choosing the approver stays leader/admin only (workflow.can_assign_to_others):
+  // it grants approval rights, so an employee must not be able to name
+  // themselves and sign off their own work.
+  const canSetApprover = isElevated || isLeaderOfTeam;
 
   const assigneeOptions = useMemo(() => {
     if (teamId && teamDetail?.members) {
@@ -133,7 +142,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
       attachments,
       // Only send when the user may actually set it; the server enforces the
       // same rule and would 403 otherwise.
-      ...(canAssignOthers && approverId
+      ...(canSetApprover && approverId
         ? {
             approver_id: approverId,
             approver_name: approverOptions.find((o) => o.id === approverId)?.name ?? "",
@@ -281,7 +290,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
               </div>
 
               {/* Approver — leader/admin only, matching the server gate */}
-              {canAssignOthers && teamId && (
+              {canSetApprover && teamId && (
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">
                     Approved By
