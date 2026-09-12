@@ -45,12 +45,30 @@ export function useTaskDetail(id: string | null) {
   });
 }
 
-export function useLeaderQueue(opts?: { enabled?: boolean }) {
+export interface LeaderQueueFilters {
+  search?: string;
+  priority?: string;
+  date_filter?: string;
+  date_from?: string;
+  date_to?: string;
+  /** "" / "unassigned" = the default queue, "assigned" or "all" widen it. */
+  assigned?: string;
+}
+
+export function useLeaderQueue(
+  opts?: { enabled?: boolean },
+  filters: LeaderQueueFilters = {}
+) {
   return useQuery({
-    queryKey: ["projects", "leader-queue"],
+    // Filters are part of the key, so each combination caches separately
+    // instead of the 15s poll overwriting a filtered view with an unfiltered one.
+    queryKey: ["projects", "leader-queue", filters],
     queryFn: async () => {
+      const params: Record<string, string> = {};
+      for (const [k, v] of Object.entries(filters)) if (v) params[k] = v;
       const { data } = await api.get<{ success: boolean; data: LeaderQueue }>(
-        "/projects/leader/queue"
+        "/projects/leader/queue",
+        { params }
       );
       return data.data;
     },
@@ -94,6 +112,7 @@ export function useTasksPaged(
       if (filters.date_to)     params.date_to     = filters.date_to;
       if (filters.team_id)     params.team_id     = filters.team_id;
       if (filters.member_id)   params.member_id   = filters.member_id;
+      if (filters.scope)       params.scope       = filters.scope;
       params.page = page;
       if (limit > 0) params.limit = limit;
 
@@ -147,6 +166,8 @@ export function useBoardColumns(
           if (filters.date_to)     params.date_to     = filters.date_to;
           if (filters.team_id)     params.team_id     = filters.team_id;
           if (filters.member_id)   params.member_id   = filters.member_id;
+          if (filters.scope)       params.scope       = filters.scope;
+      if (filters.scope)       params.scope       = filters.scope;
           const { data } = await api.get<{
             success: boolean; data: Task[]; meta?: TasksMeta;
           }>("/projects", { params });
@@ -215,6 +236,7 @@ export function useTasks(filters: Partial<ProjectFilters> = {}) {
       if (filters.date_to)     params.date_to     = filters.date_to;
       if (filters.team_id)     params.team_id     = filters.team_id;
       if (filters.member_id)   params.member_id   = filters.member_id;
+      if (filters.scope)       params.scope       = filters.scope;
       const { data } = await api.get<{ success: boolean; data: Task[] }>(
         "/projects",
         { params }

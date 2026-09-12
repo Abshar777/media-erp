@@ -165,7 +165,18 @@ export interface ProjectFilters {
   date_to: string;
   team_id?: string;
   member_id?: string;
+  /** Quick scope chip: narrows to your own slice of the board. */
+  scope?: TaskScope;
 }
+
+/** "" = no scope chip active (the normal, unnarrowed board). */
+export type TaskScope = "" | "assigned_to_me" | "needs_my_approval" | "created_by_me";
+
+export const TASK_SCOPES: { value: Exclude<TaskScope, "">; label: string }[] = [
+  { value: "assigned_to_me",    label: "Assigned to me" },
+  { value: "needs_my_approval", label: "Needs my approval" },
+  { value: "created_by_me",     label: "Created by me" },
+];
 
 // ── Fixed Kanban columns ────────────────────────────────────────────────────
 // The board has exactly these 5 columns. Names/colours/order are fixed —

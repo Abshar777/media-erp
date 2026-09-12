@@ -155,6 +155,10 @@ async def list_tasks(
     visibility: str = "all",
     user_id: str = "",
     leader_team_ids: list = None,  # set when visibility == "leader_teams"
+    # Quick scopes, applied on top of visibility rather than instead of it:
+    #   assigned_to_me | created_by_me | needs_my_approval
+    scope: str = "",
+    approver_team_ids: list = None,  # teams the caller leads, for needs_my_approval
     page: int = 1,
     limit: int = 0,   # 0 = no paging (return all, up to TASK_LIST_LIMIT)
 ) -> list[dict]:
@@ -193,6 +197,24 @@ async def list_tasks(
     elif visibility == "leader_teams" and leader_team_ids:
         # Team Leader with no explicit team_id — scope to all teams they lead
         query["team_id"] = {"$in": leader_team_ids}
+
+    # ── Quick scopes ──────────────────────────────────────────────────────────
+    # Nested under $and for the same reason as the visibility clause: `search`
+    # already holds the top-level $or, and a second assignment would drop it.
+    if scope == "assigned_to_me" and user_id:
+        query.setdefault("$and", []).append({"assigned_to": user_id})
+    elif scope == "created_by_me" and user_id:
+        query.setdefault("$and", []).append({"created_by": user_id})
+    elif scope == "needs_my_approval" and user_id:
+        # Waiting on you specifically: named approver, or a leader of the team
+        # it sits in. Mirrors workflow.can_approve, minus the elevated roles —
+        # an admin can approve anything, so listing every task in the company
+        # under "needs my approval" would be useless to them.
+        waiting: list[dict] = [{"approver_id": user_id}]
+        if approver_team_ids:
+            waiting.append({"team_id": {"$in": approver_team_ids}})
+        query.setdefault("$and", []).append({"status": "pending_review"})
+        query.setdefault("$and", []).append({"$or": waiting})
     # "team"  → team_id already applied above (leader sees all tasks in that specific team)
     # "all"   → no additional filter (Super Admin / Admin / Coordinator)
 

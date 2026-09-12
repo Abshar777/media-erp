@@ -1,14 +1,20 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
 import {
   ClipboardCheck, CheckCircle2, RotateCcw, Inbox, UserPlus,
+  Search,
   Loader2, Calendar, Crown, ChevronDown, Paperclip,
   MessageSquare, Eye, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useLeaderQueue, useUpdateTask, type LeaderTeam } from "@/hooks/useProjects";
+import {
+  useLeaderQueue,
+  useUpdateTask,
+  type LeaderTeam,
+  type LeaderQueueFilters,
+} from "@/hooks/useProjects";
 import { TaskDetailModal } from "@/components/projects/TaskDetailModal";
 import { ApproveRouteModal, ReeditModal } from "@/components/projects/ReviewActionModals";
 import { useAuthStore } from "@/stores/authStore";
@@ -342,8 +348,28 @@ function ReeditCard({ task, team }: { task: Task; team?: LeaderTeam }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+const DATE_CHIPS: { value: string; label: string }[] = [
+  { value: "",           label: "All Time" },
+  { value: "today",      label: "Today" },
+  { value: "this_week",  label: "This Week" },
+  { value: "this_month", label: "This Month" },
+  { value: "this_year",  label: "This Year" },
+];
+
 export default function LeaderPage() {
-  const { data, isLoading } = useLeaderQueue();
+  const [qFilters, setQFilters] = useState<LeaderQueueFilters>({
+    search: "", priority: "", date_filter: "", assigned: "",
+  });
+  // Debounced so a search doesn't refire the query on every keystroke.
+  const [searchInput, setSearchInput] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setQFilters((f) => ({ ...f, search: searchInput })), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const { data, isLoading } = useLeaderQueue(undefined, qFilters);
+  const filtersActive =
+    !!(qFilters.search || qFilters.priority || qFilters.date_filter || qFilters.assigned);
   const [tab, setTab] = useState<Tab>("review");
   const [reeditTask, setReeditTask] = useState<Task | null>(null);
   const [approveTask, setApproveTask] = useState<Task | null>(null);
@@ -426,6 +452,75 @@ export default function LeaderPage() {
             )}
           </button>
         ))}
+      </div>
+
+      {/* Filters — applied server-side across all three desks, so a search or
+          date range means the same thing whichever tab you are on. */}
+      <div className="flex flex-col gap-3 rounded-xl border bg-card p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[200px] flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search tasks…"
+              className="w-full rounded-lg border bg-background pl-9 pr-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+            />
+          </div>
+
+          <select
+            value={qFilters.priority ?? ""}
+            onChange={(e) => setQFilters((f) => ({ ...f, priority: e.target.value }))}
+            className="rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+          >
+            <option value="">All Priorities</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+
+          {/* Only meaningful on Assign Work, which is the tab that distinguishes
+              distributed work from work still waiting to be handed out. */}
+          {tab === "assign" && (
+            <select
+              value={qFilters.assigned ?? ""}
+              onChange={(e) => setQFilters((f) => ({ ...f, assigned: e.target.value }))}
+              className="rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+            >
+              <option value="">Unassigned only</option>
+              <option value="assigned">Already assigned</option>
+              <option value="all">All work</option>
+            </select>
+          )}
+
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={() => { setSearchInput(""); setQFilters({ search: "", priority: "", date_filter: "", assigned: "" }); }}
+              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {DATE_CHIPS.map((d) => (
+            <button
+              key={d.value || "all"}
+              type="button"
+              onClick={() => setQFilters((f) => ({ ...f, date_filter: d.value }))}
+              className={cn(
+                "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                (qFilters.date_filter ?? "") === d.value
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted/60 text-muted-foreground hover:bg-muted"
+              )}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Team filter (review tab) */}

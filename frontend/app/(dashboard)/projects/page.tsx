@@ -13,6 +13,7 @@ import { useTeams, useTeam } from "@/hooks/useTeams";
 import { useAuthStore } from "@/stores/authStore";
 import { cn } from "@/lib/utils";
 import type { ProjectFilters } from "@/types/project";
+import { TASK_SCOPES } from "@/types/project";
 
 const EMPTY_FILTERS: ProjectFilters = {
   search: "",
@@ -23,6 +24,7 @@ const EMPTY_FILTERS: ProjectFilters = {
   date_to: "",
   team_id: "",
   member_id: "",
+  scope: "",
 };
 
 type ViewMode = "kanban" | "table";
@@ -171,6 +173,38 @@ export default function ProjectsPage() {
           )}
         </div>
       )}
+
+      {/* Quick scopes — one click to "my slice" of a board that is otherwise
+          the whole team's. Toggling a chip off returns to the full board. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {TASK_SCOPES.map((s) => {
+          const active = filters.scope === s.value;
+          return (
+            <button
+              key={s.value}
+              type="button"
+              onClick={() => patchFilter({ scope: active ? "" : s.value })}
+              className={cn(
+                "rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors",
+                active
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background hover:bg-muted text-muted-foreground border-border"
+              )}
+            >
+              {s.label}
+            </button>
+          );
+        })}
+        {filters.scope && (
+          <button
+            type="button"
+            onClick={() => patchFilter({ scope: "" })}
+            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+          >
+            Clear
+          </button>
+        )}
+      </div>
 
       {/* Filters bar */}
       <ProjectFiltersBar

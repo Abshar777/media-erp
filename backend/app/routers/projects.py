@@ -263,6 +263,8 @@ async def get_tasks(
     date_to: str = Query(default=""),
     team_id: str = Query(default=""),
     member_id: str = Query(default=""),
+    # Quick scope: assigned_to_me | created_by_me | needs_my_approval
+    scope: str = Query(default=""),
     # Pagination (mirrors /users). limit=0 keeps the legacy "return everything
     # up to the safety ceiling" behaviour so existing callers are unaffected.
     page: int = Query(default=1, ge=1),
@@ -279,6 +281,16 @@ async def get_tasks(
         uid              = member_id
         leader_team_ids  = None    # clear team scope
 
+    # "Needs my approval" has to know which teams you lead, which visibility
+    # only works out for a plain Team Leader. Resolve it directly so the scope
+    # also works for an elevated role, who has no leader_team_ids.
+    approver_team_ids: list[str] = []
+    if scope == "needs_my_approval":
+        led = await db["teams"].find(
+            {"members": {"$elemMatch": {"user_id": uid, "role": "leader"}}}, {"_id": 1}
+        ).to_list(500)
+        approver_team_ids = [str(t["_id"]) for t in led]
+
     tasks, total = await list_tasks(
         db,
         search=search,
@@ -291,6 +303,8 @@ async def get_tasks(
         visibility=visibility,
         user_id=uid,
         leader_team_ids=leader_team_ids or [],
+        scope=scope,
+        approver_team_ids=approver_team_ids,
         page=page,
         limit=limit,
     )
@@ -412,6 +426,12 @@ async def add_task(
 
 @router.get("/leader/queue")
 async def leader_queue(
+    search: str = Query(default=""),
+    priority: str = Query(default=""),
+    date_filter: str = Query(default=""),   # today|this_week|this_month|this_year|custom
+    date_from: str = Query(default=""),
+    date_to: str = Query(default=""),
+    assigned: str = Query(default=""),      # "assigned" | "unassigned"
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
@@ -462,8 +482,44 @@ async def leader_queue(
         ],
     } for t in teams]
 
+    # ── Shared filters across all three desks ─────────────────────────────────
+    # Built once and merged into each query, so a search or a date range means
+    # the same thing on every tab rather than only on the one it was added to.
+    from app.utils.timezone import ist_period_start_utc, ist_day_start_utc, ist_day_end_utc
+
+    def _filters() -> dict:
+        f: dict = {}
+        if search:
+            f["$or"] = [
+                {"title": {"$regex": search, "$options": "i"}},
+                {"description": {"$regex": search, "$options": "i"}},
+            ]
+        if priority:
+            f["priority"] = priority
+        if date_filter == "custom":
+            # Same parsing as list_tasks: these arrive as "YYYY-MM-DD" strings
+            # and the helpers take a date, not a string.
+            from datetime import datetime as _dt
+            rng = {}
+            try:
+                if date_from:
+                    rng["$gte"] = ist_day_start_utc(_dt.strptime(date_from, "%Y-%m-%d").date())
+                if date_to:
+                    rng["$lte"] = ist_day_end_utc(_dt.strptime(date_to, "%Y-%m-%d").date())
+            except ValueError:
+                rng = {}   # a malformed date should not silently hide everything
+            if rng:
+                f["created_at"] = rng
+        elif date_filter:
+            start = ist_period_start_utc(date_filter)
+            if start:
+                f["created_at"] = {"$gte": start}
+        return f
+
+    base = _filters()
+
     review = await db["project_tasks"].find(
-        {"status": "pending_review", "team_id": {"$in": team_ids}}
+        {"status": "pending_review", "team_id": {"$in": team_ids}, **base}
     ).sort("updated_at", -1).to_list(500)
 
     # Only work that is still UNASSIGNED belongs in the "Assign Work" queue.
@@ -471,18 +527,21 @@ async def leader_queue(
     # and leaves this queue, showing up on the assignee's board instead.
     # (Previously this also matched `assigned_to == uid`, which trapped a
     #  leader's self-assigned work here forever and made self-assign look broken.)
-    incoming = await db["project_tasks"].find({
-        "status": "pending",
-        "team_id": {"$in": team_ids},
-        "assigned_to": {"$in": ["", None]},
-    }).sort("created_at", -1).to_list(500)
+    # `assigned` widens this beyond the default unassigned-only view, so a
+    # leader can also look at work they have already handed out.
+    incoming_q: dict = {"status": "pending", "team_id": {"$in": team_ids}, **base}
+    if assigned == "assigned":
+        incoming_q["assigned_to"] = {"$nin": ["", None]}
+    elif assigned != "all":
+        incoming_q["assigned_to"] = {"$in": ["", None]}
+    incoming = await db["project_tasks"].find(incoming_q).sort("created_at", -1).to_list(500)
 
     # Reedit desk — tasks returned for revision that now live in one of this
     # leader's teams. When a leader routes a task to another team and that team
     # sends it back to reedit, it is returned to the routing leader's team (see
     # edit_task), so it surfaces here for the leader who originally routed it.
     reedit = await db["project_tasks"].find(
-        {"status": "reedit", "team_id": {"$in": team_ids}}
+        {"status": "reedit", "team_id": {"$in": team_ids}, **base}
     ).sort("updated_at", -1).to_list(500)
 
     return success_response(
