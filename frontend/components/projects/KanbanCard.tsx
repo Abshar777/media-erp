@@ -133,9 +133,6 @@ export function KanbanCard({ task, overlay = false }: Props) {
           {meta.label}
         </span>
 
-        {/* Verification standing — only rendered once someone was asked. */}
-        <VerificationBadge task={task} compact />
-
         {/* Delete — appears on hover */}
         <button
           onPointerDown={(e) => e.stopPropagation()}
@@ -161,7 +158,15 @@ export function KanbanCard({ task, overlay = false }: Props) {
         </button>
       </div>
 
-      {/* ── Row 2: timer · pause count ── */}
+      {/* ── Row 2: verification standing ──
+          On its own line rather than beside the title: the title is the one
+          thing that must always be readable, and a badge sharing that row
+          squeezed it to nothing on narrow columns. */}
+      <div className="pl-5 mt-1.5 empty:hidden">
+        <VerificationBadge task={task} compact />
+      </div>
+
+      {/* ── Row 3: timer · pause count ── */}
       {hasTimer && (
         <div className="flex items-center gap-2.5 pl-5 mt-1.5">
           {isRunning ? (
