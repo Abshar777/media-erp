@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BellRing,
+  ShieldCheck,
+  ShieldAlert,
   ArrowLeftRight,
   AtSign,
   Bell, CheckCheck, RefreshCw, ServerCrash, Wifi,
@@ -51,6 +53,12 @@ function typeConfig(type: string): { icon: React.ReactNode; bg: string } {
       return { icon: <Users className="size-3.5 text-purple-500" />,          bg: "bg-purple-100 dark:bg-purple-900/30" };
     case "due_date_reminder":
       return { icon: <Clock className="size-3.5 text-red-500" />,             bg: "bg-red-100 dark:bg-red-900/30" };
+    case "verify_requested":
+      return { icon: <ShieldCheck className="size-3.5 text-indigo-500" />,   bg: "bg-indigo-100 dark:bg-indigo-900/30" };
+    case "verify_passed":
+      return { icon: <ShieldCheck className="size-3.5 text-green-600" />,    bg: "bg-green-100 dark:bg-green-900/30" };
+    case "verify_rejected":
+      return { icon: <ShieldAlert className="size-3.5 text-rose-500" />,     bg: "bg-rose-100 dark:bg-rose-900/30" };
     case "task_transferred":
       return { icon: <ArrowLeftRight className="size-3.5 text-sky-500" />,   bg: "bg-sky-100 dark:bg-sky-900/30" };
     case "mention":
@@ -69,7 +77,22 @@ const TASK_TYPES = new Set([
   "task_assigned", "task_started", "task_break", "pending_review",
   "task_approved", "task_reedit", "team_task_assigned", "due_date_reminder",
   "task_transferred",
+  // Your own task was verified or sent back — the board is the right landing.
+  "verify_rejected", "verify_passed",
 ]);
+
+/**
+ * Where a notification should take you. Being asked to verify is the one case
+ * that has its own page: without this the request was a dead end in-app, since
+ * the only other route to it is the email link.
+ */
+function destination(item: Notification): string | null {
+  if (item.type === "verify_requested") {
+    const taskId = (item.metadata as { task_id?: string })?.task_id;
+    return taskId ? `/verify/${taskId}` : null;
+  }
+  return TASK_TYPES.has(item.type) ? "/projects" : null;
+}
 
 // ── Single notification row ───────────────────────────────────────────────────
 function NotifRow({ item, onClose }: { item: Notification; onClose: () => void }) {
@@ -79,8 +102,9 @@ function NotifRow({ item, onClose }: { item: Notification; onClose: () => void }
 
   function handleClick() {
     if (!item.read) markRead.mutate(item.id);
-    if (TASK_TYPES.has(item.type)) {
-      router.push("/projects");
+    const to = destination(item);
+    if (to) {
+      router.push(to);
       onClose();
     }
   }
