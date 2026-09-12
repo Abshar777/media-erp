@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
 import { TaskHistoryReport } from "@/components/projects/TaskHistoryReport";
 import { TransferTaskModal } from "@/components/projects/TransferTaskModal";
+import { VerifierPicker } from "@/components/projects/VerifierPicker";
 import { FileUploader } from "@/components/shared/FileUploader";
 import { useTeams, useTeam, useAllTeams, useAssignableUsers } from "@/hooks/useTeams";
 import { useAuthStore } from "@/stores/authStore";
@@ -620,53 +621,21 @@ export function TaskDetailModal({
 
                     <div className="space-y-1.5 pt-1">
                       <label className="text-xs font-medium">Verified by</label>
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (!v) return;
-                          const [kind, id] = v.split(":");
-                          if (kind === "u" && !verifyUsers.includes(id)) setVerifyUsers((p) => [...p, id]);
-                          if (kind === "t" && !verifyTeams.includes(id)) setVerifyTeams((p) => [...p, id]);
+                      <VerifierPicker
+                        teams={allTeamsForVerify}
+                        people={directory}
+                        selectedTeams={verifyTeams}
+                        selectedPeople={verifyUsers}
+                        excludePersonId={task.assigned_to}
+                        onToggleTeam={(id) => {
+                          setVerifyTeams((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
                           setVerifyDirty(true);
                         }}
-                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-                      >
-                        <option value="">Add a person or a team…</option>
-                        <optgroup label="Teams (everyone in them)">
-                          {allTeamsForVerify
-                            .filter((t) => !verifyTeams.includes(t.id))
-                            .map((t) => <option key={t.id} value={`t:${t.id}`}>{t.name}</option>)}
-                        </optgroup>
-                        <optgroup label="People">
-                          {directory
-                            .filter((u) => !verifyUsers.includes(u.id) && u.id !== task.assigned_to)
-                            .map((u) => <option key={u.id} value={`u:${u.id}`}>{u.name || u.email}</option>)}
-                        </optgroup>
-                      </select>
-
-                      {(verifyTeams.length > 0 || verifyUsers.length > 0) && (
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          {verifyTeams.map((id) => (
-                            <button
-                              key={id} type="button"
-                              onClick={() => { setVerifyTeams((p) => p.filter((x) => x !== id)); setVerifyDirty(true); }}
-                              className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary hover:bg-primary/20"
-                            >
-                              {allTeamsForVerify.find((t) => t.id === id)?.name ?? "Team"} ✕
-                            </button>
-                          ))}
-                          {verifyUsers.map((id) => (
-                            <button
-                              key={id} type="button"
-                              onClick={() => { setVerifyUsers((p) => p.filter((x) => x !== id)); setVerifyDirty(true); }}
-                              className="rounded-full bg-muted px-2 py-0.5 text-[11px] hover:bg-muted/70"
-                            >
-                              {directory.find((u) => u.id === id)?.name ?? "Person"} ✕
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                        onTogglePerson={(id) => {
+                          setVerifyUsers((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+                          setVerifyDirty(true);
+                        }}
+                      />
                     </div>
 
                     <div className="space-y-1.5">
