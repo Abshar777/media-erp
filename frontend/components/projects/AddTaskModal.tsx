@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Paperclip, Link } from "lucide-react";
+import { X, Plus, Paperclip, Link, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCreateTask } from "@/hooks/useProjects";
 import { FileUploader } from "@/components/shared/FileUploader";
@@ -214,7 +214,21 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                 />
               </div>
 
-              {/* Team */}
+              {/* Team. A task always belongs to one (the API rejects it otherwise),
+                  so with no teams to choose from there is nothing to fill in —
+                  say why rather than hiding the field and leaving the rest of
+                  the form asking for a team that cannot be picked. */}
+              {teams.length === 0 && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-300/50 bg-amber-50 dark:border-amber-800/50 dark:bg-amber-900/20 px-3 py-2.5">
+                  <AlertCircle className="size-4 shrink-0 text-amber-600 mt-0.5" />
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    You&apos;re not a member of any team yet, and every task belongs
+                    to one. Ask an admin or a team leader to add you, then you can
+                    create and assign tasks.
+                  </p>
+                </div>
+              )}
+
               {teams.length > 0 && (
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">Team *</label>
@@ -273,9 +287,11 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                     // Distinct from the permission lock below. Whoever you can
                     // assign to depends on the team, so before one is chosen
                     // there is nothing to offer — saying so beats showing your
-                    // own name, which reads as "you aren't allowed".
+                    // own name, which reads as "you aren't allowed". With no
+                    // teams at all there is no team picker to point at, so the
+                    // wording must not tell you to use one.
                     <div className="w-full rounded-lg border border-dashed bg-muted/20 px-3 py-2 text-sm text-muted-foreground truncate">
-                      Pick a team first
+                      {teams.length === 0 ? "No team yet" : "Pick a team first"}
                     </div>
                   ) : (
                     <div
