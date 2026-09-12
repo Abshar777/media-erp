@@ -116,6 +116,7 @@ function KanbanColumn({ column, tasks, isOver, isValidTarget, isSource, onAdd, c
       {/* Drop zone */}
       <div
         ref={setNodeRef}
+        data-column-scroll
         className={cn(
           "no-scrollbar flex flex-col gap-2 rounded-b-xl border border-t-0 p-1.5",
           "overflow-y-auto overflow-x-hidden [overscroll-behavior:contain]",
@@ -333,6 +334,31 @@ export function KanbanBoard({
     );
   }
 
+  // The board overflows horizontally, but a plain wheel only scrolls
+  // vertically, and the strip's scrollbar used to be hidden — so on a mouse
+  // there was no way to reach the right-hand columns at all. Translate a
+  // vertical wheel into horizontal movement.
+  const stripRef = useRef<HTMLDivElement>(null);
+
+  function onStripWheel(e: React.WheelEvent<HTMLDivElement>) {
+    const strip = stripRef.current;
+    if (!strip) return;
+    // Real horizontal intent (trackpad, shift+wheel) — leave it to the browser.
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    if (strip.scrollWidth <= strip.clientWidth) return;
+
+    // A column's task list scrolls vertically. Don't steal its wheel while it
+    // still has somewhere to go, or a long column becomes unscrollable.
+    const list = (e.target as HTMLElement).closest<HTMLElement>("[data-column-scroll]");
+    if (list) {
+      const down = e.deltaY > 0;
+      const atTop = list.scrollTop <= 0;
+      const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 1;
+      if ((down && !atBottom) || (!down && !atTop)) return;
+    }
+    strip.scrollLeft += e.deltaY;
+  }
+
   function onDragCancel() {
     draggingRef.current = false;
     pendingSyncRef.current = false;
@@ -354,9 +380,13 @@ export function KanbanBoard({
         {/* Phones stack the columns vertically (a 6-column horizontal strip is
             unusable at 375px); from md up it becomes the classic side-by-side
             board that scrolls horizontally. */}
-        <div className="no-scrollbar flex flex-col gap-3 pt-1 pb-1 select-none
-                        md:h-full md:min-h-0 md:flex-row md:overflow-x-auto
-                        [overscroll-behavior:contain]">
+        <div
+          ref={stripRef}
+          onWheel={onStripWheel}
+          className="flex flex-col gap-3 pt-1 pb-1 select-none
+                     md:h-full md:min-h-0 md:flex-row md:overflow-x-auto
+                     [overscroll-behavior:contain]"
+        >
           {BOARD_COLUMNS.map((col) => {
             const isSource      = activeTask?.status === col.key;
             const isValidTarget = activeTask !== null
