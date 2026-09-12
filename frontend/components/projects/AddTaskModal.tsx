@@ -269,10 +269,18 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                         <option key={o.id} value={o.id}>{o.name}</option>
                       ))}
                     </select>
+                  ) : !teamId ? (
+                    // Distinct from the permission lock below. Whoever you can
+                    // assign to depends on the team, so before one is chosen
+                    // there is nothing to offer — saying so beats showing your
+                    // own name, which reads as "you aren't allowed".
+                    <div className="w-full rounded-lg border border-dashed bg-muted/20 px-3 py-2 text-sm text-muted-foreground truncate">
+                      Pick a team first
+                    </div>
                   ) : (
                     <div
                       className="w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground truncate"
-                      title="Only a team leader can assign tasks to others"
+                      title="You can only assign work to members of a team you belong to"
                     >
                       {me?.name ? `${me.name} (you)` : "You"}
                     </div>
