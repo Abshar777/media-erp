@@ -263,7 +263,7 @@ async def get_tasks(
     date_to: str = Query(default=""),
     team_id: str = Query(default=""),
     member_id: str = Query(default=""),
-    # Quick scope: assigned_to_me | created_by_me | needs_my_approval
+    # Quick scope: assigned_to_me | created_by_me | needs_my_approval | verify_by_me
     scope: str = Query(default=""),
     # Pagination (mirrors /users). limit=0 keeps the legacy "return everything
     # up to the safety ceiling" behaviour so existing callers are unaffected.

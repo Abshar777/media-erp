@@ -346,3 +346,64 @@ async def remove_verifier(
         },
         message="Verifier removed",
     )
+
+
+@router.post("/{task_id}/remind")
+async def remind_verifiers(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Nudge everyone who still has to sign off.
+
+    The people blocked by a verification are the ones who want it chased, so
+    this is open to anyone who can see the task rather than gated to admins.
+    Only those still outstanding are contacted — re-pinging someone who already
+    passed is how a reminder turns into noise people learn to ignore.
+    """
+    task, err = await _load(db, task_id)
+    if err:
+        return err
+
+    if task.get("status") != "pending_review":
+        return error_response(
+            "This task isn't awaiting review, so there's nothing to chase.",
+            status_code=400,
+        )
+
+    pending = [
+        v for v in (task.get("verifications") or [])
+        if v.get("status") == workflow.VERIFY_PENDING
+    ]
+    if not pending:
+        return error_response("Everyone has already verified this task.", status_code=400)
+
+    from app.config import settings as _settings
+    from app.services.notification_service import push_notification
+
+    actor_name = current_user.get("name", "")
+    title = task.get("title", "a task")
+    sent = 0
+    for v in pending:
+        try:
+            await push_notification(
+                db, v["user_id"], "verify_requested",
+                "Reminder: a task needs your verification",
+                f'{actor_name} is waiting on your verification of "{title}".',
+                {
+                    "task_id": task_id,
+                    "task_title": title,
+                    "team_id": task.get("team_id", ""),
+                    "verify_url": f"{_settings.frontend_url}/verify/{task_id}",
+                },
+            )
+            sent += 1
+        except Exception as exc:
+            print(f"[verify] reminder failed for {v['user_id']}: {exc}", flush=True)
+
+    names = ", ".join(v.get("name") or "someone" for v in pending)
+    return success_response(
+        data={"sent": sent, "to": [v.get("name") for v in pending]},
+        message=f"Reminder sent to {names}" if sent else "Could not send the reminder",
+    )

@@ -118,3 +118,23 @@ export function useRemoveVerifier(taskId: string) {
     },
   });
 }
+
+
+/** Nudge whoever still has to verify. Only the outstanding are contacted. */
+export function useRemindVerifiers(taskId: string) {
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post(`/verify/${taskId}/remind`);
+      return data;
+    },
+    onSuccess(d) {
+      toast.success(d?.message ?? "Reminder sent");
+    },
+    onError(err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        "Could not send the reminder";
+      toast.error(msg);
+    },
+  });
+}

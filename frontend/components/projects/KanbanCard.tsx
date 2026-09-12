@@ -11,6 +11,7 @@ import type { Task, TaskStatus } from "@/types/project";
 import { BOARD_COLUMNS, PRIORITY_META, allowedColumns } from "@/types/project";
 import { useTaskTimer, formatSeconds, formatSecondsHMS } from "@/hooks/useTaskTimer";
 import { TaskDetailModal } from "./TaskDetailModal";
+import { VerificationBadge } from "./VerificationBadge";
 import { ApproveRouteModal, ReeditModal } from "./ReviewActionModals";
 
 interface Props {
@@ -131,6 +132,9 @@ export function KanbanCard({ task, overlay = false }: Props) {
         >
           {meta.label}
         </span>
+
+        {/* Verification standing — only rendered once someone was asked. */}
+        <VerificationBadge task={task} compact />
 
         {/* Delete — appears on hover */}
         <button

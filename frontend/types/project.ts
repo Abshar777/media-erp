@@ -194,12 +194,18 @@ export interface ProjectFilters {
 }
 
 /** "" = no scope chip active (the normal, unnarrowed board). */
-export type TaskScope = "" | "assigned_to_me" | "needs_my_approval" | "created_by_me";
+export type TaskScope =
+  | ""
+  | "assigned_to_me"
+  | "needs_my_approval"
+  | "created_by_me"
+  | "verify_by_me";
 
 export const TASK_SCOPES: { value: Exclude<TaskScope, "">; label: string }[] = [
   { value: "assigned_to_me",    label: "Assigned to me" },
   { value: "needs_my_approval", label: "Needs my approval" },
   { value: "created_by_me",     label: "Created by me" },
+  { value: "verify_by_me",      label: "To verify by me" },
 ];
 
 // ── Fixed Kanban columns ────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import { listItemVariants, listVariants } from "@/lib/animations";
 import { fmtDate, fmtDateOnly } from "@/lib/datetime";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import { ApproveRouteModal, ReeditModal } from "./ReviewActionModals";
+import { VerificationBadge } from "./VerificationBadge";
 import { toast } from "sonner";
 
 type SortKey = "title" | "status" | "priority" | "due_date" | "created_at";
@@ -134,6 +135,7 @@ export function TaskTable({ tasks }: Props) {
                           <Paperclip className="size-3" />{attachmentCount}
                         </span>
                       )}
+                      <VerificationBadge task={task} compact />
                     </div>
                     {task.description && (
                       <p className="text-[11px] text-muted-foreground truncate mt-0.5">{task.description}</p>

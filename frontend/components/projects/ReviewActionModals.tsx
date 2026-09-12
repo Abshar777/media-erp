@@ -19,6 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask } from "@/hooks/useProjects";
+import { useRemindVerifiers } from "@/hooks/useVerify";
 import { useAllTeams, useTeam } from "@/hooks/useTeams";
 import type { Task, UpdateTaskPayload } from "@/types/project";
 import { PRIORITY_META, assigneeLabel, pendingVerifiers } from "@/types/project";
@@ -160,6 +161,7 @@ export function ApproveRouteModal({
   const members = destTeam?.members ?? [];
   const ownTeamName = allTeams.find((t) => t.id === task.team_id)?.name;
   const outstanding = pendingVerifiers(task);
+  const remind = useRemindVerifiers(task.id);
 
   function pickTeam(id: string) {
     setDestTeamId(id);
@@ -227,16 +229,31 @@ export function ApproveRouteModal({
       {/* Verification gate. The server refuses the approval anyway; showing it
           here means the button doesn't fail after the fact. */}
       {outstanding.length > 0 && (
-        <div className="flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-500/5 p-3">
-          <AlertTriangle className="size-4 shrink-0 text-amber-600 mt-0.5" />
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-              Waiting on {outstanding.length} of {(task.verifications ?? []).length} verifiers
-            </p>
-            <p className="text-[11px] text-muted-foreground">
-              {outstanding.map((v) => v.name).join(", ")} still to sign off.
-            </p>
+        <div className="space-y-2 rounded-xl border border-amber-400/30 bg-amber-500/5 p-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="size-4 shrink-0 text-amber-600 mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                Waiting on {outstanding.length} of {(task.verifications ?? []).length} verifiers
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {outstanding.map((v) => v.name).join(", ")} still to sign off.
+              </p>
+            </div>
           </div>
+          {/* Chasing is the useful thing to do from here — otherwise you close
+              the modal and go hunting for them yourself. */}
+          <Button
+            size="sm" variant="outline"
+            disabled={remind.isPending}
+            onClick={() => remind.mutate()}
+            className="w-full"
+          >
+            {remind.isPending
+              ? <Loader2 className="size-4 animate-spin mr-1.5" />
+              : <Send className="size-4 mr-1.5" />}
+            Send them a reminder now
+          </Button>
         </div>
       )}
 

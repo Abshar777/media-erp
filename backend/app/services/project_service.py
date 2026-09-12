@@ -166,7 +166,7 @@ async def list_tasks(
     user_id: str = "",
     leader_team_ids: list = None,  # set when visibility == "leader_teams"
     # Quick scopes, applied on top of visibility rather than instead of it:
-    #   assigned_to_me | created_by_me | needs_my_approval
+    #   assigned_to_me | created_by_me | needs_my_approval | verify_by_me
     scope: str = "",
     approver_team_ids: list = None,  # teams the caller leads, for needs_my_approval
     page: int = 1,
@@ -193,15 +193,17 @@ async def list_tasks(
 
     # Visibility filter (role-based)
     if visibility == "own" and user_id:
-        # A named approver is usually an ordinary member, so "own" would hide
-        # the very task they were asked to approve. Show tasks assigned to them
-        # OR waiting on their approval.
+        # An approver or a verifier is usually an ordinary member, so plain
+        # "own" would hide the very task they were asked to look at. Show tasks
+        # assigned to them, awaiting their approval, or naming them as a
+        # verifier.
         # Nested under $and: `search` above already occupies a top-level $or,
         # and assigning another would silently drop the search terms.
         query.setdefault("$and", []).append({
             "$or": [
                 {"assigned_to": user_id},
                 {"approver_id": user_id},
+                {"verifications.user_id": user_id},
             ]
         })
     elif visibility == "leader_teams" and leader_team_ids:
@@ -215,6 +217,13 @@ async def list_tasks(
         query.setdefault("$and", []).append({"assigned_to": user_id})
     elif scope == "created_by_me" and user_id:
         query.setdefault("$and", []).append({"created_by": user_id})
+    elif scope == "verify_by_me" and user_id:
+        # Waiting on you as a verifier — distinct from needs_my_approval, which
+        # is about signing a task off at the end.
+        query.setdefault("$and", []).append({"status": "pending_review"})
+        query.setdefault("$and", []).append({
+            "verifications": {"$elemMatch": {"user_id": user_id, "status": "pending"}}
+        })
     elif scope == "needs_my_approval" and user_id:
         # Waiting on you specifically: named approver, or a leader of the team
         # it sits in. Mirrors workflow.can_approve, minus the elevated roles —
