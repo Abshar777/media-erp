@@ -2,12 +2,11 @@
 
 import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Paperclip, Link, AlertCircle } from "lucide-react";
+import { X, Plus, Paperclip, Link } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCreateTask } from "@/hooks/useProjects";
 import { FileUploader } from "@/components/shared/FileUploader";
-import { useTeams, useTeam } from "@/hooks/useTeams";
-import { useUsersList } from "@/hooks/useUsers";
+import { useAllTeams, useTeam, useAssignableUsers } from "@/hooks/useTeams";
 import { useAuthStore } from "@/stores/authStore";
 import type { TaskPriority, TaskStatus, Attachment } from "@/types/project";
 import { cn } from "@/lib/utils";
@@ -46,32 +45,35 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   const ELEVATED_ROLES = ["Super Admin", "Admin", "Coordinator"];
   const isElevated = !!me?.role?.role_name && ELEVATED_ROLES.includes(me.role.role_name);
 
-  const { data: allTeams = [] } = useTeams();
-  // Elevated roles coordinate across the whole company, so they must be able to
-  // create work for any team — not just teams they personally belong to.
-  // (`my_role` is only set for teams the user is a member of.)
-  const teams = isElevated ? allTeams : allTeams.filter((t) => !!t.my_role);
+  // Every team, for everyone. Work is raised across team lines, so showing
+  // only your own left people asking a colleague to type it in for them.
+  // /teams/all is open to any authenticated user — team names aren't sensitive.
+  const { data: teams = [] } = useAllTeams();
   const { data: teamDetail } = useTeam(teamId);
-  const { data: usersData } = useUsersList({ limit: 100 });
+  // The company directory, also open to any authenticated user. useUsersList
+  // hits /users, which needs the users:view permission and 403s for an
+  // Employee — that is why the assignee list used to come up empty for them.
+  const { data: directory = [] } = useAssignableUsers();
 
   const isLeaderOfTeam = !!teamId && (teamDetail?.my_role === "leader" || teamDetail?.my_role === "admin");
-  // Mirrors workflow.can_assign_task: any member of the chosen team may raise
-  // work for a colleague, not just its leader. `my_role` is only set for teams
-  // the user actually belongs to, so its presence IS the membership test.
-  const isMemberOfTeam = !!teamId && !!teamDetail?.my_role;
-  const canAssignOthers = isElevated || isLeaderOfTeam || isMemberOfTeam;
 
   // Choosing the approver stays leader/admin only (workflow.can_assign_to_others):
   // it grants approval rights, so an employee must not be able to name
   // themselves and sign off their own work.
   const canSetApprover = isElevated || isLeaderOfTeam;
 
-  const assigneeOptions = useMemo(() => {
-    if (teamId && teamDetail?.members) {
-      return teamDetail.members.map((m) => ({ id: m.user_id, name: m.name || m.email }));
-    }
-    return (usersData?.users ?? []).map((u) => ({ id: u.id, name: u.name || u.email }));
-  }, [teamId, teamDetail, usersData]);
+  // Anyone in the company, not just the chosen team's members — the server no
+  // longer requires the assignee to belong to the team. They still see the
+  // task: "own" visibility matches on assigned_to, not on team.
+  const assigneeOptions = useMemo(
+    () =>
+      directory.map((u) => ({
+        id: u.id,
+        name: u.name || u.email,
+        designation: u.designation,
+      })),
+    [directory]
+  );
 
   // Approver candidates come from the team's own member list — the server
   // rejects anyone outside it (workflow.is_team_member).
@@ -112,7 +114,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
 
   // A task is only actionable with a name, a team, an owner and a due date.
   // Mirrors the server-side rules in POST /projects.
-  const finalAssigneeId = canAssignOthers ? assignedTo : (me?.id ?? "");
+  const finalAssigneeId = assignedTo;
   const missing: string[] = [];
   if (!title.trim())     missing.push("a task name");
   if (!teamId)           missing.push("a team");
@@ -126,10 +128,8 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
       toast.error(`Please add ${missing.join(", ")}.`);
       return;
     }
-    const finalAssignee = canAssignOthers ? assignedTo : (me?.id ?? "");
-    const finalAssigneeName = canAssignOthers
-      ? (assigneeOptions.find(o => o.id === assignedTo)?.name ?? "")
-      : (me?.name ?? "");
+    const finalAssignee = assignedTo;
+    const finalAssigneeName = assigneeOptions.find(o => o.id === assignedTo)?.name ?? "";
     await create.mutateAsync({
       title: title.trim(),
       description,
@@ -218,17 +218,6 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                   so with no teams to choose from there is nothing to fill in —
                   say why rather than hiding the field and leaving the rest of
                   the form asking for a team that cannot be picked. */}
-              {teams.length === 0 && (
-                <div className="flex items-start gap-2 rounded-lg border border-amber-300/50 bg-amber-50 dark:border-amber-800/50 dark:bg-amber-900/20 px-3 py-2.5">
-                  <AlertCircle className="size-4 shrink-0 text-amber-600 mt-0.5" />
-                  <p className="text-xs text-amber-700 dark:text-amber-400">
-                    You&apos;re not a member of any team yet, and every task belongs
-                    to one. Ask an admin or a team leader to add you, then you can
-                    create and assign tasks.
-                  </p>
-                </div>
-              )}
-
               {teams.length > 0 && (
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">Team *</label>
@@ -272,35 +261,21 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">Assigned To *</label>
-                  {canAssignOthers ? (
-                    <select
-                      value={assignedTo}
-                      onChange={e => setAssignedTo(e.target.value)}
-                      className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
-                    >
-                      <option value="">Unassigned</option>
-                      {assigneeOptions.map(o => (
-                        <option key={o.id} value={o.id}>{o.name}</option>
-                      ))}
-                    </select>
-                  ) : !teamId ? (
-                    // Distinct from the permission lock below. Whoever you can
-                    // assign to depends on the team, so before one is chosen
-                    // there is nothing to offer — saying so beats showing your
-                    // own name, which reads as "you aren't allowed". With no
-                    // teams at all there is no team picker to point at, so the
-                    // wording must not tell you to use one.
-                    <div className="w-full rounded-lg border border-dashed bg-muted/20 px-3 py-2 text-sm text-muted-foreground truncate">
-                      {teams.length === 0 ? "No team yet" : "Pick a team first"}
-                    </div>
-                  ) : (
-                    <div
-                      className="w-full rounded-lg border bg-muted/40 px-3 py-2 text-sm text-muted-foreground truncate"
-                      title="You can only assign work to members of a team you belong to"
-                    >
-                      {me?.name ? `${me.name} (you)` : "You"}
-                    </div>
-                  )}
+                  {/* Every role may assign to anyone, so there is no longer a
+                      permission fallback here — and the list no longer depends
+                      on which team is selected. */}
+                  <select
+                    value={assignedTo}
+                    onChange={e => setAssignedTo(e.target.value)}
+                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
+                  >
+                    <option value="">Unassigned</option>
+                    {assigneeOptions.map(o => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}{o.designation ? ` — ${o.designation}` : ""}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">Due Date *</label>

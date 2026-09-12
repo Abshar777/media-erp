@@ -355,19 +355,22 @@ async def add_task(
 
     assignee = (data.get("assigned_to") or "").strip()
     if not assignee:
-        return error_response("Please assign this task to a team member.", status_code=422)
+        return error_response("Please assign this task to someone.", status_code=422)
 
-    # The assignee must actually belong to the chosen team (leader or member),
-    # otherwise the task lands on a board its owner can't see.
+    # The assignee no longer has to belong to the chosen team — work is raised
+    # across team lines. They still see it: "own" visibility matches on
+    # assigned_to, not on team. The team remains the task's home board, which is
+    # what the team's leader reviews.
+    #
+    # Still verified to exist, so a bad id can't create a task nobody holds.
     if ObjectId.is_valid(data["team_id"]):
         team = await db["teams"].find_one({"_id": ObjectId(data["team_id"])}, {"members": 1})
         if not team:
             return error_response("That team no longer exists.", status_code=422)
-        if not any(m.get("user_id") == assignee for m in team.get("members", [])):
-            return error_response(
-                "The assignee must be a leader or member of the selected team.",
-                status_code=422,
-            )
+    if not ObjectId.is_valid(assignee) or not await db["users"].find_one(
+        {"_id": ObjectId(assignee)}, {"_id": 1}
+    ):
+        return error_response("That user no longer exists.", status_code=422)
 
     # ── Named approver ────────────────────────────────────────────────────────
     # Designating an approver grants approval rights, so it is a leader/admin

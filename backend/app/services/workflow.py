@@ -134,20 +134,20 @@ async def can_assign_task(current_user: dict, team_id, db: AsyncIOMotorDatabase)
     """
     True if the user may put a task on someone else's plate.
 
-    Any member of the team may do this, not just its leader — an employee can
-    raise work for a colleague the same way a Coordinator can.
+    Open to every role, and not limited to teams you belong to: work is raised
+    across team lines here, so fencing it to your own team just meant asking
+    someone else to type it in for you.
 
     Kept separate from can_assign_to_others on purpose. That one still gates the
     task's *approver*, which confers approval rights: if the two shared an
     implementation, opening assignment up would also let an employee name
     themselves approver of their own task and sign off their own work.
+
+    `db` and `team_id` are unused now but kept in the signature — the callers
+    read naturally with them, and a future policy change is likely to need the
+    team back.
     """
-    role_doc = current_user.get("_role") or {}
-    if role_doc.get("role_name", "") in ("Super Admin", "Admin", "Coordinator"):
-        return True
-    if not team_id:
-        return False   # personal task — nobody else to assign it to
-    return await is_team_member(db, team_id, str(current_user["_id"]))
+    return True
 
 
 async def can_transfer_own_task(current_user: dict, task: dict, db: AsyncIOMotorDatabase) -> bool:
