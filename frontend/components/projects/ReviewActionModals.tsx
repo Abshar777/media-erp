@@ -325,9 +325,13 @@ export function ApproveRouteModal({
             <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
           </div>
           {approverId && approverId === assigneeId && (
-            <p className="flex items-center gap-1 text-[11px] text-amber-600">
-              <AlertTriangle className="size-3" />
-              This person would approve their own work.
+            <p className="flex items-start gap-1 text-[11px] text-amber-600">
+              <AlertTriangle className="size-3 mt-0.5 shrink-0" />
+              <span>
+                This is the same person doing the work. Unless they lead the
+                destination team, they won&apos;t be able to approve it —
+                a team leader will have to.
+              </span>
             </p>
           )}
         </div>

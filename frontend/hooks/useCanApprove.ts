@@ -10,8 +10,12 @@ import { useTeams } from "@/hooks/useTeams";
  * Allowed for: Super Admin, the task's named approver, or a Team Leader of
  * the task's team. A named approver may be an ordinary member and is additive
  * — leaders keep their rights, so a task never strands if that person leaves.
- * Personal tasks (no team) have no leader gate — the owner may approve.
- * Mirrors the backend workflow.can_approve rule.
+ *
+ * Self-approval is limited to Team Leader / admin-level roles: a named
+ * approver who is an ordinary member cannot sign off a task assigned to
+ * themselves. Personal tasks (no team) have no leader gate — the owner may
+ * approve. Mirrors the backend workflow.can_approve rule; the server is the
+ * real gate, this only decides what the UI offers.
  */
 export function useCanApprove() {
   const user = useAuthStore((s) => s.user);
@@ -21,9 +25,20 @@ export function useCanApprove() {
     user?.role?.is_system_role && user?.role?.role_name === "Super Admin"
   );
 
-  return (task: { team_id?: string | null; approver_id?: string }) => {
+  return (task: {
+    team_id?: string | null;
+    approver_id?: string;
+    assigned_to?: string;
+  }) => {
     if (isSuperAdmin) return true;
-    if (task.approver_id && task.approver_id === user?.id) return true;
+    // Named approver — but never for their own work.
+    if (
+      task.approver_id &&
+      task.approver_id === user?.id &&
+      task.assigned_to !== user?.id
+    ) {
+      return true;
+    }
     if (!task.team_id) return true; // personal task — no leader gate
     const team = teams.find((t) => t.id === task.team_id);
     return team?.my_role === "leader" || team?.my_role === "admin";

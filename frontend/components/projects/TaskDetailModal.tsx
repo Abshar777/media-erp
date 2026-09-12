@@ -270,6 +270,10 @@ export function TaskDetailModal({
   // canApprove is the closest client-side mirror; the server is the real gate.
   const me = useAuthStore((s) => s.user);
   const canApprove = useCanApprove();
+  // Passing only team_id is deliberate: with no approver_id/assigned_to this
+  // evaluates the leader/admin branch alone, which is the rule the server uses
+  // for setting an approver (can_assign_to_others). Passing the whole task
+  // would also let a named approver see a picker the server would reject.
   const maySetApprover = !readOnly && canApprove({ team_id: task.team_id }) && !!task.team_id;
   const { data: taskTeam } = useTeam(maySetApprover ? (task.team_id ?? "") : "");
   const [approverId, setApproverId] = useState(task.approver_id ?? "");

@@ -68,14 +68,27 @@ async def can_approve(current_user: dict, task: dict, db: AsyncIOMotorDatabase) 
     A named approver is *additive* — leaders keep their rights on the task. If
     the approver goes away or leaves the team, the task must still be
     approvable by someone, or it strands in pending_review with no way out.
+
+    Self-approval is restricted to Team Leader / Coordinator / Admin / Super
+    Admin. A named approver who is an ordinary member cannot sign off work
+    assigned to themselves — approval is meant to be a second pair of eyes, and
+    being named approver of your own task would remove it. Leaders keep the
+    ability deliberately: a single-leader team would otherwise be unable to
+    approve its own leader's work at all.
     """
     role_doc  = current_user.get("_role") or {}
     role_name = role_doc.get("role_name", "")
     if role_name in ("Super Admin", "Admin", "Coordinator"):
         return True
     uid = str(current_user["_id"])
-    # Named approver — deliberately may be an ordinary member, not just a leader.
-    if task.get("approver_id") and task.get("approver_id") == uid:
+    # Named approver — may be an ordinary member, but not for their own task.
+    # If they happen to also lead the team, the leader check below still lets
+    # them through, which is the intended exemption.
+    if (
+        task.get("approver_id")
+        and task.get("approver_id") == uid
+        and task.get("assigned_to") != uid
+    ):
         return True
     team_id = task.get("team_id")
     if not team_id:
