@@ -57,6 +57,8 @@ function typeConfig(type: string): { icon: React.ReactNode; bg: string } {
       return { icon: <ShieldCheck className="size-3.5 text-indigo-500" />,   bg: "bg-indigo-100 dark:bg-indigo-900/30" };
     case "verify_passed":
       return { icon: <ShieldCheck className="size-3.5 text-green-600" />,    bg: "bg-green-100 dark:bg-green-900/30" };
+    case "verify_removed":
+      return { icon: <ShieldCheck className="size-3.5 text-muted-foreground" />, bg: "bg-muted" };
     case "verify_rejected":
       return { icon: <ShieldAlert className="size-3.5 text-rose-500" />,     bg: "bg-rose-100 dark:bg-rose-900/30" };
     case "task_transferred":

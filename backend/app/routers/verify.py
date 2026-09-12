@@ -39,6 +39,23 @@ class VerifyDecision(BaseModel):
     reason: str = ""
 
 
+class RemoveVerifier(BaseModel):
+    reason: str = ""
+
+
+_ELEVATED = {"Super Admin", "Admin", "Coordinator"}
+
+
+def _is_elevated(user: dict) -> bool:
+    """
+    Who may drop a verifier. Deliberately not the team's leader: the leader is
+    the one blocked from approving, so letting them clear the block would let
+    them remove every verifier and sign the work off alone — which is the thing
+    verification exists to prevent. Unsticking is an escalation on purpose.
+    """
+    return (user.get("_role") or {}).get("role_name", "") in _ELEVATED
+
+
 async def _load(db, task_id: str):
     try:
         oid = ObjectId(task_id)
@@ -249,4 +266,83 @@ async def submit_verification(
     return success_response(
         data={"verifications": _out(verifications), "status": (updated or {}).get("status")},
         message="Verification recorded",
+    )
+
+
+@router.delete("/{task_id}/verifier/{user_id}")
+async def remove_verifier(
+    task_id: str,
+    user_id: str,
+    body: RemoveVerifier,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Drop a verifier from a task.
+
+    The escape hatch for a verification that can never complete — someone left,
+    is on long leave, or was named by mistake. Without it the task is stuck
+    forever, since approval is blocked until everyone signs off.
+
+    Elevated roles only, a reason is required, and the removal is written to the
+    task history: quietly deleting the person who was supposed to check the work
+    would be indistinguishable from the check having happened.
+    """
+    task, err = await _load(db, task_id)
+    if err:
+        return err
+
+    if not _is_elevated(current_user):
+        return error_response(
+            "Only an Admin, Coordinator or Super Admin can remove a verifier.",
+            status_code=403,
+        )
+
+    reason = (body.reason or "").strip()
+    if not reason:
+        return error_response("Please say why this verifier is being removed.", status_code=400)
+
+    verifications = task.get("verifications") or []
+    target = next((v for v in verifications if v.get("user_id") == user_id), None)
+    if not target:
+        return error_response("That person is not a verifier on this task.", status_code=404)
+
+    remaining = [v for v in verifications if v.get("user_id") != user_id]
+    now = datetime.now(timezone.utc)
+    actor_name = current_user.get("name", "")
+
+    await db["project_tasks"].update_one(
+        {"_id": task["_id"]},
+        {"$push": {"history": {
+            "action":      "verifier_removed",
+            "actor_id":    str(current_user["_id"]),
+            "actor_name":  actor_name,
+            "timestamp":   now,
+            "from_status": task.get("status"),
+            "to_status":   task.get("status"),
+            "note":        f"Removed {target.get('name') or 'a verifier'} — {reason}",
+            "team_id":     task.get("team_id", ""),
+        }}},
+    )
+    updated = await update_task(db, task_id, {"verifications": remaining})
+
+    # Tell the person they are no longer expected to look, so a stale request
+    # doesn't sit in their inbox. Never fails the removal.
+    from app.services.notification_service import push_notification
+    try:
+        await push_notification(
+            db, user_id, "verify_removed",
+            "You no longer need to verify a task",
+            f'{actor_name} removed you as a verifier on "{task.get("title","a task")}" — {reason}',
+            {"task_id": task_id, "task_title": task.get("title", ""), "team_id": task.get("team_id", "")},
+        )
+    except Exception as exc:
+        print(f"[verify] removal notify failed: {exc}", flush=True)
+
+    return success_response(
+        data={
+            "verifications": _out(remaining),
+            "all_verified": workflow.all_verified(updated or {}),
+        },
+        message="Verifier removed",
     )

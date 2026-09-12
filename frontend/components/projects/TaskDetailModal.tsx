@@ -15,6 +15,7 @@ import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
 import { TaskHistoryReport } from "@/components/projects/TaskHistoryReport";
 import { TransferTaskModal } from "@/components/projects/TransferTaskModal";
 import { VerifierPicker } from "@/components/projects/VerifierPicker";
+import { useRemoveVerifier } from "@/hooks/useVerify";
 import { FileUploader } from "@/components/shared/FileUploader";
 import { useTeams, useTeam, useAllTeams, useAssignableUsers } from "@/hooks/useTeams";
 import { useAuthStore } from "@/stores/authStore";
@@ -295,6 +296,15 @@ export function TaskDetailModal({
   const [verifyDirty, setVerifyDirty] = useState(false);
   const verifications = task.verifications ?? [];
   const outstanding = verifications.filter((v) => v.status !== "passed").length;
+
+  // Removing a verifier is an escalation, not a leader action — the leader is
+  // the one blocked, so letting them clear it would let them approve alone.
+  const ELEVATED = ["Super Admin", "Admin", "Coordinator"];
+  const canRemoveVerifier =
+    !readOnly && !!me?.role?.role_name && ELEVATED.includes(me.role.role_name);
+  const [removing, setRemoving] = useState<{ user_id: string; name: string } | null>(null);
+  const [removeReason, setRemoveReason] = useState("");
+  const removeVerifier = useRemoveVerifier(task.id);
 
   async function saveVerifiers() {
     await update.mutateAsync({
@@ -595,15 +605,30 @@ export function TaskDetailModal({
                         {verifications.map((v) => (
                           <div key={v.user_id} className="flex items-center justify-between gap-2 text-xs">
                             <span className="truncate">{v.name}</span>
-                            <span className={cn(
-                              "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
-                              v.status === "passed"   ? "bg-green-500/10 text-green-600" :
-                              v.status === "rejected" ? "bg-rose-500/10 text-rose-600"   :
-                                                        "bg-muted text-muted-foreground"
-                            )}>
-                              {v.status === "passed" ? "Verified"
-                                : v.status === "rejected" ? "Needs changes" : "Waiting"}
-                            </span>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <span className={cn(
+                                "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                                v.status === "passed"   ? "bg-green-500/10 text-green-600" :
+                                v.status === "rejected" ? "bg-rose-500/10 text-rose-600"   :
+                                                          "bg-muted text-muted-foreground"
+                              )}>
+                                {v.status === "passed" ? "Verified"
+                                  : v.status === "rejected" ? "Needs changes" : "Waiting"}
+                              </span>
+                              {/* Escape hatch for a verification that can never
+                                  complete. Elevated roles only — the server
+                                  refuses anyone else regardless. */}
+                              {canRemoveVerifier && v.status !== "passed" && (
+                                <button
+                                  type="button"
+                                  title={`Remove ${v.name} as a verifier`}
+                                  onClick={() => setRemoving(v)}
+                                  className="rounded p-0.5 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive transition-colors"
+                                >
+                                  <X className="size-3" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         ))}
                         {outstanding > 0 && (
@@ -795,6 +820,57 @@ export function TaskDetailModal({
   return (
     <>
       {modal}
+      {removing && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm rounded-2xl border bg-card shadow-2xl overflow-hidden">
+            <div className="border-b px-5 py-4">
+              <h2 className="text-sm font-semibold">Remove verifier</h2>
+            </div>
+            <div className="space-y-3 p-5">
+              <p className="text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">{removing.name}</span> will
+                no longer be asked to verify this task. If they were the last one
+                outstanding, it becomes approvable straight away.
+              </p>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Why? *</label>
+                <textarea
+                  autoFocus
+                  value={removeReason}
+                  onChange={(e) => setRemoveReason(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. left the company, on long leave, added by mistake"
+                  className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Recorded in the task history, so the removal is visible later.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 border-t px-5 py-4">
+              <Button variant="outline" size="sm"
+                onClick={() => { setRemoving(null); setRemoveReason(""); }}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={!removeReason.trim() || removeVerifier.isPending}
+                onClick={async () => {
+                  await removeVerifier.mutateAsync({
+                    userId: removing.user_id, reason: removeReason.trim(),
+                  });
+                  setRemoving(null); setRemoveReason("");
+                }}
+                className="bg-destructive hover:bg-destructive/90 text-white"
+              >
+                {removeVerifier.isPending ? <Loader2 className="size-4 animate-spin mr-1.5" /> : null}
+                Remove
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {transferOpen && (
         <TransferTaskModal
           task={task}

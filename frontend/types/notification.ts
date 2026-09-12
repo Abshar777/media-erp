@@ -11,6 +11,7 @@ export type NotificationType =
   | "verify_requested"    // you were asked to verify a task
   | "verify_rejected"     // a verifier asked for changes on your task
   | "verify_passed"       // every verifier signed your task off
+  | "verify_removed"      // you were removed as a verifier
   | "due_date_reminder"   // task is due tomorrow
   // ── Chat ──────────────────────────────────────────────────────────────────
   | "mention"             // someone @mentioned you in a message

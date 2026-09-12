@@ -12,7 +12,7 @@ _ALL_TYPES = [
     "task_assigned", "task_approved", "task_reedit", "due_date_reminder",
     "pending_review", "team_task_assigned", "task_started", "task_break",
     "task_transferred", "mention",
-    "verify_requested", "verify_rejected", "verify_passed",
+    "verify_requested", "verify_rejected", "verify_passed", "verify_removed",
 ]
 
 

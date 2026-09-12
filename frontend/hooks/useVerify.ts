@@ -86,3 +86,35 @@ export function useSubmitVerification(taskId: string) {
     },
   });
 }
+
+
+/**
+ * Drop a verifier from a task — the escape hatch when a verification can never
+ * complete. Elevated roles only; the server refuses anyone else.
+ */
+export function useRemoveVerifier(taskId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ userId, reason }: { userId: string; reason: string }) => {
+      const { data } = await api.delete(`/verify/${taskId}/verifier/${userId}`, {
+        data: { reason },
+      });
+      return data;
+    },
+    onSuccess(d) {
+      qc.invalidateQueries({ queryKey: ["verify"] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      toast.success(
+        d?.data?.all_verified
+          ? "Verifier removed — the task can now be approved"
+          : "Verifier removed"
+      );
+    },
+    onError(err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        "Could not remove that verifier";
+      toast.error(msg);
+    },
+  });
+}
