@@ -15,7 +15,7 @@ import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
 import { TaskHistoryReport } from "@/components/projects/TaskHistoryReport";
 import { TransferTaskModal } from "@/components/projects/TransferTaskModal";
 import { FileUploader } from "@/components/shared/FileUploader";
-import { useTeams, useTeam } from "@/hooks/useTeams";
+import { useTeams, useTeam, useAllTeams, useAssignableUsers } from "@/hooks/useTeams";
 import { useAuthStore } from "@/stores/authStore";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import type { Task, Attachment, TaskHistoryEntry, TeamFlowStep } from "@/types/project";
@@ -283,6 +283,30 @@ export function TaskDetailModal({
   const mayTransfer =
     !readOnly && !!task.team_id &&
     (task.assigned_to === me?.id || canApprove({ team_id: task.team_id }));
+
+  // Verifiers are chosen as people and/or whole teams; a team expands to its
+  // members when the task enters review. Anyone who can assign may set them.
+  const { data: allTeamsForVerify = [] } = useAllTeams();
+  const { data: directory = [] } = useAssignableUsers();
+  const [verifyUsers, setVerifyUsers] = useState<string[]>(task.verify_users ?? []);
+  const [verifyTeams, setVerifyTeams] = useState<string[]>(task.verify_teams ?? []);
+  const [verifyNote, setVerifyNote] = useState(task.verify_instructions ?? "");
+  const [verifyDirty, setVerifyDirty] = useState(false);
+  const verifications = task.verifications ?? [];
+  const outstanding = verifications.filter((v) => v.status !== "passed").length;
+
+  async function saveVerifiers() {
+    await update.mutateAsync({
+      id: task.id,
+      payload: {
+        verify_users: verifyUsers,
+        verify_teams: verifyTeams,
+        verify_instructions: verifyNote.trim(),
+      },
+    });
+    setVerifyDirty(false);
+    toast.success("Verifiers saved");
+  }
 
   async function saveApprover(next: string) {
     const prev = approverId;
@@ -555,6 +579,113 @@ export function TaskDetailModal({
                       Lets a chosen member approve this task. Team leaders keep
                       their approval rights either way.
                     </p>
+                  </div>
+                )}
+
+                {/* Verification */}
+                {!readOnly && (
+                  <div className="space-y-2 rounded-xl border p-3">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      Verification
+                    </p>
+
+                    {verifications.length > 0 ? (
+                      <div className="space-y-1">
+                        {verifications.map((v) => (
+                          <div key={v.user_id} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="truncate">{v.name}</span>
+                            <span className={cn(
+                              "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                              v.status === "passed"   ? "bg-green-500/10 text-green-600" :
+                              v.status === "rejected" ? "bg-rose-500/10 text-rose-600"   :
+                                                        "bg-muted text-muted-foreground"
+                            )}>
+                              {v.status === "passed" ? "Verified"
+                                : v.status === "rejected" ? "Needs changes" : "Waiting"}
+                            </span>
+                          </div>
+                        ))}
+                        {outstanding > 0 && (
+                          <p className="pt-1 text-[11px] text-amber-600">
+                            {outstanding} still to verify — the task can&apos;t be approved yet.
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">
+                        Nobody is asked yet. Whoever you pick is emailed when this task
+                        goes for review.
+                      </p>
+                    )}
+
+                    <div className="space-y-1.5 pt-1">
+                      <label className="text-xs font-medium">Verified by</label>
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (!v) return;
+                          const [kind, id] = v.split(":");
+                          if (kind === "u" && !verifyUsers.includes(id)) setVerifyUsers((p) => [...p, id]);
+                          if (kind === "t" && !verifyTeams.includes(id)) setVerifyTeams((p) => [...p, id]);
+                          setVerifyDirty(true);
+                        }}
+                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                      >
+                        <option value="">Add a person or a team…</option>
+                        <optgroup label="Teams (everyone in them)">
+                          {allTeamsForVerify
+                            .filter((t) => !verifyTeams.includes(t.id))
+                            .map((t) => <option key={t.id} value={`t:${t.id}`}>{t.name}</option>)}
+                        </optgroup>
+                        <optgroup label="People">
+                          {directory
+                            .filter((u) => !verifyUsers.includes(u.id) && u.id !== task.assigned_to)
+                            .map((u) => <option key={u.id} value={`u:${u.id}`}>{u.name || u.email}</option>)}
+                        </optgroup>
+                      </select>
+
+                      {(verifyTeams.length > 0 || verifyUsers.length > 0) && (
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {verifyTeams.map((id) => (
+                            <button
+                              key={id} type="button"
+                              onClick={() => { setVerifyTeams((p) => p.filter((x) => x !== id)); setVerifyDirty(true); }}
+                              className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary hover:bg-primary/20"
+                            >
+                              {allTeamsForVerify.find((t) => t.id === id)?.name ?? "Team"} ✕
+                            </button>
+                          ))}
+                          {verifyUsers.map((id) => (
+                            <button
+                              key={id} type="button"
+                              onClick={() => { setVerifyUsers((p) => p.filter((x) => x !== id)); setVerifyDirty(true); }}
+                              className="rounded-full bg-muted px-2 py-0.5 text-[11px] hover:bg-muted/70"
+                            >
+                              {directory.find((u) => u.id === id)?.name ?? "Person"} ✕
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium">What should they check?</label>
+                      <textarea
+                        value={verifyNote}
+                        onChange={(e) => { setVerifyNote(e.target.value); setVerifyDirty(true); }}
+                        rows={2}
+                        placeholder="e.g. check the logo version and the headline copy"
+                        className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                      />
+                    </div>
+
+                    {verifyDirty && (
+                      <Button size="sm" onClick={saveVerifiers} disabled={update.isPending}>
+                        {update.isPending ? <Loader2 className="size-4 animate-spin mr-1.5" /> : null}
+                        Save verifiers
+                      </Button>
+                    )}
                   </div>
                 )}
 

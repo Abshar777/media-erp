@@ -56,6 +56,21 @@ export interface TaskTiming {
   approved_at?: string | null;
 }
 
+export type VerifyStatus = "pending" | "passed" | "rejected";
+
+export interface TaskVerification {
+  user_id: string;
+  name: string;
+  status: VerifyStatus;
+  reason: string;
+  at: string | null;
+}
+
+/** Verifiers who still have to sign off — what blocks approval. */
+export function pendingVerifiers(task: Pick<Task, "verifications">): TaskVerification[] {
+  return (task.verifications ?? []).filter((v) => v.status !== "passed");
+}
+
 export interface TaskHistoryEntry {
   action: string;
   actor_id: string;
@@ -96,6 +111,12 @@ export interface Task {
   former_team_name?: string;
   /** Why the task was last handed to its current assignee. */
   transfer_reason?: string;
+  /** Verifier selection, as chosen. Teams expand at pending_review. */
+  verify_users?: string[];
+  verify_teams?: string[];
+  verify_instructions?: string;
+  /** Resolved sign-off list, present once the task has entered review. */
+  verifications?: TaskVerification[];
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -147,6 +168,9 @@ export interface UpdateTaskPayload {
   transfer_to_id?: string;
   transfer_to_name?: string;
   transfer_reason?: string;
+  verify_users?: string[];
+  verify_teams?: string[];
+  verify_instructions?: string;
   caption?: string;
 }
 

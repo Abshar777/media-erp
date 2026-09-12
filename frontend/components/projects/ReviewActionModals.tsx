@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { useUpdateTask } from "@/hooks/useProjects";
 import { useAllTeams, useTeam } from "@/hooks/useTeams";
 import type { Task, UpdateTaskPayload } from "@/types/project";
-import { PRIORITY_META, assigneeLabel } from "@/types/project";
+import { PRIORITY_META, assigneeLabel, pendingVerifiers } from "@/types/project";
 import { fmtDateOnly } from "@/lib/datetime";
 import { toast } from "sonner";
 
@@ -159,6 +159,7 @@ export function ApproveRouteModal({
   const { data: destTeam, isLoading: membersLoading } = useTeam(destTeamId);
   const members = destTeam?.members ?? [];
   const ownTeamName = allTeams.find((t) => t.id === task.team_id)?.name;
+  const outstanding = pendingVerifiers(task);
 
   function pickTeam(id: string) {
     setDestTeamId(id);
@@ -209,7 +210,8 @@ export function ApproveRouteModal({
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
             onClick={confirm}
-            disabled={update.isPending}
+            disabled={update.isPending || outstanding.length > 0}
+            title={outstanding.length > 0 ? "Every verifier must sign off first" : undefined}
             className="bg-green-600 hover:bg-green-700 text-white"
           >
             {update.isPending
@@ -221,6 +223,22 @@ export function ApproveRouteModal({
       }
     >
       <TaskContext task={task} teamName={ownTeamName} />
+
+      {/* Verification gate. The server refuses the approval anyway; showing it
+          here means the button doesn't fail after the fact. */}
+      {outstanding.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-500/5 p-3">
+          <AlertTriangle className="size-4 shrink-0 text-amber-600 mt-0.5" />
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+              Waiting on {outstanding.length} of {(task.verifications ?? []).length} verifiers
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              {outstanding.map((v) => v.name).join(", ")} still to sign off.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Who may sign THIS task off. Read-only: you are approving it in this
           same click, so its approver can never be used afterwards — showing the
