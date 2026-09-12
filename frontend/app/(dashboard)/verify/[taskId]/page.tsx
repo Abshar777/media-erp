@@ -70,7 +70,10 @@ export default function VerifyPage() {
 
   const { task, instructions, mine, verifications } = data;
   const priority = PRIORITY_META[task.priority] ?? PRIORITY_META.medium;
-  const done = mine.status !== "pending";
+  // A Super Admin can open any task's verification state without being on the
+  // list — they get the read-only view, since signing off is not theirs to do.
+  const observerOnly = !mine;
+  const done = !!mine && mine.status !== "pending";
   const stillOpen = task.status === "pending_review";
 
   return (
@@ -153,8 +156,8 @@ export default function VerifyPage() {
         </p>
         {verifications.map((v) => (
           <div key={v.user_id} className="flex items-center justify-between gap-3 text-sm">
-            <span className={cn(v.user_id === mine.user_id && "font-medium")}>
-              {v.name}{v.user_id === mine.user_id ? " (you)" : ""}
+            <span className={cn(v.user_id === mine?.user_id && "font-medium")}>
+              {v.name}{v.user_id === mine?.user_id ? " (you)" : ""}
             </span>
             <div className="flex items-center gap-2">
               {v.reason && (
@@ -170,12 +173,16 @@ export default function VerifyPage() {
 
       {/* Your decision */}
       <div className="rounded-2xl border bg-card p-5 space-y-4">
-        {done ? (
+        {observerOnly ? (
+          <p className="text-sm text-muted-foreground">
+            You&apos;re not a verifier on this task — this is a read-only view.
+          </p>
+        ) : done ? (
           <div className="flex items-center gap-2 text-sm">
-            {mine.status === "passed" ? (
+            {mine?.status === "passed" ? (
               <><CheckCircle2 className="size-4 text-green-600" /> You verified this task.</>
             ) : (
-              <><XCircle className="size-4 text-rose-500" /> You asked for changes — {mine.reason}</>
+              <><XCircle className="size-4 text-rose-500" /> You asked for changes — {mine?.reason}</>
             )}
           </div>
         ) : !stillOpen ? (

@@ -178,8 +178,8 @@ function SidebarContent({
   // Always shown. Hiding it until you had something waiting meant nobody could
   // find the page at all — including the people who needed to look at it before
   // anything had been assigned to them.
-  const { data: myVerifications = [] } = useMyVerifications("pending");
-  const verifyBadge = myVerifications.length;
+  const { data: verifyInbox } = useMyVerifications("pending");
+  const verifyBadge = verifyInbox?.items.length ?? 0;
 
   // Badge: pending reviews + unassigned incoming + reedit tasks (only fetched when user can see Leader Desk)
   const { data: leaderData } = useLeaderQueue({ enabled: showLeaderDesk });

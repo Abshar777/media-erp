@@ -10,7 +10,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ShieldCheck, Loader2, CheckCircle2, XCircle, Clock, ArrowRight } from "lucide-react";
+import { ShieldCheck, Loader2, CheckCircle2, XCircle, Clock, ArrowRight, Eye } from "lucide-react";
 import { useMyVerifications } from "@/hooks/useVerify";
 import { PRIORITY_META, assigneeLabel } from "@/types/project";
 import { fmtDateOnly } from "@/lib/datetime";
@@ -24,7 +24,11 @@ const TABS = [
 
 export default function VerifyInboxPage() {
   const [scope, setScope] = useState<(typeof TABS)[number]["id"]>("pending");
-  const { data: items = [], isLoading } = useMyVerifications(scope);
+  // Super Admin oversight: every task under verification, not just yours.
+  const [everyone, setEveryone] = useState(false);
+  const { data, isLoading } = useMyVerifications(scope, everyone);
+  const items = data?.items ?? [];
+  const canSeeAll = data?.meta.can_see_all ?? false;
   const router = useRouter();
 
   return (
@@ -34,25 +38,45 @@ export default function VerifyInboxPage() {
           <ShieldCheck className="size-5 text-primary" /> Verifications
         </h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Work that needs your sign-off before it can be approved.
+          {everyone
+            ? "Every task under verification across the company."
+            : "Work that needs your sign-off before it can be approved."}
         </p>
       </div>
 
-      <div className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-muted/50 p-1">
-        {TABS.map((t) => (
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl border bg-muted/50 p-1">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setScope(t.id)}
+              className={cn(
+                "shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-all",
+                scope === t.id
+                  ? "border bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {everyone && t.id === "pending" ? "Awaiting anyone" : t.label}
+            </button>
+          ))}
+        </div>
+
+        {canSeeAll && (
           <button
-            key={t.id}
-            onClick={() => setScope(t.id)}
+            type="button"
+            onClick={() => setEveryone((v) => !v)}
             className={cn(
-              "shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-all",
-              scope === t.id
-                ? "border bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
+              "flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors",
+              everyone
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-background text-muted-foreground hover:bg-muted"
             )}
           >
-            {t.label}
+            <Eye className="size-3.5" />
+            Everyone&apos;s verifications
           </button>
-        ))}
+        )}
       </div>
 
       {isLoading ? (
@@ -63,9 +87,13 @@ export default function VerifyInboxPage() {
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border bg-card py-20 text-muted-foreground/60">
           <ShieldCheck className="size-10" />
           <p className="text-sm font-medium">
-            {scope === "pending" ? "Nothing is waiting on you" : "Nothing here yet"}
+            {scope !== "pending"
+              ? "Nothing here yet"
+              : everyone
+                ? "Nothing is awaiting verification"
+                : "Nothing is waiting on you"}
           </p>
-          {scope === "pending" && (
+          {scope === "pending" && !everyone && (
             <p className="text-xs">You&apos;ll be notified when someone needs your verification.</p>
           )}
         </div>
@@ -74,6 +102,7 @@ export default function VerifyInboxPage() {
           {items.map((t) => {
             const p = PRIORITY_META[t.priority] ?? PRIORITY_META.medium;
             const mine = t.my_verification;
+            const outstanding = (t.verifications ?? []).filter((v) => v.status !== "passed").length;
             return (
               <button
                 key={t.id}
@@ -89,15 +118,21 @@ export default function VerifyInboxPage() {
                   </div>
                   {t.awaiting_me ? (
                     <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600">
-                      <Clock className="size-3" /> Waiting
+                      <Clock className="size-3" /> {everyone ? `${outstanding} waiting` : "Waiting"}
                     </span>
-                  ) : mine.status === "passed" ? (
+                  ) : mine?.status === "passed" ? (
                     <span className="flex shrink-0 items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-[11px] font-medium text-green-600">
                       <CheckCircle2 className="size-3" /> Verified
                     </span>
-                  ) : (
+                  ) : mine?.status === "rejected" ? (
                     <span className="flex shrink-0 items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-[11px] font-medium text-rose-600">
                       <XCircle className="size-3" /> Sent back
+                    </span>
+                  ) : (
+                    // Oversight view: not your task, so report the task's own
+                    // standing rather than a decision you never made.
+                    <span className="flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                      {outstanding === 0 ? "All verified" : `${outstanding} outstanding`}
                     </span>
                   )}
                 </div>
@@ -121,7 +156,7 @@ export default function VerifyInboxPage() {
                 )}
 
                 <span className="mt-3 flex items-center gap-1 text-[11px] font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
-                  {t.awaiting_me ? "Verify now" : "View"} <ArrowRight className="size-3" />
+                  {mine && t.awaiting_me ? "Verify now" : "View"} <ArrowRight className="size-3" />
                 </span>
               </button>
             );

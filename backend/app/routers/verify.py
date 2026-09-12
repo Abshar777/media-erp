@@ -50,47 +50,78 @@ async def _load(db, task_id: str):
     return task, None
 
 
+def _is_super_admin(user: dict) -> bool:
+    role = user.get("_role") or {}
+    return bool(role.get("is_system_role")) and role.get("role_name") == "Super Admin"
+
+
 @router.get("")
 async def my_verifications(
     scope: str = "pending",   # pending | done | all
+    everyone: bool = False,   # Super Admin oversight across the whole company
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
-    Every task that lists the caller as a verifier — their verification inbox.
+    Tasks that list the caller as a verifier — their verification inbox.
 
     Defaults to what still needs them. A task only needs looking at while it is
     actually in review, so anything that has since moved on is reported as done
     rather than left sitting in the queue.
+
+    A Super Admin may pass everyone=true to see every task under verification
+    company-wide, which is an oversight view rather than a queue: they are
+    usually not a verifier themselves, so "awaiting me" is about someone else.
     """
     uid = str(current_user["_id"])
-    docs = await db["project_tasks"].find(
-        {"verifications.user_id": uid}
-    ).sort("updated_at", -1).to_list(500)
+    is_sa = _is_super_admin(current_user)
+    company_wide = everyone and is_sa
+
+    query = (
+        {"verifications": {"$exists": True, "$ne": []}}
+        if company_wide
+        else {"verifications.user_id": uid}
+    )
+    docs = await db["project_tasks"].find(query).sort("updated_at", -1).to_list(500)
 
     out = []
     for d in docs:
-        mine = next((v for v in d.get("verifications", []) if v.get("user_id") == uid), None)
-        if not mine:
-            continue
-        awaiting = (
-            mine.get("status") == workflow.VERIFY_PENDING
-            and d.get("status") == "pending_review"
-        )
+        verifications = d.get("verifications") or []
+        mine = next((v for v in verifications if v.get("user_id") == uid), None)
+
+        if company_wide:
+            # Whether anyone is still to sign off, not whether the caller is.
+            awaiting = (
+                d.get("status") == "pending_review"
+                and any(v.get("status") == workflow.VERIFY_PENDING for v in verifications)
+            )
+        else:
+            if not mine:
+                continue
+            awaiting = (
+                mine.get("status") == workflow.VERIFY_PENDING
+                and d.get("status") == "pending_review"
+            )
+
         if scope == "pending" and not awaiting:
             continue
         if scope == "done" and awaiting:
             continue
+
         out.append({
             **_serialize(d),
-            "my_verification": _out([mine])[0],
+            "my_verification": _out([mine])[0] if mine else None,
             "awaiting_me": awaiting,
         })
 
     return success_response(
         data=out,
         message="Verifications retrieved",
-        meta={"awaiting": sum(1 for t in out if t["awaiting_me"])},
+        meta={
+            "awaiting": sum(1 for t in out if t["awaiting_me"]),
+            "company_wide": company_wide,
+            "can_see_all": is_sa,
+        },
     )
 
 
@@ -107,7 +138,9 @@ async def get_verification(
     uid = str(current_user["_id"])
     verifications = task.get("verifications") or []
     mine = next((v for v in verifications if v.get("user_id") == uid), None)
-    if not mine:
+    # A Super Admin may look at any task's verification state. They still can't
+    # sign off unless they were actually named — POST checks membership itself.
+    if not mine and not _is_super_admin(current_user):
         return error_response(
             "You are not listed as a verifier for this task.", status_code=403
         )
@@ -116,7 +149,7 @@ async def get_verification(
         data={
             "task": _serialize(task),
             "instructions": task.get("verify_instructions", ""),
-            "mine": _out([mine])[0],
+            "mine": _out([mine])[0] if mine else None,
             # The whole panel, so a verifier can see who else is still to look.
             "verifications": _out(verifications),
         },

@@ -8,24 +8,39 @@ import type { Task, TaskVerification } from "@/types/project";
 export interface VerificationView {
   task: Task;
   instructions: string;
-  mine: TaskVerification;
+  /** Null when a Super Admin is observing a task they aren't a verifier on. */
+  mine: TaskVerification | null;
   verifications: TaskVerification[];
 }
 
 export interface VerifyInboxItem extends Task {
-  my_verification: TaskVerification;
+  /** Null when a Super Admin is viewing a task they aren't a verifier on. */
+  my_verification: TaskVerification | null;
   awaiting_me: boolean;
 }
 
-/** Every task that lists you as a verifier. Defaults to those still needing you. */
-export function useMyVerifications(scope: "pending" | "done" | "all" = "pending") {
-  return useQuery<VerifyInboxItem[]>({
-    queryKey: ["verify", "inbox", scope],
+export interface VerifyInboxMeta {
+  awaiting: number;
+  company_wide: boolean;
+  /** True for a Super Admin — the only role that may look company-wide. */
+  can_see_all: boolean;
+}
+
+/**
+ * Tasks that list you as a verifier. With `everyone`, a Super Admin sees every
+ * task under verification company-wide — oversight rather than a queue.
+ */
+export function useMyVerifications(
+  scope: "pending" | "done" | "all" = "pending",
+  everyone = false
+) {
+  return useQuery<{ items: VerifyInboxItem[]; meta: VerifyInboxMeta }>({
+    queryKey: ["verify", "inbox", scope, everyone],
     queryFn: async () => {
-      const { data } = await api.get<{ success: boolean; data: VerifyInboxItem[] }>(
-        "/verify", { params: { scope } }
-      );
-      return data.data;
+      const { data } = await api.get<{
+        success: boolean; data: VerifyInboxItem[]; meta: VerifyInboxMeta;
+      }>("/verify", { params: { scope, ...(everyone ? { everyone: true } : {}) } });
+      return { items: data.data, meta: data.meta };
     },
     refetchInterval: 30_000,
     staleTime: 10_000,
