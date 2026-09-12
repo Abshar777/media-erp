@@ -94,6 +94,8 @@ export interface Task {
   caption?: string;
   former_assigned_to_name?: string;
   former_team_name?: string;
+  /** Why the task was last handed to its current assignee. */
+  transfer_reason?: string;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -140,6 +142,11 @@ export interface UpdateTaskPayload {
   /** Who may approve the ROUTED COPY created in the destination team. */
   next_approver_id?: string;
   next_approver_name?: string;
+  /** Hand this task to a teammate. Allowed from any status; never changes it.
+   *  The reason is mandatory — the server rejects a blank one. */
+  transfer_to_id?: string;
+  transfer_to_name?: string;
+  transfer_reason?: string;
   caption?: string;
 }
 

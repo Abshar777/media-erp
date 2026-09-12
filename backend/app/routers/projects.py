@@ -347,9 +347,9 @@ async def add_task(
     if not (data.get("due_date") or "").strip():
         return error_response("Please set a due date.", status_code=422)
 
-    # Members can only create tasks for themselves; only admins / team leaders
-    # may assign work to someone else.
-    if not await workflow.can_assign_to_others(current_user, data.get("team_id"), db):
+    # Any member of the team may raise work for a colleague, same as an admin or
+    # coordinator. The approver gate below stays stricter on purpose.
+    if not await workflow.can_assign_task(current_user, data.get("team_id"), db):
         data["assigned_to"] = str(current_user["_id"])
         data["assigned_to_name"] = current_user.get("name", "")
 
@@ -558,6 +558,9 @@ async def edit_task(
     next_leader_name = updates.pop("next_leader_name", None)
     next_approver_id   = updates.pop("next_approver_id", None)
     next_approver_name = updates.pop("next_approver_name", None)
+    transfer_to_id   = updates.pop("transfer_to_id", None)
+    transfer_to_name = updates.pop("transfer_to_name", None)
+    transfer_reason  = (updates.pop("transfer_reason", "") or "").strip()
 
     try:
         oid = ObjectId(task_id)
@@ -596,10 +599,12 @@ async def edit_task(
             cur_status, new_status, current.get("timing"), datetime.now(tz.utc)
         )
 
-    # Reassigning a task to someone else is a leader/admin action
+    # Reassigning is open to anyone on the task's team.
     if "assigned_to" in updates and updates["assigned_to"] != current.get("assigned_to"):
-        if not await workflow.can_assign_to_others(current_user, current.get("team_id"), db):
-            return error_response("Only a team leader can assign tasks to others.", status_code=403)
+        if not await workflow.can_assign_task(current_user, current.get("team_id"), db):
+            return error_response(
+                "You must be a member of this task's team to assign it.", status_code=403
+            )
 
     # Changing who approves a task grants approval rights, so it is gated the
     # same way. Note can_assign_to_others deliberately does NOT include the
@@ -649,16 +654,115 @@ async def edit_task(
                 current.get("assigned_to_name", "") or current.get("assigned_to", "")
             )
 
+    # ── Peer transfer ─────────────────────────────────────────────────────────
+    # Handing your own work to a teammate. Allowed from ANY status: a handover
+    # is about who does the work, not where the task sits in the workflow, so
+    # it does not touch `status` and never bypasses the state machine above.
+    transfer_from_id = ""
+    transfer_from_name = ""
+    # actor_* are assigned further down for the notification block; the history
+    # write below needs them here.
+    actor_id   = str(current_user["_id"])
+    actor_name = current_user.get("name", "")
+    if transfer_to_id:
+        if not await workflow.can_transfer_own_task(current_user, current, db):
+            return error_response(
+                "You can only transfer a task that is assigned to you.", status_code=403
+            )
+        if not transfer_reason:
+            return error_response(
+                "Please add a reason for transferring this task.", status_code=400
+            )
+        if transfer_to_id == current.get("assigned_to"):
+            return error_response(
+                "This task is already assigned to that person.", status_code=400
+            )
+        if not ObjectId.is_valid(transfer_to_id):
+            return error_response("Invalid user ID", status_code=422)
+        # Keep the work inside its team — otherwise a transfer becomes a way to
+        # push a task onto someone who can't even see the board it lives on.
+        if current.get("team_id") and not await workflow.is_team_member(
+            db, current.get("team_id"), transfer_to_id
+        ):
+            return error_response(
+                "You can only transfer to a member of this task's team.", status_code=422
+            )
+        target = await db["users"].find_one({"_id": ObjectId(transfer_to_id)}, {"name": 1})
+        if not target:
+            return error_response("That user no longer exists.", status_code=422)
+
+        transfer_from_id = current.get("assigned_to", "") or ""
+        transfer_from_name = current.get("assigned_to_name", "") or transfer_from_id
+        resolved_name = transfer_to_name or target.get("name", "")
+
+        from datetime import datetime, timezone as _tz
+        updates["assigned_to"] = transfer_to_id
+        updates["assigned_to_name"] = resolved_name
+        updates["transfer_reason"] = transfer_reason
+        await db["project_tasks"].update_one(
+            {"_id": oid},
+            {"$push": {"history": {
+                "action":      "transferred",
+                "actor_id":    actor_id,
+                "actor_name":  actor_name,
+                "timestamp":   datetime.now(_tz.utc),
+                "from_status": cur_status,
+                "to_status":   cur_status,
+                "note":        (
+                    f"Transferred from {transfer_from_name or 'unassigned'} "
+                    f"to {resolved_name} — {transfer_reason}"
+                ),
+                "team_id":     current.get("team_id", ""),
+            }}},
+        )
+
     task = await update_task(db, task_id, updates)
     if not task:
         return error_response("Task not found", status_code=404)
+
+    # Tell both sides. Fired after the write so neither is told about a change
+    # that failed to land.
+    if transfer_to_id:
+        title = task.get("title", "Task")
+        meta = {
+            "task_id": task_id,
+            "task_title": title,
+            "team_id": current.get("team_id", ""),
+        }
+        from app.services.notification_service import push_notification
+        try:
+            await push_notification(
+                db, transfer_to_id, "task_transferred",
+                "A task was transferred to you",
+                f'{actor_name} transferred "{title}" to you — {transfer_reason}',
+                meta,
+            )
+            # Both sides get a record, including whoever initiated it — the
+            # point is that a handover is documented for each party, not just
+            # that the recipient is alerted.
+            if transfer_from_id:
+                you_did_it = transfer_from_id == actor_id
+                await push_notification(
+                    db, transfer_from_id, "task_transferred",
+                    "You transferred a task" if you_did_it
+                    else "A task was transferred away from you",
+                    (
+                        f'You transferred "{title}" to {updates["assigned_to_name"]} '
+                        f'— {transfer_reason}'
+                        if you_did_it else
+                        f'{actor_name} transferred "{title}" to '
+                        f'{updates["assigned_to_name"]} — {transfer_reason}'
+                    ),
+                    meta,
+                )
+        except Exception as exc:
+            # Never fail the transfer itself over a notification.
+            print(f"[transfer] notification failed: {exc}", flush=True)
 
     # ── Append audit history (tagged with the team the action happened in) ──────
     # `current` still holds the pre-update team, so a reedit that returns a task
     # to its origin team is correctly attributed to the team that raised it.
     from datetime import datetime as _dtm, timezone as _tz
-    actor_id   = str(current_user["_id"])
-    actor_name = current_user.get("name", "")
     acting_team_id = current.get("team_id") or ""
     acting_team_name = ""
     if acting_team_id and ObjectId.is_valid(acting_team_id):

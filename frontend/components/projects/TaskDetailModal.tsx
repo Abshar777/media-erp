@@ -8,13 +8,15 @@ import {
   CheckCircle2, Send, Users, Calendar,
   MessageSquare, ArrowRight, UserCircle2,
   History, ClipboardCheck, Play, Pause, RotateCcw,
-  UserPlus, GitBranch, Circle, AlertTriangle, BarChart2,
+  UserPlus, GitBranch, Circle, AlertTriangle, BarChart2, ArrowLeftRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
 import { TaskHistoryReport } from "@/components/projects/TaskHistoryReport";
+import { TransferTaskModal } from "@/components/projects/TransferTaskModal";
 import { FileUploader } from "@/components/shared/FileUploader";
 import { useTeams, useTeam } from "@/hooks/useTeams";
+import { useAuthStore } from "@/stores/authStore";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import type { Task, Attachment, TaskHistoryEntry, TeamFlowStep } from "@/types/project";
 import { PRIORITY_META, BOARD_COLUMNS, assigneeLabel } from "@/types/project";
@@ -39,6 +41,7 @@ const ACTION_META: Record<string, { label: string; icon: React.ReactNode; color:
   pending_review: { label: "Submitted for Review",   icon: <Send className="size-3.5" />,         color: "text-purple-600 bg-purple-500/10 border-purple-500/30" },
   approved:       { label: "Approved",               icon: <CheckCircle2 className="size-3.5" />, color: "text-green-600 bg-green-500/10 border-green-500/30" },
   reedit:         { label: "Sent for Revision",      icon: <RotateCcw className="size-3.5" />,    color: "text-rose-600 bg-rose-500/10 border-rose-500/30" },
+  transferred:    { label: "Transferred",             icon: <ArrowLeftRight className="size-3.5" />, color: "text-sky-600 bg-sky-500/10 border-sky-500/30" },
   routed:         { label: "Routed to Team",         icon: <GitBranch className="size-3.5" />,    color: "text-amber-600 bg-amber-500/10 border-amber-500/30" },
   received:       { label: "Received by Team",        icon: <GitBranch className="size-3.5" />,    color: "text-teal-600 bg-teal-500/10 border-teal-500/30" },
 };
@@ -265,10 +268,17 @@ export function TaskDetailModal({
 
   // Changing the approver is a leader/admin action (workflow.can_assign_to_others).
   // canApprove is the closest client-side mirror; the server is the real gate.
+  const me = useAuthStore((s) => s.user);
   const canApprove = useCanApprove();
   const maySetApprover = !readOnly && canApprove({ team_id: task.team_id }) && !!task.team_id;
   const { data: taskTeam } = useTeam(maySetApprover ? (task.team_id ?? "") : "");
   const [approverId, setApproverId] = useState(task.approver_id ?? "");
+  const [transferOpen, setTransferOpen] = useState(false);
+  // Any employee may hand off a task assigned to them; leaders/admins may move
+  // anyone's. Mirrors workflow.can_transfer_own_task — the server is the gate.
+  const mayTransfer =
+    !readOnly && !!task.team_id &&
+    (task.assigned_to === me?.id || canApprove({ team_id: task.team_id }));
 
   async function saveApprover(next: string) {
     const prev = approverId;
@@ -629,6 +639,15 @@ export function TaskDetailModal({
             </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={onClose}>Close</Button>
+              {mayTransfer && !showCaptionInput && (
+                <Button
+                  size="sm" variant="outline"
+                  onClick={() => setTransferOpen(true)}
+                  className="border-sky-300 text-sky-600 hover:bg-sky-50 dark:border-sky-800 dark:hover:bg-sky-900/30"
+                >
+                  <ArrowLeftRight className="size-4 mr-1.5" /> Transfer
+                </Button>
+              )}
               {dirty && !showCaptionInput && (
                 <Button
                   size="sm" variant="outline"
@@ -672,6 +691,14 @@ export function TaskDetailModal({
   return (
     <>
       {modal}
+      {transferOpen && (
+        <TransferTaskModal
+          task={task}
+          onClose={() => setTransferOpen(false)}
+          onDone={onClose}
+        />
+      )}
+
       {showReport && (
         <TaskHistoryReport
           task={task}

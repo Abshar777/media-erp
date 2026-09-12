@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BellRing,
+  ArrowLeftRight,
   AtSign,
   Bell, CheckCheck, RefreshCw, ServerCrash, Wifi,
   ClipboardList, Play, Coffee, Eye, CheckCircle2,
@@ -50,6 +51,8 @@ function typeConfig(type: string): { icon: React.ReactNode; bg: string } {
       return { icon: <Users className="size-3.5 text-purple-500" />,          bg: "bg-purple-100 dark:bg-purple-900/30" };
     case "due_date_reminder":
       return { icon: <Clock className="size-3.5 text-red-500" />,             bg: "bg-red-100 dark:bg-red-900/30" };
+    case "task_transferred":
+      return { icon: <ArrowLeftRight className="size-3.5 text-sky-500" />,   bg: "bg-sky-100 dark:bg-sky-900/30" };
     case "mention":
       return { icon: <AtSign className="size-3.5 text-sky-500" />,            bg: "bg-sky-100 dark:bg-sky-900/30" };
     case "sync_success":
@@ -65,6 +68,7 @@ function typeConfig(type: string): { icon: React.ReactNode; bg: string } {
 const TASK_TYPES = new Set([
   "task_assigned", "task_started", "task_break", "pending_review",
   "task_approved", "task_reedit", "team_task_assigned", "due_date_reminder",
+  "task_transferred",
 ]);
 
 // ── Single notification row ───────────────────────────────────────────────────

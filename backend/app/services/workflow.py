@@ -117,6 +117,48 @@ async def can_assign_to_others(current_user: dict, team_id, db: AsyncIOMotorData
     )
 
 
+async def can_assign_task(current_user: dict, team_id, db: AsyncIOMotorDatabase) -> bool:
+    """
+    True if the user may put a task on someone else's plate.
+
+    Any member of the team may do this, not just its leader — an employee can
+    raise work for a colleague the same way a Coordinator can.
+
+    Kept separate from can_assign_to_others on purpose. That one still gates the
+    task's *approver*, which confers approval rights: if the two shared an
+    implementation, opening assignment up would also let an employee name
+    themselves approver of their own task and sign off their own work.
+    """
+    role_doc = current_user.get("_role") or {}
+    if role_doc.get("role_name", "") in ("Super Admin", "Admin", "Coordinator"):
+        return True
+    if not team_id:
+        return False   # personal task — nobody else to assign it to
+    return await is_team_member(db, team_id, str(current_user["_id"]))
+
+
+async def can_transfer_own_task(current_user: dict, task: dict, db: AsyncIOMotorDatabase) -> bool:
+    """
+    True if the user may hand THIS task to a teammate.
+
+    Deliberately narrower than can_assign_to_others: that one answers "may you
+    assign anyone's work", and stays leader/admin only. This answers "may you
+    hand off your own work", which any employee may do — but only for a task
+    actually assigned to them.
+
+    Elevated roles and the team's leaders can already reassign through the
+    normal path, so they pass here too rather than being oddly blocked from a
+    lesser action.
+    """
+    uid = str(current_user["_id"])
+    if task.get("assigned_to") == uid:
+        return True
+    role_doc = current_user.get("_role") or {}
+    if role_doc.get("role_name", "") in ("Super Admin", "Admin", "Coordinator"):
+        return True
+    return await can_assign_to_others(current_user, task.get("team_id"), db)
+
+
 async def is_team_member(db: AsyncIOMotorDatabase, team_id, user_id: str) -> bool:
     """
     True when user_id is on the team's member list (leader or member).

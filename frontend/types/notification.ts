@@ -7,6 +7,7 @@ export type NotificationType =
   | "task_approved"       // task was approved
   | "task_reedit"         // task sent back for revision
   | "team_task_assigned"  // new task added to your team (→ leader)
+  | "task_transferred"    // a task was handed to (or away from) you
   | "due_date_reminder"   // task is due tomorrow
   // ── Chat ──────────────────────────────────────────────────────────────────
   | "mention"             // someone @mentioned you in a message

@@ -45,4 +45,10 @@ class UpdateTaskRequest(BaseModel):
     approver_name: Optional[str] = None
     next_approver_id: Optional[str] = None    # who may approve the ROUTED COPY
     next_approver_name: Optional[str] = None
+    # ── Peer transfer ─────────────────────────────────────────────────────────
+    # An employee handing their own task to a teammate. Distinct from
+    # assigned_to, which stays a leader/admin action (can_assign_to_others).
+    transfer_to_id: Optional[str] = None
+    transfer_to_name: Optional[str] = None
+    transfer_reason: Optional[str] = None
     caption: Optional[str] = None             # submission note added when sending to pending_review
