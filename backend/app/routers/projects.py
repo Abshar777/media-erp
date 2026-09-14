@@ -356,8 +356,13 @@ async def add_task(
     # Enforced here (not just in the UI) so the API can't create orphan work.
     if not (data.get("title") or "").strip():
         return error_response("Task name is required.", status_code=422)
+    # A team is the home board a leader reviews, so raising work for someone
+    # else still needs one. Work you take on yourself does not: requiring a team
+    # meant an employee on no team could not create a single task, and nobody
+    # could jot down their own to-do without filing it under someone's board.
     if not (data.get("team_id") or "").strip():
-        return error_response("Please select a team.", status_code=422)
+        if (data.get("assigned_to") or "").strip() != str(current_user["_id"]):
+            return error_response("Please select a team.", status_code=422)
     if not (data.get("due_date") or "").strip():
         return error_response("Please set a due date.", status_code=422)
 

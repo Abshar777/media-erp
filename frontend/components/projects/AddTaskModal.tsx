@@ -118,14 +118,17 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
     setLinkUrl(""); setLinkLabel(""); setShowLinkForm(false);
   }
 
-  // A task is only actionable with a name, a team, an owner and a due date.
-  // Mirrors the server-side rules in POST /projects.
+  // A task is only actionable with a name, an owner and a due date. A team is
+  // needed only when the work is for someone else — it is the board their
+  // leader reviews. Taking something on yourself needs no team, so an employee
+  // on no team can still raise their own work. Mirrors POST /projects.
   const finalAssigneeId = assignedTo;
+  const isSelfAssigned = !!finalAssigneeId && finalAssigneeId === me?.id;
   const missing: string[] = [];
-  if (!title.trim())     missing.push("a task name");
-  if (!teamId)           missing.push("a team");
-  if (!finalAssigneeId)  missing.push("an assignee");
-  if (!dueDate)          missing.push("a due date");
+  if (!title.trim())                    missing.push("a task name");
+  if (!teamId && !isSelfAssigned)       missing.push("a team");
+  if (!finalAssigneeId)                 missing.push("an assignee");
+  if (!dueDate)                         missing.push("a due date");
   const canSubmit = missing.length === 0;
 
   async function submit(e: React.FormEvent) {
@@ -220,13 +223,15 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                 />
               </div>
 
-              {/* Team. A task always belongs to one (the API rejects it otherwise),
-                  so with no teams to choose from there is nothing to fill in —
-                  say why rather than hiding the field and leaving the rest of
-                  the form asking for a team that cannot be picked. */}
+              {/* Team. Required when the work is for someone else — it is the
+                  board their leader reviews — but optional on a task you take
+                  on yourself, so it stops being required the moment you pick
+                  your own name. */}
               {teams.length > 0 && (
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Team *</label>
+                  <label className="text-xs font-medium text-muted-foreground">
+                    {isSelfAssigned ? "Team" : "Team *"}
+                  </label>
                   <select
                     value={teamId}
                     onChange={e => {
@@ -236,7 +241,9 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                     }}
                     className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
                   >
-                    <option value="">Select a team…</option>
+                    <option value="">
+                      {isSelfAssigned ? "No team — just for me" : "Select a team…"}
+                    </option>
                     {teams.map(t => (
                       <option key={t.id} value={t.id}>{t.name}</option>
                     ))}

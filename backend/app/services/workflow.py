@@ -92,7 +92,16 @@ async def can_approve(current_user: dict, task: dict, db: AsyncIOMotorDatabase) 
         return True
     team_id = task.get("team_id")
     if not team_id:
-        return True  # personal (non-team) task — no leader gate
+        # Personal (non-team) task. There is no leader to gate on, but "no team"
+        # must not become the way to approve your own work — that is exactly the
+        # hole the self-approval rule above closes. A Team Leader keeps the
+        # exemption they have everywhere else; anyone else needs to be the named
+        # approver (handled above, which already excludes the assignee) or hold
+        # an elevated role (returned True at the top), so such a task is never
+        # left with nobody able to sign it off.
+        if task.get("assigned_to") == uid:
+            return role_name == "Team Leader"
+        return True
     try:
         team = await db["teams"].find_one({"_id": ObjectId(team_id)})
     except Exception:
