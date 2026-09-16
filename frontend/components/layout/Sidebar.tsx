@@ -24,6 +24,7 @@ import {
   Settings,
   Share2,
   ShieldCheck,
+  Trophy,
   Sparkles,
   Target,
   TrendingUp,
@@ -60,6 +61,7 @@ const NAV_ITEMS = [
   { label: "Teams",         href: "/teams",          icon: UsersRound,      module: "teams" },
   { label: "Leader Desk",   href: "/leader",         icon: ClipboardCheck },
   { label: "Verifications", href: "/verify",         icon: ShieldCheck },
+  { label: "Performance",   href: "/performance",    icon: Trophy },
   { label: "AI Queries",    href: "/ai",             icon: Sparkles,        module: "ai", hidden: true },
   { label: "Publish",       href: "/social",         icon: Share2,                              hidden: true },
   { label: "Send DM",       href: "/social/dm",      icon: Send,                                hidden: true },
@@ -175,6 +177,14 @@ function SidebarContent({
   const isSuperAdmin = !!(user?.role?.is_system_role && user?.role?.role_name === "Super Admin");
   const showLeaderDesk = isSuperAdmin || teams.some((t) => t.my_role === "leader");
 
+  // Performance ranks named colleagues against each other, so it matches the
+  // server gate in routers/performance.py: elevated roles, or a team leader.
+  // Admins/Coordinators often lead no team, so leading one cannot be the only
+  // way in or they would lose a report they are entitled to.
+  const isElevated = ["Super Admin", "Admin", "Coordinator"]
+    .includes(user?.role?.role_name ?? "");
+  const showPerformance = isElevated || teams.some((t) => t.my_role === "leader");
+
   // Always shown. Hiding it until you had something waiting meant nobody could
   // find the page at all — including the people who needed to look at it before
   // anything had been assigned to them.
@@ -191,7 +201,8 @@ function SidebarContent({
   const visibleNav = NAV_ITEMS.filter((item) =>
     !item.hidden &&
     (!item.module || hasPermission(item.module, "view")) &&
-    (item.href !== "/leader" || showLeaderDesk)
+    (item.href !== "/leader" || showLeaderDesk) &&
+    (item.href !== "/performance" || showPerformance)
   );
   const visibleBottom = BOTTOM_ITEMS.filter((item) =>
     !item.hidden &&

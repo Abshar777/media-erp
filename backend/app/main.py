@@ -33,6 +33,7 @@ from app.routers import ai as ai_router
 from app.routers import notifications as notifications_router
 from app.routers import push as push_router
 from app.routers import verify as verify_router
+from app.routers import performance as performance_router
 from app.routers import projects as projects_router
 from app.routers import roles as roles_router
 from app.routers import users as users_router
@@ -130,6 +131,7 @@ app.include_router(ai_router.router)
 app.include_router(notifications_router.router)
 app.include_router(push_router.router)
 app.include_router(verify_router.router)
+app.include_router(performance_router.router)
 app.include_router(projects_router.router)
 app.include_router(roles_router.router)
 app.include_router(users_router.router)
