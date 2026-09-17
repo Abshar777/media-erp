@@ -26,6 +26,12 @@ from typing import Any
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.services.worktime import (
+    load_holidays,
+    working_seconds,
+    working_seconds_of_intervals,
+)
+
 SUBMIT_ACTION = "pending_review"
 APPROVE_ACTION = "approved"
 REEDIT_ACTION = "reedit"
@@ -126,6 +132,8 @@ async def build_performance_report(
     roles); a list restricts it to those teams (what a team leader may see).
     """
     now = datetime.now(timezone.utc)
+    # Every duration below is shift time, not wall clock — see services/worktime.
+    holidays = await load_holidays(db)
 
     query: dict[str, Any] = {}
     if team_ids is not None:
@@ -176,13 +184,19 @@ async def build_performance_report(
             m = members[(assignee, team_id)]
             done_at = _last_action(task, APPROVE_ACTION)
             if task.get("status") == "approved" and done_at and in_window(done_at):
-                tracked = (task.get("timing") or {}).get("total_seconds")
+                timing = task.get("timing") or {}
+                # Prefer the raw intervals so a timer left running overnight
+                # doesn't bill the hours someone spent asleep; total_seconds is
+                # the fallback for rows recorded before intervals were kept.
+                tracked = working_seconds_of_intervals(timing.get("intervals"), holidays)
+                if not tracked and timing.get("total_seconds"):
+                    tracked = float(timing["total_seconds"])
                 if tracked:
-                    m.add(float(tracked))
+                    m.add(tracked)
                 m.extra["completed"] += 1
                 first_start = _first_action(task, "started")
                 if first_start:
-                    m.extra["turnaround_total"] += int((done_at - first_start).total_seconds())
+                    m.extra["turnaround_total"] += int(working_seconds(first_start, done_at, holidays))
                     m.extra["turnaround_n"] += 1
                 due = _parse_day(task.get("due_date") or "", end_of_day=True)
                 if due:
@@ -207,7 +221,7 @@ async def build_performance_report(
                 continue  # approved without ever being submitted — nothing to measure
             seen_users.add(actor)
             a = approvers[(actor, team_id)]
-            a.add((ts - submitted).total_seconds())
+            a.add(working_seconds(submitted, ts, holidays))
             a.extra["approvals"] += 1
 
         # ── The people verifying ─────────────────────────────────────────────
@@ -224,7 +238,7 @@ async def build_performance_report(
                     continue
                 seen_users.add(uid)
                 s = verifiers[(uid, team_id)]
-                s.add((at - submitted).total_seconds())
+                s.add(working_seconds(submitted, at, holidays))
                 s.extra["signed_off"] += 1
                 if v.get("status") == "rejected":
                     s.extra["rejected"] += 1
@@ -234,7 +248,7 @@ async def build_performance_report(
                 # the fastest verifier in the company.
                 seen_users.add(uid)
                 s = verifiers[(uid, team_id)]
-                s.add((now - subs[-1]).total_seconds())
+                s.add(working_seconds(subs[-1], now, holidays))
                 s.extra["still_waiting"] += 1
 
     names = await _names(db, seen_users)
@@ -268,7 +282,18 @@ async def build_performance_report(
             "verifiers": _rank(verifier_rows, "avg_seconds", "verifications"),
         })
 
-    return {"teams": teams, "generated_at": now.isoformat(), "min_sample": MIN_SAMPLE_FOR_RANK}
+    from app.services.worktime import SHIFT_END, SHIFT_START
+    return {
+        "teams": teams,
+        "generated_at": now.isoformat(),
+        "min_sample": MIN_SAMPLE_FOR_RANK,
+        "shift": {
+            "start": SHIFT_START.strftime("%H:%M"),
+            "end": SHIFT_END.strftime("%H:%M"),
+            "days_off": ["Sunday"],
+            "holidays": len(holidays),
+        },
+    }
 
 
 def _member_row(uid: str, names: dict, st: _Stat) -> dict | None:
@@ -331,3 +356,130 @@ async def _team_names(db: AsyncIOMotorDatabase, team_ids: set[str]) -> dict[str,
         return {}
     rows = await db["teams"].find({"_id": {"$in": valid}}, {"name": 1}).to_list(500)
     return {str(r["_id"]): r.get("name", "") for r in rows}
+
+
+async def list_performance_tasks(
+    db: AsyncIOMotorDatabase,
+    team_ids: list[str] | None,
+    user_id: str,
+    role: str,
+    date_from: str = "",
+    date_to: str = "",
+    limit: int = 200,
+) -> list[dict]:
+    """
+    The tasks behind one cell of the report.
+
+    Deliberately re-derives each row the same way build_performance_report
+    does, rather than caching them during the report: a drill-down that
+    disagreed with the number it was opened from would be worse than no
+    drill-down, and this way there is one definition of each measurement.
+    """
+    holidays = await load_holidays(db)
+    now = datetime.now(timezone.utc)
+
+    query: dict[str, Any] = {}
+    if team_ids is not None:
+        query["team_id"] = {"$in": team_ids}
+
+    start = _parse_day(date_from)
+    end = _parse_day(date_to, end_of_day=True)
+
+    def in_window(dt: datetime) -> bool:
+        if start and dt < start:
+            return False
+        if end and dt > end:
+            return False
+        return True
+
+    if role == "member":
+        query["assigned_to"] = user_id
+        query["status"] = "approved"
+    elif role == "approver":
+        query["history"] = {"$elemMatch": {"action": APPROVE_ACTION, "actor_id": user_id}}
+    elif role == "verifier":
+        query["verifications"] = {"$elemMatch": {"user_id": user_id}}
+    else:
+        return []
+
+    projection = {
+        "title": 1, "team_id": 1, "status": 1, "timing": 1, "history": 1,
+        "verifications": 1, "due_date": 1, "assigned_to_name": 1, "priority": 1,
+    }
+    rows: list[dict] = []
+    async for task in db["project_tasks"].find(query, projection):
+        subs = _submissions(task)
+        base = {
+            "task_id": str(task["_id"]),
+            "title": task.get("title", ""),
+            "status": task.get("status", ""),
+            "priority": task.get("priority", ""),
+            "assigned_to_name": task.get("assigned_to_name", ""),
+        }
+
+        if role == "member":
+            done_at = _last_action(task, APPROVE_ACTION)
+            if not done_at or not in_window(done_at):
+                continue
+            timing = task.get("timing") or {}
+            secs = working_seconds_of_intervals(timing.get("intervals"), holidays)
+            if not secs and timing.get("total_seconds"):
+                secs = float(timing["total_seconds"])
+            first_start = _first_action(task, "started")
+            due = _parse_day(task.get("due_date") or "", end_of_day=True)
+            rows.append({
+                **base,
+                "seconds": round(secs) if secs else None,
+                "turnaround_seconds": round(working_seconds(first_start, done_at, holidays))
+                                      if first_start else None,
+                "at": done_at.isoformat(),
+                "on_time": (done_at <= due) if due else None,
+            })
+
+        elif role == "approver":
+            for h in task.get("history") or []:
+                if h.get("action") != APPROVE_ACTION or h.get("actor_id") != user_id:
+                    continue
+                ts = _aware(h.get("timestamp"))
+                if not ts or not in_window(ts):
+                    continue
+                submitted = _submission_before(subs, ts)
+                if not submitted:
+                    continue
+                rows.append({
+                    **base,
+                    "seconds": round(working_seconds(submitted, ts, holidays)),
+                    "submitted_at": submitted.isoformat(),
+                    "at": ts.isoformat(),
+                })
+
+        else:  # verifier
+            for v in task.get("verifications") or []:
+                if v.get("user_id") != user_id:
+                    continue
+                at = _aware(v.get("at"))
+                if at:
+                    if not in_window(at):
+                        continue
+                    submitted = _submission_before(subs, at)
+                    if not submitted:
+                        continue
+                    rows.append({
+                        **base,
+                        "seconds": round(working_seconds(submitted, at, holidays)),
+                        "at": at.isoformat(),
+                        "verdict": v.get("status", ""),
+                        "reason": v.get("reason", ""),
+                    })
+                elif task.get("status") == "pending_review" and subs:
+                    rows.append({
+                        **base,
+                        "seconds": round(working_seconds(subs[-1], now, holidays)),
+                        "at": None,
+                        "verdict": "pending",
+                        "reason": "",
+                    })
+
+    # Slowest first — a drill-down is opened to find what dragged the average up.
+    rows.sort(key=lambda r: r.get("seconds") or 0, reverse=True)
+    return rows[:limit]

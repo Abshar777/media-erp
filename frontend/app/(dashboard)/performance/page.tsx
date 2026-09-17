@@ -10,14 +10,15 @@
  */
 
 import { useState, useMemo } from "react";
+import { createPortal } from "react-dom";
 import {
-  Trophy, Clock, Users, ShieldCheck, Stamp, Loader2, AlertCircle, Info,
+  Trophy, Clock, Users, ShieldCheck, Stamp, Loader2, AlertCircle, Info, X,
 } from "lucide-react";
 import { useTeams } from "@/hooks/useTeams";
 import { useAuthStore } from "@/stores/authStore";
 import {
-  usePerformance, formatDuration,
-  type MemberPerf, type ApproverPerf, type VerifierPerf, type TeamPerf,
+  usePerformance, usePerformanceTasks, formatDuration,
+  type MemberPerf, type ApproverPerf, type VerifierPerf, type TeamPerf, type PerfRole,
 } from "@/hooks/usePerformance";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,135 @@ function daysAgo(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
+}
+
+interface DrillTarget {
+  userId: string;
+  name: string;
+  role: PerfRole;
+  teamId: string;
+  teamName: string;
+}
+
+const ROLE_COPY: Record<PerfRole, { title: string; column: string; blurb: string }> = {
+  member:   { title: "Tasks completed", column: "Time on task",
+              blurb: "Shift time spent on each task, slowest first." },
+  approver: { title: "Tasks approved",  column: "Waited for approval",
+              blurb: "How long each task sat waiting for this sign-off." },
+  verifier: { title: "Tasks verified",  column: "Delay added",
+              blurb: "How long each task waited on this verification." },
+};
+
+/**
+ * The tasks behind one row of the report.
+ *
+ * Re-derived server-side from the same definitions the report uses, so the
+ * rows here always add up to the number that was clicked — a drill-down that
+ * disagreed with its own headline would undermine both.
+ */
+function DrillDownModal({ target, dateFrom, onClose }: {
+  target: DrillTarget;
+  dateFrom?: string;
+  onClose: () => void;
+}) {
+  const { data, isLoading, error } = usePerformanceTasks({
+    user_id: target.userId,
+    role: target.role,
+    ...(target.teamId ? { team_id: target.teamId } : {}),
+    ...(dateFrom ? { date_from: dateFrom } : {}),
+  });
+  const copy = ROLE_COPY[target.role];
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border bg-card shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-semibold">
+              {target.name} · {copy.title}
+            </h3>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {target.teamName} · {copy.blurb}
+            </p>
+          </div>
+          <button onClick={onClose} className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted" aria-label="Close">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto">
+          {isLoading ? (
+            <div className="flex justify-center py-16"><Loader2 className="size-5 animate-spin text-muted-foreground/50" /></div>
+          ) : error ? (
+            <p className="py-16 text-center text-sm text-muted-foreground">Couldn&apos;t load these tasks.</p>
+          ) : !data?.items.length ? (
+            <p className="py-16 text-center text-sm text-muted-foreground">No tasks in this period.</p>
+          ) : (
+            <table className="w-full min-w-[560px] text-sm">
+              <thead className="sticky top-0 bg-muted/80 text-[11px] uppercase tracking-wide text-muted-foreground backdrop-blur">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Task</th>
+                  <th className="px-3 py-2 text-right font-medium">{copy.column}</th>
+                  {target.role === "member" && <th className="px-3 py-2 text-right font-medium">Turnaround</th>}
+                  {target.role === "member" && <th className="px-3 py-2 text-right font-medium">On time</th>}
+                  {target.role === "verifier" && <th className="px-3 py-2 text-right font-medium">Verdict</th>}
+                  <th className="px-3 py-2 text-right font-medium">When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((t) => (
+                  <tr key={`${t.task_id}-${t.at ?? "open"}`} className="border-t hover:bg-muted/40">
+                    <td className="max-w-[260px] px-3 py-2">
+                      <span className="block truncate font-medium">{t.title || "Untitled"}</span>
+                      {t.assigned_to_name && target.role !== "member" && (
+                        <span className="text-[11px] text-muted-foreground">{t.assigned_to_name}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums">
+                      {formatDuration(t.seconds)}
+                    </td>
+                    {target.role === "member" && (
+                      <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                        {formatDuration(t.turnaround_seconds)}
+                      </td>
+                    )}
+                    {target.role === "member" && (
+                      <td className="px-3 py-2 text-right">
+                        {t.on_time == null ? <span className="text-muted-foreground">—</span>
+                          : t.on_time ? <span className="text-green-600 dark:text-green-400">Yes</span>
+                          : <span className="text-rose-600 dark:text-rose-400">No</span>}
+                      </td>
+                    )}
+                    {target.role === "verifier" && (
+                      <td className="px-3 py-2 text-right text-xs">
+                        {t.verdict === "passed" ? <span className="text-green-600 dark:text-green-400">Verified</span>
+                          : t.verdict === "rejected" ? <span className="text-rose-600 dark:text-rose-400">Changes</span>
+                          : <span className="text-amber-600 dark:text-amber-400">Waiting</span>}
+                      </td>
+                    )}
+                    <td className="px-3 py-2 text-right text-[11px] text-muted-foreground">
+                      {t.at ? new Date(t.at).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "open"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {data && data.items.length > 0 && (
+          <div className="border-t px-4 py-2 text-[11px] text-muted-foreground">
+            {data.total} task{data.total !== 1 ? "s" : ""}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
 }
 
 /** Medal for the top three, plain number below that. */
@@ -53,9 +183,19 @@ function RankBadge({ rank }: { rank: number | null }) {
 }
 
 /** Greys out anyone whose sample is too thin to rank. */
-function Row({ ranked, children }: { ranked: boolean; children: React.ReactNode }) {
+function Row({ ranked, onClick, children }: {
+  ranked: boolean; onClick?: () => void; children: React.ReactNode;
+}) {
   return (
-    <tr className={cn("border-t transition-colors hover:bg-muted/40", !ranked && "opacity-60")}>
+    <tr
+      onClick={onClick}
+      title={onClick ? "See the tasks behind this" : undefined}
+      className={cn(
+        "border-t transition-colors hover:bg-muted/40",
+        !ranked && "opacity-60",
+        onClick && "cursor-pointer"
+      )}
+    >
       {children}
     </tr>
   );
@@ -83,7 +223,9 @@ function Empty({ what }: { what: string }) {
   );
 }
 
-function MemberTable({ rows }: { rows: MemberPerf[] }) {
+function MemberTable({ rows, onOpen }: {
+  rows: MemberPerf[]; onOpen?: (r: MemberPerf) => void;
+}) {
   if (!rows.length) return <Empty what="completed work" />;
   return (
     <div className="overflow-x-auto rounded-xl border">
@@ -102,7 +244,7 @@ function MemberTable({ rows }: { rows: MemberPerf[] }) {
         </thead>
         <tbody>
           {rows.map((m) => (
-            <Row key={m.user_id} ranked={m.ranked}>
+            <Row key={m.user_id} ranked={m.ranked} onClick={onOpen && (() => onOpen(m))}>
               <td className="px-3 py-2"><RankBadge rank={m.rank} /></td>
               <td className="px-3 py-2 font-medium">{m.name}</td>
               <td className="px-3 py-2 text-right font-semibold tabular-nums">
@@ -142,7 +284,9 @@ function MemberTable({ rows }: { rows: MemberPerf[] }) {
   );
 }
 
-function ApproverTable({ rows }: { rows: ApproverPerf[] }) {
+function ApproverTable({ rows, onOpen }: {
+  rows: ApproverPerf[]; onOpen?: (r: ApproverPerf) => void;
+}) {
   if (!rows.length) return <Empty what="approvals" />;
   return (
     <div className="overflow-x-auto rounded-xl border">
@@ -159,7 +303,7 @@ function ApproverTable({ rows }: { rows: ApproverPerf[] }) {
         </thead>
         <tbody>
           {rows.map((a) => (
-            <Row key={a.user_id} ranked={a.ranked}>
+            <Row key={a.user_id} ranked={a.ranked} onClick={onOpen && (() => onOpen(a))}>
               <td className="px-3 py-2"><RankBadge rank={a.rank} /></td>
               <td className="px-3 py-2 font-medium">{a.name}</td>
               <td className="px-3 py-2 text-right font-semibold tabular-nums">
@@ -180,7 +324,9 @@ function ApproverTable({ rows }: { rows: ApproverPerf[] }) {
   );
 }
 
-function VerifierTable({ rows }: { rows: VerifierPerf[] }) {
+function VerifierTable({ rows, onOpen }: {
+  rows: VerifierPerf[]; onOpen?: (r: VerifierPerf) => void;
+}) {
   if (!rows.length) return <Empty what="verifications" />;
   return (
     <div className="overflow-x-auto rounded-xl border">
@@ -197,7 +343,7 @@ function VerifierTable({ rows }: { rows: VerifierPerf[] }) {
         </thead>
         <tbody>
           {rows.map((v) => (
-            <Row key={v.user_id} ranked={v.ranked}>
+            <Row key={v.user_id} ranked={v.ranked} onClick={onOpen && (() => onOpen(v))}>
               <td className="px-3 py-2"><RankBadge rank={v.rank} /></td>
               <td className="px-3 py-2 font-medium">{v.name}</td>
               <td className="px-3 py-2 text-right font-semibold tabular-nums">
@@ -220,7 +366,13 @@ function VerifierTable({ rows }: { rows: VerifierPerf[] }) {
   );
 }
 
-function TeamBlock({ team }: { team: TeamPerf }) {
+function TeamBlock({ team, onOpen }: {
+  team: TeamPerf;
+  onOpen: (t: DrillTarget) => void;
+}) {
+  const open = (role: PerfRole) => (r: { user_id: string; name: string }) =>
+    onOpen({ userId: r.user_id, name: r.name, role, teamId: team.team_id, teamName: team.team_name });
+
   return (
     <section className="rounded-2xl border bg-card p-4">
       <h2 className="mb-4 flex items-center gap-2 text-base font-bold tracking-tight">
@@ -235,7 +387,7 @@ function TeamBlock({ team }: { team: TeamPerf }) {
             title="Members"
             hint="time actually spent on a task, from the task timer"
           />
-          <MemberTable rows={team.members} />
+          <MemberTable rows={team.members} onOpen={open("member")} />
         </div>
 
         <div>
@@ -244,7 +396,7 @@ function TeamBlock({ team }: { team: TeamPerf }) {
             title="Approvers"
             hint="how long a submitted task waits for their sign-off"
           />
-          <ApproverTable rows={team.approvers} />
+          <ApproverTable rows={team.approvers} onOpen={open("approver")} />
         </div>
 
         <div>
@@ -253,7 +405,7 @@ function TeamBlock({ team }: { team: TeamPerf }) {
             title="Verifiers"
             hint="delay they add before responding — work still open counts"
           />
-          <VerifierTable rows={team.verifiers} />
+          <VerifierTable rows={team.verifiers} onOpen={open("verifier")} />
         </div>
       </div>
     </section>
@@ -263,6 +415,7 @@ function TeamBlock({ team }: { team: TeamPerf }) {
 export default function PerformancePage() {
   const [teamId, setTeamId] = useState("");
   const [range, setRange] = useState<(typeof RANGES)[number]["id"]>("");
+  const [drill, setDrill] = useState<DrillTarget | null>(null);
 
   const filters = useMemo(() => ({
     ...(teamId ? { team_id: teamId } : {}),
@@ -291,6 +444,7 @@ export default function PerformancePage() {
         </h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
           How long work takes at each step — doing it, verifying it, approving it.
+          Counted in shift hours, so nights, Sundays and holidays don&apos;t inflate a wait.
         </p>
       </div>
 
@@ -328,7 +482,9 @@ export default function PerformancePage() {
         {data && (
           <span className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <Info className="size-3.5" />
-            Ranked from {data.min_sample} or more; thinner samples are listed but not ranked.
+            Shift hours only ({data.shift.start}–{data.shift.end} IST, {data.shift.days_off.join(", ")} off
+            {data.shift.holidays > 0 ? `, ${data.shift.holidays} holidays` : ""}).
+            Ranked from {data.min_sample}+. Click a row for its tasks.
           </span>
         )}
       </div>
@@ -363,9 +519,17 @@ export default function PerformancePage() {
       ) : (
         <div className="space-y-5">
           {data.teams.map((t) => (
-            <TeamBlock key={t.team_id || "none"} team={t} />
+            <TeamBlock key={t.team_id || "none"} team={t} onOpen={setDrill} />
           ))}
         </div>
+      )}
+
+      {drill && (
+        <DrillDownModal
+          target={drill}
+          dateFrom={range ? daysAgo(Number(range)) : undefined}
+          onClose={() => setDrill(null)}
+        />
       )}
     </div>
   );

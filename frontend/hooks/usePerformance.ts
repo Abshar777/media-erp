@@ -53,11 +53,37 @@ export interface TeamPerf {
   verifiers: VerifierPerf[];
 }
 
+export interface ShiftInfo {
+  start: string;      // "11:00" IST
+  end: string;        // "20:30" IST
+  days_off: string[];
+  holidays: number;
+}
+
 export interface PerformanceReport {
   teams: TeamPerf[];
   generated_at: string;
   min_sample: number;
   scope: "all" | "led";
+  shift: ShiftInfo;
+}
+
+export type PerfRole = "member" | "approver" | "verifier";
+
+/** One task behind a number in the report. */
+export interface PerfTask {
+  task_id: string;
+  title: string;
+  status: string;
+  priority: string;
+  assigned_to_name?: string;
+  seconds: number | null;
+  at: string | null;
+  submitted_at?: string;
+  turnaround_seconds?: number | null;
+  on_time?: boolean | null;
+  verdict?: string;
+  reason?: string;
 }
 
 export interface PerformanceFilters {
@@ -77,6 +103,22 @@ export function usePerformance(filters: PerformanceFilters = {}) {
     // milliseconds. Refetching on every window focus would be punishing.
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
+/** The tasks behind one row — fetched only while the drill-down is open. */
+export function usePerformanceTasks(
+  params: { user_id: string; role: PerfRole; team_id?: string; date_from?: string } | null
+) {
+  return useQuery<{ items: PerfTask[]; total: number }>({
+    queryKey: ["performance", "tasks", params],
+    queryFn: async () => {
+      const { data } = await api.get("/performance/tasks", { params: params! });
+      return data.data;
+    },
+    enabled: !!params,
+    staleTime: 60_000,
     retry: false,
   });
 }
