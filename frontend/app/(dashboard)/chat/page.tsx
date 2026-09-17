@@ -218,6 +218,25 @@ function MessageExtras({ attachments, tasks }: { attachments?: ChatAttachment[];
   );
 }
 
+/**
+ * The "@…" being typed at the caret, if any.
+ *
+ * The token must start at a word boundary, so an email address doesn't open
+ * the picker, and it ends at whitespace. Ending at whitespace is what makes
+ * the picker close itself once a name has been inserted: "@Basil test hello"
+ * contains spaces, so it stops matching and the menu goes away without any
+ * separate bookkeeping.
+ */
+function activeMention(value: string, caret: number): { at: number; query: string } | null {
+  const upto = value.slice(0, caret);
+  const at = upto.lastIndexOf("@");
+  if (at === -1) return null;
+  if (at > 0 && !/\s/.test(upto[at - 1])) return null;
+  const query = upto.slice(at + 1);
+  if (/\s/.test(query)) return null;
+  return { at, query };
+}
+
 function ChatComposer({
   placeholder,
   onSend,
@@ -234,6 +253,10 @@ function ChatComposer({
   const [tasks, setTasks] = useState<TaskRef[]>([]);
   const [showMention, setShowMention] = useState(false);
   const [mentionSearch, setMentionSearch] = useState("");
+  // Index of the "@" currently being typed. Non-null means the picker was
+  // opened by typing rather than by the button, which changes where a pick
+  // gets inserted and lets the picker close when the "@" is deleted.
+  const [mentionAt, setMentionAt] = useState<number | null>(null);
   const [mentionTab, setMentionTab] = useState<"people" | "tasks">("people");
   // Who was @mentioned. Kept as ids alongside the text, so the server can
   // notify them without having to parse names back out of the message body.
@@ -247,12 +270,37 @@ function ChatComposer({
   );
 
   function togglePerson(u: ChatUser) {
-    setMentionedPeople((prev) => {
-      if (prev.some((p) => p.id === u.id)) return prev.filter((p) => p.id !== u.id);
-      // Drop the handle into the message so the mention reads naturally.
+    const already = mentionedPeople.some((p) => p.id === u.id);
+    if (already && mentionAt === null) {
+      setMentionedPeople((prev) => prev.filter((p) => p.id !== u.id));
+      return;
+    }
+
+    if (mentionAt !== null) {
+      // Typed "@bas" — swap the half-typed token for the real handle rather
+      // than appending a second one at the end of the line.
+      const caret = taRef.current?.selectionStart ?? text.length;
+      const rest = text.slice(caret);
+      // Only add the separating space when one isn't already there, or
+      // completing "@bas| can you" would leave a gap in the sentence.
+      const gap = rest.startsWith(" ") ? "" : " ";
+      const next = `${text.slice(0, mentionAt)}@${u.name}${gap}${rest}`;
+      const pos = mentionAt + u.name.length + 1 + gap.length;
+      setText(next);
+      setMentionAt(null);
+      setShowMention(false);
+      setMentionSearch("");
+      requestAnimationFrame(() => {
+        const el = taRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      });
+    } else {
       setText((t) => (t.endsWith(" ") || !t ? t : t + " ") + `@${u.name} `);
-      return [...prev, u];
-    });
+    }
+
+    if (!already) setMentionedPeople((prev) => [...prev, u]);
   }
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -279,21 +327,85 @@ function ChatComposer({
     onCancelReply?.();
     setMentionedPeople([]);
     setShowMention(false);
+    setMentionAt(null);
+    setMentionSearch("");
     if (taRef.current) taRef.current.style.height = "auto";
   }
 
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Escape" && showMention) {
+      e.preventDefault();
+      setShowMention(false);
+      setMentionAt(null);
+      setMentionSearch("");
+      return;
+    }
+
+    if (e.key === "Backspace") {
+      const el = e.currentTarget;
+      const caret = el.selectionStart ?? 0;
+      // A handle is one thing to the reader, so backspacing at its end should
+      // remove the whole name, not leave "@Basil tes" behind — which would
+      // also silently re-open the picker on the wreckage.
+      if (caret === (el.selectionEnd ?? caret) && caret > 0) {
+        const before = text.slice(0, caret);
+        const hit = mentionedPeople.find(
+          (p) => before.endsWith(`@${p.name} `) || before.endsWith(`@${p.name}`)
+        );
+        if (hit) {
+          e.preventDefault();
+          const handle = before.endsWith(`@${hit.name} `) ? `@${hit.name} ` : `@${hit.name}`;
+          const start = caret - handle.length;
+          const next = text.slice(0, start) + text.slice(caret);
+          setText(next);
+          // Withdraw the mention only when no other copy of the handle remains.
+          if (!next.includes(`@${hit.name}`)) {
+            setMentionedPeople((prev) => prev.filter((p) => p.id !== hit.id));
+          }
+          requestAnimationFrame(() => {
+            const ta = taRef.current;
+            if (!ta) return;
+            ta.focus();
+            ta.setSelectionRange(start, start);
+          });
+          return;
+        }
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
+      // Enter belongs to the picker while it is filtering a typed "@", or it
+      // would send a message containing a half-written mention.
+      if (showMention && mentionAt !== null && mentionPeople.length > 0) {
+        e.preventDefault();
+        togglePerson(mentionPeople[0]);
+        return;
+      }
       e.preventDefault();
       doSend();
     }
   }
 
   function onInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    setText(e.target.value);
     const el = e.target;
+    setText(el.value);
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+
+    // Typing "@" opens the picker and every character after it narrows the
+    // list. Deleting the "@" — or typing past it — ends the token, which
+    // closes the picker again.
+    const hit = activeMention(el.value, el.selectionStart ?? el.value.length);
+    if (hit) {
+      setMentionAt(hit.at);
+      setMentionSearch(hit.query);
+      setMentionTab("people");
+      setShowMention(true);
+    } else if (mentionAt !== null) {
+      setMentionAt(null);
+      setMentionSearch("");
+      setShowMention(false);
+    }
   }
 
   async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
@@ -360,15 +472,26 @@ function ChatComposer({
               </button>
             ))}
           </div>
-          <div className="border-b p-2">
-            <input
-              autoFocus
-              value={mentionSearch}
-              onChange={(e) => setMentionSearch(e.target.value)}
-              placeholder={mentionTab === "people" ? "Search people to mention…" : "Search tasks to mention…"}
-              className="w-full rounded-lg bg-muted/50 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
-            />
-          </div>
+          {mentionAt === null ? (
+            <div className="border-b p-2">
+              <input
+                autoFocus
+                value={mentionSearch}
+                onChange={(e) => setMentionSearch(e.target.value)}
+                placeholder={mentionTab === "people" ? "Search people to mention…" : "Search tasks to mention…"}
+                className="w-full rounded-lg bg-muted/50 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+          ) : (
+            /* The textarea is the search box in this mode — a second focused
+               input would steal the caret mid-sentence. */
+            <div className="flex items-center gap-1.5 border-b px-3 py-1.5 text-[11px] text-muted-foreground">
+              <AtSign className="size-3 text-primary" />
+              <span>Mentioning</span>
+              <span className="font-medium text-foreground">{mentionSearch || "…"}</span>
+              <span className="ml-auto">Enter to pick · Esc to dismiss</span>
+            </div>
+          )}
 
           {mentionTab === "people" ? (
             <div className="max-h-48 overflow-y-auto p-1">
@@ -468,7 +591,13 @@ function ChatComposer({
         </button>
         <button
           type="button"
-          onClick={() => setShowMention((v) => !v)}
+          onClick={() => {
+            // Button mode appends at the end; clear any typed-token anchor so a
+            // pick doesn't try to splice into text the user has moved past.
+            setMentionAt(null);
+            setMentionSearch("");
+            setShowMention((v) => !v);
+          }}
           className={cn(
             "flex size-[42px] shrink-0 items-center justify-center rounded-2xl border transition-colors",
             showMention ? "bg-primary/10 text-primary" : "hover:bg-muted"
