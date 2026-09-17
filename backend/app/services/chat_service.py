@@ -186,8 +186,53 @@ async def mark_read(from_user_id: str, to_user_id: str) -> None:
     db = get_db()
     await db["messages"].update_many(
         {"from_user_id": from_user_id, "to_user_id": to_user_id, "read": False},
-        {"$set": {"read": True}},
+        # read_at is what the info panel reports; without it "Seen" can only be
+        # stated, not dated.
+        {"$set": {"read": True, "read_at": datetime.now(timezone.utc)}},
     )
+
+
+async def mark_group_read(db, group_id: str, user_id: str) -> None:
+    """
+    Record how far through a group this person has read.
+
+    A high-water mark per (group, reader), rather than a receipt per message:
+    one row per member stays flat as a group's history grows, where stamping
+    every message with every reader would grow with their product.
+    """
+    if not group_id or not user_id:
+        return
+    await db["chat_group_reads"].update_one(
+        {"group_id": group_id, "user_id": user_id},
+        {"$set": {"last_read_at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+
+
+DELETED_PLACEHOLDER = ""
+
+
+async def soft_delete_message(db, doc: dict, actor_id: str, actor_name: str) -> dict:
+    """
+    Strip a message's content but keep the row.
+
+    Removing it outright would leave a hole: replies quoting it, and the
+    unread counts derived from it, both reference the row. Keeping a
+    tombstone lets everyone see that something was withdrawn rather than
+    wonder what they missed.
+    """
+    patch = {
+        "content": DELETED_PLACEHOLDER,
+        "attachments": [],
+        "task_ids": [],
+        "mention_user_ids": [],
+        "reply_to": None,
+        "deleted_at": datetime.now(timezone.utc),
+        "deleted_by": actor_id,
+        "deleted_by_name": actor_name,
+    }
+    await db["messages"].update_one({"_id": doc["_id"]}, {"$set": patch})
+    return {**doc, **patch}
 
 
 async def unread_counts(user_id: str) -> dict[str, int]:

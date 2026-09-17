@@ -11,6 +11,7 @@ import type {
   ChatUser,
   ConversationPair,
   GroupMessage,
+  MessageInfo,
   TaskRef,
   WsIncoming,
 } from "@/types/chat";
@@ -124,6 +125,41 @@ export function useChatMessages(otherId: string | null) {
     enabled: !!otherId,
     staleTime: 0,
   });
+}
+
+/** Withdraw a message for everyone. The WS echo removes it from every open tab. */
+export function useDeleteMessage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete(`/chat/messages/${id}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["chat"] }),
+  });
+}
+
+/** Who has seen one message. Fetched only while the info panel is open. */
+export function useMessageInfo(messageId: string | null) {
+  return useQuery<MessageInfo>({
+    queryKey: ["chat", "message-info", messageId],
+    queryFn: async () => {
+      const { data } = await api.get(`/chat/messages/${messageId}/info`);
+      return data.data;
+    },
+    enabled: !!messageId,
+    staleTime: 0,
+  });
+}
+
+/**
+ * Move this reader's high-water mark in a group.
+ *
+ * Fire-and-forget: failing to record that you read something must never stop
+ * the group from rendering, and the next open will record it anyway.
+ */
+export function useMarkGroupRead() {
+  return useCallback((groupId: string) => {
+    if (!groupId) return;
+    api.put(`/chat/groups/${groupId}/read`).catch(() => {});
+  }, []);
 }
 
 export function useUnreadCounts() {
@@ -366,6 +402,27 @@ export function useChatSocket(currentUserId: string | null) {
             prev.map((m) =>
               m.from_user_id === currentUserId ? { ...m, read: true } : m
             )
+        );
+      } else if (data.type === "message_deleted") {
+        // Tombstone in place rather than removal: the row still anchors any
+        // reply that quotes it, and a message vanishing without trace reads
+        // like a bug.
+        const id = data.id;
+        qc.setQueriesData<ChatMessage[]>({ queryKey: ["chat", "messages"] }, (prev) =>
+          (prev ?? []).map((m) =>
+            m.id === id
+              ? { ...m, deleted: true, content: "", attachments: [], tasks: [], reply_to: null }
+              : m
+          )
+        );
+      } else if (data.type === "group_message_deleted") {
+        const id = data.id;
+        qc.setQueryData<GroupMessage[]>(["chat", "group-messages", data.group_id], (prev = []) =>
+          prev.map((m) =>
+            m.id === id
+              ? { ...m, deleted: true, content: "", attachments: [], tasks: [], reply_to: null }
+              : m
+          )
         );
       } else if (data.type === "group_message") {
         const gm = { ...(data as GroupMessage & { type: "group_message" }), status: "sent" as const };

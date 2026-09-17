@@ -43,6 +43,9 @@ export interface ChatMessage {
   task_ids?: string[];
   tasks?: TaskRef[];
   reply_to?: ReplyRef | null;
+  /** Withdrawn — the row survives so replies and counts still resolve. */
+  deleted?: boolean;
+  read_at?: string | null;
   created_at: string; // ISO 8601
   client_id?: string;                 // optimistic-send correlation id
   status?: "sending" | "sent";        // client-side delivery state
@@ -74,9 +77,25 @@ export interface GroupMessage {
   task_ids?: string[];
   tasks?: TaskRef[];
   reply_to?: ReplyRef | null;
+  deleted?: boolean;
   created_at: string; // ISO 8601
   client_id?: string;
   status?: "sending" | "sent";
+}
+
+export interface SeenEntry {
+  user_id: string;
+  name: string;
+  at?: string | null;
+}
+
+/** Who has seen one message — powers the "Info" panel. */
+export interface MessageInfo {
+  kind: "direct" | "group";
+  sent_at: string | null;
+  seen: SeenEntry[];
+  not_seen: SeenEntry[];
+  total_recipients: number;
 }
 
 export type WsIncoming =
@@ -85,6 +104,8 @@ export type WsIncoming =
   | { type: "status"; user_id: string; online: boolean }
   | { type: "online_users"; user_ids: string[] }
   | { type: "read"; by: string }
+  | { type: "message_deleted"; id: string }
+  | { type: "group_message_deleted"; id: string; group_id: string }
   // Pushed by the server when a notification is created, so the bell updates
   // immediately rather than on the next 60s poll.
   | { type: "notification"; notification: import("./notification").Notification };

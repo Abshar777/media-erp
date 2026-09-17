@@ -26,6 +26,10 @@ import {
   Play,
   Music,
   Image as ImageIcon,
+  MoreVertical,
+  Info,
+  Trash2,
+  Ban,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
@@ -34,6 +38,9 @@ import {
   useAdminMessages,
   useChatMessages,
   useChatSocket,
+  useDeleteMessage,
+  useMessageInfo,
+  useMarkGroupRead,
   useChatUsers,
   useGroups,
   useGroupMessages,
@@ -672,6 +679,199 @@ function QuotedMessage({ reply, isOwn, onExpired }: {
   );
 }
 
+/** What a withdrawn message leaves behind. */
+function DeletedNote({ isOwn }: { isOwn: boolean }) {
+  return (
+    <p className={cn(
+      "flex items-center gap-1.5 text-sm italic",
+      isOwn ? "text-primary-foreground/70" : "text-muted-foreground"
+    )}>
+      <Ban className="size-3.5" />
+      This message was deleted
+    </p>
+  );
+}
+
+/**
+ * Who has seen a message.
+ *
+ * Portalled: a chat bubble sits inside scrolling, transformed containers, so a
+ * panel rendered in place would be clipped by the thread it belongs to.
+ */
+function MessageInfoModal({ messageId, onClose }: { messageId: string; onClose: () => void }) {
+  const { data, isLoading } = useMessageInfo(messageId);
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div
+        className="max-h-[80vh] w-full max-w-sm overflow-hidden rounded-2xl border bg-card shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
+            <Info className="size-4 text-primary" /> Message info
+          </h3>
+          <button onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-muted" aria-label="Close">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="max-h-[60vh] overflow-y-auto px-4 py-3">
+          {isLoading || !data ? (
+            <div className="flex justify-center py-6"><Loader2 className="size-5 animate-spin text-muted-foreground/50" /></div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Sent</p>
+                <p className="text-sm">{data.sent_at ? `${fmtDate(data.sent_at)} · ${fmtTime(data.sent_at)}` : "—"}</p>
+              </div>
+
+              <div>
+                <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <CheckCheck className="size-3.5 text-sky-500" />
+                  Seen by {data.seen.length}{data.total_recipients > 1 ? ` of ${data.total_recipients}` : ""}
+                </p>
+                {data.seen.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Nobody yet.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {data.seen.map((p) => (
+                      <li key={p.user_id} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="truncate">{p.name || "Unknown"}</span>
+                        {p.at && <span className="shrink-0 text-[11px] text-muted-foreground">{fmtTime(p.at)}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {data.not_seen.length > 0 && (
+                <div>
+                  <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Check className="size-3.5" /> Not seen yet ({data.not_seen.length})
+                  </p>
+                  <ul className="space-y-1">
+                    {data.not_seen.map((p) => (
+                      <li key={p.user_id} className="truncate text-sm text-muted-foreground">{p.name || "Unknown"}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/**
+ * The hover menu on a bubble. Portalled for the same reason as the info panel,
+ * and positioned from the button so it stays put while the thread scrolls under
+ * it — the menu closes on scroll rather than drifting away from its message.
+ */
+function MessageMenu({
+  onReply, onInfo, onDelete, canDelete, isOwn,
+}: {
+  onReply: () => void;
+  onInfo: () => void;
+  onDelete: () => void;
+  canDelete: boolean;
+  isOwn: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => { setOpen(false); setConfirming(false); };
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+
+  function toggle(e: React.MouseEvent) {
+    e.stopPropagation();
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) {
+      // Flip above when there isn't room below, so the menu never hangs off
+      // the bottom of a thread sitting near the composer.
+      const below = window.innerHeight - r.bottom;
+      const height = canDelete ? 132 : 92;
+      setPos({
+        top: below > height ? r.bottom + 4 : r.top - height - 4,
+        left: Math.min(r.left, window.innerWidth - 176),
+      });
+    }
+    setOpen((v) => !v);
+    setConfirming(false);
+  }
+
+  const item = "flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-muted";
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        className={cn(
+          "flex size-7 shrink-0 items-center justify-center self-center rounded-full text-muted-foreground",
+          "transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100",
+          open ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          isOwn ? "order-first" : ""
+        )}
+        title="More"
+        aria-label="Message actions"
+      >
+        <MoreVertical className="size-3.5" />
+      </button>
+
+      {open && pos && typeof document !== "undefined" && createPortal(
+        <>
+          <div className="fixed inset-0 z-[90]" onClick={() => { setOpen(false); setConfirming(false); }} />
+          <div
+            className="fixed z-[91] w-44 overflow-hidden rounded-xl border bg-card py-1 shadow-xl"
+            style={{ top: pos.top, left: pos.left }}
+          >
+            <button className={item} onClick={() => { setOpen(false); onReply(); }}>
+              <Reply className="size-3.5" /> Reply
+            </button>
+            <button className={item} onClick={() => { setOpen(false); onInfo(); }}>
+              <Info className="size-3.5" /> Info
+            </button>
+            {canDelete && (
+              confirming ? (
+                <button
+                  className={cn(item, "text-rose-600 dark:text-rose-400 font-medium")}
+                  onClick={() => { setOpen(false); setConfirming(false); onDelete(); }}
+                >
+                  <Trash2 className="size-3.5" /> Tap again to delete
+                </button>
+              ) : (
+                <button
+                  className={cn(item, "text-rose-600 dark:text-rose-400")}
+                  onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
+                >
+                  <Trash2 className="size-3.5" /> Delete
+                </button>
+              )
+            )}
+          </div>
+        </>,
+        document.body
+      )}
+    </>
+  );
+}
+
 /** Appears beside a bubble on hover. */
 function ReplyButton({ onClick, isOwn }: { onClick: () => void; isOwn: boolean }) {
   return (
@@ -697,12 +897,16 @@ function Bubble({
   monitorMode = false,
   allUsers,
   onReply,
+  myId,
+  canModerate,
 }: {
   msg: ChatMessage;
   isOwn: boolean;
   monitorMode?: boolean;
   allUsers?: Record<string, string>; // id → name map for monitor mode
   onReply?: (m: ChatMessage) => void;
+  myId?: string;
+  canModerate?: boolean;
 }) {
   const senderLabel = monitorMode && allUsers
     ? (allUsers[msg.from_user_id] ?? "Unknown")
@@ -711,6 +915,11 @@ function Bubble({
   // one 403s, refetch so the backend re-signs it.
   const qc = useQueryClient();
   const refreshSignedUrls = () => qc.invalidateQueries({ queryKey: ["chat"] });
+  const [infoFor, setInfoFor] = useState<string | null>(null);
+  const del = useDeleteMessage();
+  // Only a real, saved message can be acted on — an optimistic one has no
+  // server id yet, and a tombstone has nothing left to reply to or withdraw.
+  const actionable = !!onReply && msg.status !== "sending" && !msg.deleted;
 
   return (
     <motion.div
@@ -725,7 +934,15 @@ function Bubble({
         </span>
       )}
       <div className={cn("flex w-full items-stretch", isOwn ? "justify-end" : "justify-start")}>
-      {onReply && <ReplyButton isOwn={isOwn} onClick={() => onReply(msg)} />}
+      {actionable && (
+        <MessageMenu
+          isOwn={isOwn}
+          canDelete={msg.from_user_id === myId || !!canModerate}
+          onReply={() => onReply!(msg)}
+          onInfo={() => setInfoFor(msg.id)}
+          onDelete={() => del.mutate(msg.id)}
+        />
+      )}
       <div
         id={`msg-${msg.id}`}
         className={cn(
@@ -735,6 +952,10 @@ function Bubble({
             : "bg-card border text-foreground rounded-bl-[5px] shadow-sm"
         )}
       >
+        {msg.deleted ? (
+          <DeletedNote isOwn={isOwn} />
+        ) : (
+        <>
         {msg.reply_to && <QuotedMessage reply={msg.reply_to} isOwn={isOwn} onExpired={refreshSignedUrls} />}
         {msg.content && (
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
@@ -742,6 +963,8 @@ function Bubble({
           </p>
         )}
         <MessageExtras attachments={msg.attachments} tasks={msg.tasks} />
+        </>
+        )}
         <p
           className={cn(
             "mt-0.5 text-right text-[10px]",
@@ -763,6 +986,7 @@ function Bubble({
         </p>
       </div>
       </div>
+      {infoFor && <MessageInfoModal messageId={infoFor} onClose={() => setInfoFor(null)} />}
     </motion.div>
   );
 }
@@ -783,6 +1007,10 @@ function MyChatWindow({
   const { data: messages = [], isLoading } = useChatMessages(partner.id);
   const endRef = useRef<HTMLDivElement>(null);
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+  // Mirrors the server rule in DELETE /chat/messages/{id}: your own, or any
+  // message if you are a Super Admin.
+  const me = useAuthStore((st) => st.user);
+  const isSuperAdmin = me?.role?.role_name === "Super Admin";
 
   // Quoting across conversations makes no sense, and the server rejects it
   // anyway — drop a half-written reply when the partner changes.
@@ -838,6 +1066,8 @@ function MyChatWindow({
                     key={m.id}
                     msg={m}
                     isOwn={m.from_user_id === myId}
+                    myId={myId}
+                    canModerate={isSuperAdmin}
                     onReply={(x) =>
                       setReplyTo({
                         id: x.id,
@@ -891,12 +1121,16 @@ function groupMsgsByDate(msgs: GroupMessage[]) {
   return groups;
 }
 
-function GroupBubble({ msg, isOwn, onReply }: {
+function GroupBubble({ msg, isOwn, onReply, myId, canModerate }: {
   msg: GroupMessage; isOwn: boolean; onReply?: (m: GroupMessage) => void;
+  myId?: string; canModerate?: boolean;
 }) {
   // See Bubble: a quoted thumbnail's signed URL expires and needs re-signing.
   const qc = useQueryClient();
   const refreshSignedUrls = () => qc.invalidateQueries({ queryKey: ["chat"] });
+  const [infoFor, setInfoFor] = useState<string | null>(null);
+  const del = useDeleteMessage();
+  const actionable = !!onReply && msg.status !== "sending" && !msg.deleted;
   if (msg.is_system) {
     return (
       <motion.div
@@ -927,7 +1161,15 @@ function GroupBubble({ msg, isOwn, onReply }: {
         <span className="mb-0.5 px-1 text-[10px] font-medium text-muted-foreground">{msg.from_user_name}</span>
       )}
       <div className={cn("flex w-full items-stretch", isOwn ? "justify-end" : "justify-start")}>
-      {onReply && <ReplyButton isOwn={isOwn} onClick={() => onReply(msg)} />}
+      {actionable && (
+        <MessageMenu
+          isOwn={isOwn}
+          canDelete={msg.from_user_id === myId || !!canModerate}
+          onReply={() => onReply!(msg)}
+          onInfo={() => setInfoFor(msg.id)}
+          onDelete={() => del.mutate(msg.id)}
+        />
+      )}
       <div
         id={`msg-${msg.id}`}
         className={cn(
@@ -937,11 +1179,17 @@ function GroupBubble({ msg, isOwn, onReply }: {
             : "bg-card border text-foreground rounded-bl-[5px] shadow-sm"
         )}
       >
+        {msg.deleted ? (
+          <DeletedNote isOwn={isOwn} />
+        ) : (
+        <>
         {msg.reply_to && <QuotedMessage reply={msg.reply_to} isOwn={isOwn} onExpired={refreshSignedUrls} />}
         {msg.content && (
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
         )}
         <MessageExtras attachments={msg.attachments} tasks={msg.tasks} />
+        </>
+        )}
         <p className={cn("mt-0.5 flex items-center justify-end gap-1 text-[10px]", isOwn ? "text-primary-foreground/60" : "text-muted-foreground")}>
           {fmtTime(msg.created_at)}
           {isOwn && (
@@ -952,6 +1200,7 @@ function GroupBubble({ msg, isOwn, onReply }: {
         </p>
       </div>
       </div>
+      {infoFor && <MessageInfoModal messageId={infoFor} onClose={() => setInfoFor(null)} />}
     </motion.div>
   );
 }
@@ -1048,9 +1297,17 @@ function GroupChatWindow({
   }, [messages]);
 
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+  const me = useAuthStore((st) => st.user);
+  const isSuperAdmin = me?.role?.role_name === "Super Admin";
+
   // Switching groups abandons a half-written reply; the server would refuse a
   // quote from another conversation anyway.
   useEffect(() => { setReplyTo(null); }, [group.id]);
+
+  // Record that this reader has caught up, so "Seen by" can report them.
+  // Runs on open and whenever new messages land while the group is on screen.
+  const markGroupRead = useMarkGroupRead();
+  useEffect(() => { markGroupRead(group.id); }, [group.id, messages.length, markGroupRead]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -1109,6 +1366,8 @@ function GroupChatWindow({
                     key={m.id}
                     msg={m}
                     isOwn={m.from_user_id === myId}
+                    myId={myId}
+                    canModerate={isSuperAdmin}
                     onReply={(x) =>
                       setReplyTo({
                         id: x.id,

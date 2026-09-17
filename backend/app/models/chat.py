@@ -29,5 +29,9 @@ def message_to_dict(doc: dict) -> dict:
         "task_ids": doc.get("task_ids", []),
         # Snapshot of the quoted message, or None. See chat_service.build_reply_snapshot.
         "reply_to": sign_reply(doc.get("reply_to")),
+        # A withdrawn message keeps its row so replies and counts still resolve;
+        # the client renders a tombstone rather than empty text.
+        "deleted": bool(doc.get("deleted_at")),
+        "read_at": doc["read_at"].isoformat() if doc.get("read_at") else None,
         "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None,
     }

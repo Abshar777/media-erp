@@ -34,6 +34,7 @@ from app.services.chat_service import (
 )
 from app.services import group_chat_service as groups
 from app.utils.jwt import decode_access_token
+from app.utils.response import error_response, success_response
 from app.utils.timezone import utc_iso
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
@@ -533,3 +534,148 @@ async def admin_get_messages(
     """
     docs = await db_get_messages(user_a_id, user_b_id, limit)
     return [message_to_dict(d) for d in docs]
+
+
+# ── Per-message actions: delete, info, group read receipts ───────────────────
+
+async def _load_message(db, message_id: str) -> dict | None:
+    if not ObjectId.is_valid(message_id):
+        return None
+    return await db["messages"].find_one({"_id": ObjectId(message_id)})
+
+
+async def _may_see_message(db, doc: dict, user: dict) -> bool:
+    """Can this person read the message at all? Gates both info and delete."""
+    uid = str(user["_id"])
+    if _is_super_admin(user):
+        return True
+    gid = doc.get("group_id")
+    if gid:
+        return uid in await groups.group_member_ids(db, gid) or await groups.is_elevated(db, uid)
+    return uid in {doc.get("from_user_id"), doc.get("to_user_id")}
+
+
+@router.delete("/messages/{message_id}")
+async def delete_message(
+    message_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """
+    Withdraw a message.
+
+    Only its author, or a Super Admin. Deleting for yourself alone is
+    deliberately not offered: a thread that reads differently for each person
+    is worse than one that plainly shows something was withdrawn.
+    """
+    doc = await _load_message(db, message_id)
+    if not doc:
+        return error_response("That message no longer exists.", status_code=404)
+
+    uid = str(current_user["_id"])
+    if doc.get("from_user_id") != uid and not _is_super_admin(current_user):
+        return error_response("You can only delete your own messages.", status_code=403)
+    if doc.get("deleted_at"):
+        return success_response(data={"id": message_id}, message="Already deleted")
+
+    from app.services.chat_service import soft_delete_message
+    updated = await soft_delete_message(
+        db, doc, uid, current_user.get("name", "")
+    )
+
+    # Tell everyone who can see it, so it disappears without a reload.
+    gid = doc.get("group_id")
+    if gid:
+        envelope = {"type": "group_message_deleted", "id": message_id, "group_id": gid}
+        for mid in set(await groups.group_member_ids(db, gid)) | {uid}:
+            await manager.send(mid, envelope)
+    else:
+        envelope = {"type": "message_deleted", "id": message_id}
+        for mid in {doc.get("from_user_id", ""), doc.get("to_user_id", "")} - {""}:
+            await manager.send(mid, envelope)
+
+    return success_response(data={"id": message_id}, message="Message deleted")
+
+
+@router.get("/messages/{message_id}/info")
+async def message_info(
+    message_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """
+    Who has seen this message.
+
+    For a direct message that is the one recipient. For a group it is derived
+    from each member's read high-water mark (see chat_service.mark_group_read)
+    rather than a per-message receipt, so it stays one row per member however
+    long the group runs.
+    """
+    doc = await _load_message(db, message_id)
+    if not doc:
+        return error_response("That message no longer exists.", status_code=404)
+    if not await _may_see_message(db, doc, current_user):
+        return error_response("You don't have access to that message.", status_code=403)
+
+    sent_at = utc_iso(doc.get("created_at"))
+    sender_id = doc.get("from_user_id", "")
+    gid = doc.get("group_id")
+
+    if not gid:
+        other = doc.get("to_user_id", "")
+        name = ""
+        if ObjectId.is_valid(other):
+            u = await db["users"].find_one({"_id": ObjectId(other)}, {"name": 1})
+            name = (u or {}).get("name", "")
+        seen = bool(doc.get("read"))
+        return success_response(data={
+            "kind": "direct",
+            "sent_at": sent_at,
+            "seen": [{"user_id": other, "name": name,
+                      "at": utc_iso(doc.get("read_at"))}] if seen else [],
+            "not_seen": [] if seen else [{"user_id": other, "name": name}],
+            "total_recipients": 1,
+        })
+
+    member_ids = [m for m in await groups.group_member_ids(db, gid) if m != sender_id]
+    valid = [ObjectId(m) for m in member_ids if ObjectId.is_valid(m)]
+    users = await db["users"].find({"_id": {"$in": valid}}, {"name": 1}).to_list(1000)
+    names = {str(u["_id"]): u.get("name", "") for u in users}
+
+    reads = await db["chat_group_reads"].find(
+        {"group_id": gid, "user_id": {"$in": member_ids}}
+    ).to_list(1000)
+    read_at = {r["user_id"]: r.get("last_read_at") for r in reads}
+
+    created = doc.get("created_at")
+    seen, not_seen = [], []
+    for mid in member_ids:
+        at = read_at.get(mid)
+        if created and at and at >= created:
+            seen.append({"user_id": mid, "name": names.get(mid, ""), "at": utc_iso(at)})
+        else:
+            not_seen.append({"user_id": mid, "name": names.get(mid, "")})
+
+    seen.sort(key=lambda r: r["at"] or "")
+    return success_response(data={
+        "kind": "group",
+        "sent_at": sent_at,
+        "seen": seen,
+        "not_seen": not_seen,
+        "total_recipients": len(member_ids),
+    })
+
+
+@router.put("/groups/{group_id}/read")
+async def mark_group_read_endpoint(
+    group_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Called when the group is opened — moves this reader's high-water mark."""
+    uid = str(current_user["_id"])
+    if uid not in await groups.group_member_ids(db, group_id) and not await groups.is_elevated(db, uid):
+        return error_response("You don't have access to that group.", status_code=403)
+    from app.services.chat_service import mark_group_read
+    await mark_group_read(db, group_id, uid)
+    return success_response(data={"group_id": group_id}, message="Marked read")

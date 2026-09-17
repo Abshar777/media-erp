@@ -55,6 +55,7 @@ def group_message_to_dict(doc: dict) -> dict:
         "attachments": sign_attachments(doc.get("attachments", [])),
         "task_ids": doc.get("task_ids", []),
         "reply_to": sign_reply(doc.get("reply_to")),
+        "deleted": bool(doc.get("deleted_at")),
         "created_at": utc_iso(doc.get("created_at")),
     }
 
