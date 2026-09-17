@@ -16,6 +16,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { uploadFilesDirect, formatBytes, MAX_UPLOAD_BYTES } from "@/lib/directUpload";
 import { SignedImg } from "@/components/shared/SignedImg";
+import { MediaLightbox, canPreview } from "@/components/shared/MediaLightbox";
 import type { Attachment } from "@/types/project";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -145,6 +146,11 @@ export function FileUploader({
 
   const thumb = compact ? "size-14" : "size-24";
 
+  // Which attachment the viewer is showing, or null when it is closed. Paging
+  // runs over everything previewable, so Next never lands on a .docx.
+  const viewable = value.filter((a) => canPreview(a.content_type));
+  const [viewing, setViewing] = useState<number | null>(null);
+
   return (
     <div className={cn("space-y-3", className)}>
       {/* Uploaded files grid */}
@@ -152,13 +158,17 @@ export function FileUploader({
         <div className={cn("grid gap-2", compact ? "grid-cols-4 sm:grid-cols-6" : "grid-cols-3 sm:grid-cols-4")}>
           {value.map((a, i) => (
             <div key={a.key || a.url || i} className="group relative">
-              <a
-                href={a.url}
-                target="_blank"
-                rel="noopener noreferrer"
+              {/* Previewable files open in the in-app viewer; everything else
+                  still opens in a tab, where the browser can at least download
+                  it. Rendered as a button vs. a link accordingly, so the hover
+                  affordance matches what the click actually does. */}
+              {canPreview(a.content_type) ? (
+              <button
+                type="button"
+                onClick={() => setViewing(viewable.findIndex((v) => (v.key || v.url) === (a.key || a.url)))}
                 title={`View ${a.filename}`}
                 className={cn(
-                  "flex flex-col items-center justify-center overflow-hidden rounded-lg border bg-muted/30 hover:border-primary/50 transition-colors",
+                  "flex w-full flex-col items-center justify-center overflow-hidden rounded-lg border bg-muted/30 hover:border-primary/50 transition-colors",
                   thumb
                 )}
               >
@@ -186,11 +196,31 @@ export function FileUploader({
                   </div>
                 )}
                 <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-                  {kind(a.content_type) === "image"
-                    ? <ExternalLink className="size-4 text-white drop-shadow" />
-                    : <Eye className="size-4 text-white drop-shadow" />}
+                  <Eye className="size-4 text-white drop-shadow" />
+                </span>
+              </button>
+              ) : (
+              <a
+                href={a.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open ${a.filename}`}
+                className={cn(
+                  "flex flex-col items-center justify-center overflow-hidden rounded-lg border bg-muted/30 hover:border-primary/50 transition-colors",
+                  thumb
+                )}
+              >
+                <div className="flex flex-col items-center justify-center gap-1 p-1 text-center">
+                  <TypeIcon contentType={a.content_type} className="size-6 text-muted-foreground" />
+                  <span className="line-clamp-2 break-all text-[9px] leading-tight text-muted-foreground">
+                    {a.filename}
+                  </span>
+                </div>
+                <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                  <ExternalLink className="size-4 text-white drop-shadow" />
                 </span>
               </a>
+              )}
               {/* filename + size caption for images */}
               {kind(a.content_type) === "image" && (
                 <span className="absolute bottom-0 inset-x-0 truncate rounded-b-lg bg-black/45 px-1 py-0.5 text-[8px] text-white">
@@ -281,6 +311,16 @@ export function FileUploader({
 
       {readOnly && value.length === 0 && (
         <p className="text-xs italic text-muted-foreground/50">No files</p>
+      )}
+
+      {viewing !== null && viewable[viewing] && (
+        <MediaLightbox
+          items={viewable}
+          index={viewing}
+          onIndexChange={setViewing}
+          onClose={() => setViewing(null)}
+          onExpired={refreshSignedUrls}
+        />
       )}
     </div>
   );

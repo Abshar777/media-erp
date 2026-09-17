@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -9,6 +9,8 @@ import {
   MessageSquare, ArrowRight, UserCircle2,
   History, ClipboardCheck, Play, Pause, RotateCcw,
   UserPlus, GitBranch, Circle, AlertTriangle, BarChart2, ArrowLeftRight,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
@@ -247,6 +249,65 @@ function StatusChip({ status }: { status: string }) {
 
 type ModalTab = "details" | "history";
 
+
+/**
+ * A long description shown in full, but not at the cost of the rest of the
+ * panel. Clamped to a few lines with a toggle, rather than a fixed box the
+ * reader has to scroll inside — a scroll area nested in a scrolling modal is
+ * easy to miss and awkward to use.
+ *
+ * The toggle only appears when the text is actually cut off, measured after
+ * layout rather than guessed from character count, so a short description in
+ * a narrow panel still gets one and a wide one doesn't get a button that
+ * does nothing.
+ */
+function ExpandableText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [clipped, setClipped] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setClipped(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, expanded]);
+
+  return (
+    <div className="space-y-1">
+      <div className="relative">
+        <p
+          ref={ref}
+          className={cn(
+            "whitespace-pre-wrap rounded-xl border bg-muted/20 p-3 text-sm leading-relaxed text-foreground/80",
+            !expanded && "line-clamp-4"
+          )}
+        >
+          {text}
+        </p>
+        {!expanded && clipped && (
+          /* Fades the cut edge so it reads as "more below" rather than a
+             sentence that simply stops. */
+          <div className="pointer-events-none absolute inset-x-px bottom-px h-8 rounded-b-xl bg-gradient-to-t from-background to-transparent" />
+        )}
+      </div>
+      {(clipped || expanded) && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+        >
+          {expanded ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+          {expanded ? "Show less" : "Show full description"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function TaskDetailModal({
   task,
   teamName: teamNameProp,
@@ -264,6 +325,7 @@ export function TaskDetailModal({
   const [title, setTitle] = useState(task.title);
   const [description, setDesc] = useState(task.description || "");
   const [attachments, setAttachments] = useState<Attachment[]>(task.attachments ?? []);
+  const [descExpanded, setDescExpanded] = useState(false);
   const [caption, setCaption] = useState("");
   const [showCaptionInput, setShowCaptionInput] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -524,18 +586,30 @@ export function TaskDetailModal({
                   task.description ? (
                     <div className="space-y-1.5">
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Description</p>
-                      <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap bg-muted/20 rounded-xl p-3 border">
-                        {task.description}
-                      </p>
+                      <ExpandableText text={task.description} />
                     </div>
                   ) : null
                 ) : (
                   <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">Description</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-muted-foreground">Description</label>
+                      {/* Only offered once there is enough text to be worth it —
+                          a toggle on two lines is noise. */}
+                      {description.length > 120 && (
+                        <button
+                          type="button"
+                          onClick={() => setDescExpanded((v) => !v)}
+                          className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                        >
+                          {descExpanded ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+                          {descExpanded ? "Collapse" : "Expand"}
+                        </button>
+                      )}
+                    </div>
                     <textarea
                       value={description}
                       onChange={(e) => { setDesc(e.target.value); setDirty(true); }}
-                      rows={3}
+                      rows={descExpanded ? 14 : 3}
                       placeholder="Add more context..."
                       className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
                     />
