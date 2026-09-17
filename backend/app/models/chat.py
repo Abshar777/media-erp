@@ -1,4 +1,20 @@
-from app.utils.storage import sign_attachments
+from app.utils.storage import sign_attachment, sign_attachments
+
+
+def sign_reply(reply: dict | None) -> dict | None:
+    """
+    Re-sign the thumbnail carried by a quote.
+
+    The snapshot is stored keyed and outlives any signature, so the attachment
+    inside it needs signing on the way out exactly like the message's own —
+    handing back the stored value would render a quote pointing at a bare key.
+    """
+    if not isinstance(reply, dict):
+        return None
+    att = reply.get("attachment")
+    if not isinstance(att, dict):
+        return reply
+    return {**reply, "attachment": sign_attachment(att)}
 
 
 def message_to_dict(doc: dict) -> dict:
@@ -12,6 +28,6 @@ def message_to_dict(doc: dict) -> dict:
         "attachments": sign_attachments(doc.get("attachments", [])),
         "task_ids": doc.get("task_ids", []),
         # Snapshot of the quoted message, or None. See chat_service.build_reply_snapshot.
-        "reply_to": doc.get("reply_to"),
+        "reply_to": sign_reply(doc.get("reply_to")),
         "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None,
     }

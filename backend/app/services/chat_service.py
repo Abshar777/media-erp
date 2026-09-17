@@ -28,14 +28,33 @@ async def get_messages(
 REPLY_PREVIEW_CHARS = 220
 
 
+def attachment_label(att: dict) -> str:
+    """
+    What to call an attachment in a quote.
+
+    A filename is the useful label for a document, but for a photo or a video
+    the thumbnail already says what it is and the filename is usually machine
+    noise (IMG_4821.HEIC), so those get the kind instead.
+    """
+    ct = (att.get("content_type") or "").lower()
+    if ct.startswith("image/"):
+        return "Photo"
+    if ct.startswith("video/"):
+        return "Video"
+    if ct.startswith("audio/"):
+        return "Audio"
+    return att.get("filename") or "Document"
+
+
 def _preview(doc: dict) -> str:
     """What the quote shows when the original had no text of its own."""
     content = (doc.get("content") or "").strip()
     if content:
         return content[:REPLY_PREVIEW_CHARS]
-    if doc.get("attachments"):
-        n = len(doc["attachments"])
-        return f"{n} attachment{'s' if n != 1 else ''}"
+    atts = doc.get("attachments") or []
+    if atts:
+        first = attachment_label(atts[0]) if isinstance(atts[0], dict) else "Attachment"
+        return first if len(atts) == 1 else f"{first} +{len(atts) - 1}"
     if doc.get("task_ids"):
         n = len(doc["task_ids"])
         return f"{n} task{'s' if n != 1 else ''}"
@@ -86,11 +105,17 @@ async def build_reply_snapshot(
     else:
         return None
 
+    # Carry the first attachment so the quote can show a thumbnail rather than
+    # the word "attachment". Stored keyed, never as a signed URL — the snapshot
+    # outlives any signature, so the read path re-signs it (see models/chat.py).
+    atts = canonicalize_attachments(doc.get("attachments"))
     return {
         "id": str(doc["_id"]),
         "from_user_id": doc.get("from_user_id", ""),
         "name": name,
         "preview": _preview(doc),
+        "attachment": atts[0] if atts else None,
+        "attachment_count": len(atts),
     }
 
 

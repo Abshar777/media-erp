@@ -20,6 +20,10 @@ export interface ReplyRef {
   from_user_id: string;
   name: string;
   preview: string;
+  /** First attachment of the quoted message, re-signed on read, so the quote
+      can show a thumbnail instead of the word "attachment". */
+  attachment?: ChatAttachment | null;
+  attachment_count?: number;
 }
 
 export interface TaskRef {

@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 from app.utils.timezone import IST  # single source of truth for IST (UTC+05:30)
 from app.utils.timezone import utc_iso
 from app.utils.storage import canonicalize_attachments, sign_attachments
+from app.models.chat import sign_reply
 
 _POLL_INTERVAL_SEC = 60
 _REPORT_HOUR_IST = 21  # 9 PM IST
@@ -53,7 +54,7 @@ def group_message_to_dict(doc: dict) -> dict:
         # Private bucket — attachments are signed per read (see utils/storage.py).
         "attachments": sign_attachments(doc.get("attachments", [])),
         "task_ids": doc.get("task_ids", []),
-        "reply_to": doc.get("reply_to"),
+        "reply_to": sign_reply(doc.get("reply_to")),
         "created_at": utc_iso(doc.get("created_at")),
     }
 

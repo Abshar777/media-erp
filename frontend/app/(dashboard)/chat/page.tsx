@@ -23,6 +23,9 @@ import {
   Megaphone,
   X,
   Reply,
+  Play,
+  Music,
+  Image as ImageIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
@@ -433,6 +436,7 @@ function ChatComposer({
               {replyTo.preview || "Attachment"}
             </p>
           </div>
+          {replyTo.attachment && <ReplyThumb att={replyTo.attachment} />}
           <button
             type="button"
             onClick={onCancelReply}
@@ -565,29 +569,105 @@ function jumpToMessage(id: string) {
   setTimeout(() => el.classList.remove("ring-2", "ring-primary/60"), 1400);
 }
 
+/**
+ * Label for an attachment-only message. Mirrors chat_service.attachment_label
+ * so the optimistic quote reads the same as the one the server sends back.
+ */
+function attachmentLabel(atts?: ChatAttachment[]): string {
+  const first = atts?.[0];
+  if (!first) return "";
+  const ct = (first.content_type || "").toLowerCase();
+  const kind = ct.startsWith("image/") ? "Photo"
+    : ct.startsWith("video/") ? "Video"
+    : ct.startsWith("audio/") ? "Audio"
+    : first.filename || "Document";
+  return atts!.length > 1 ? `${kind} +${atts!.length - 1}` : kind;
+}
+
+/**
+ * The little square a quote shows for an attachment — a photo, a video's first
+ * frame, or a typed placeholder. Without it every quoted file reads
+ * "attachment", which tells the reader nothing about which one.
+ */
+function ReplyThumb({ att, onExpired }: { att: ChatAttachment; onExpired?: () => void }) {
+  const ct = (att.content_type || "").toLowerCase();
+  const box = "size-11 shrink-0 overflow-hidden rounded-md border border-white/15 bg-black/20";
+
+  if (isImage(ct)) {
+    return (
+      <div className={box}>
+        <SignedImg
+          src={att.url}
+          alt={att.filename}
+          className="size-full object-cover"
+          onExpired={onExpired}
+          fallback={<div className="flex size-full items-center justify-center"><ImageIcon className="size-4 opacity-60" /></div>}
+        />
+      </div>
+    );
+  }
+
+  if (ct.startsWith("video/")) {
+    return (
+      <div className={cn(box, "relative")}>
+        {/* #t=0.1 nudges the browser to paint a frame rather than a black box;
+            metadata-only so quoting a video costs no bandwidth. */}
+        <video
+          src={`${att.url}#t=0.1`}
+          preload="metadata"
+          muted
+          playsInline
+          className="size-full object-cover"
+        />
+        {/* A badge rather than a full scrim — dimming the whole tile hides the
+            very frame it is there to show. */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="flex size-5 items-center justify-center rounded-full bg-black/55">
+            <Play className="size-2.5 fill-white text-white" />
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const Icon = ct.startsWith("audio/") ? Music : FileText;
+  return (
+    <div className={cn(box, "flex items-center justify-center bg-white/10")}>
+      <Icon className="size-4 opacity-70" />
+    </div>
+  );
+}
+
 /** The quoted original, shown above the reply's own text. */
-function QuotedMessage({ reply, isOwn }: { reply: ReplyRef; isOwn: boolean }) {
+function QuotedMessage({ reply, isOwn, onExpired }: {
+  reply: ReplyRef; isOwn: boolean; onExpired?: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={() => jumpToMessage(reply.id)}
       className={cn(
-        "mb-1.5 flex w-full flex-col gap-0.5 rounded-lg border-l-[3px] px-2 py-1 text-left transition-colors",
+        "mb-1.5 flex w-full flex-col gap-0.5 rounded-lg border-l-[3px] px-2 py-1.5 text-left transition-colors",
         isOwn
           ? "border-primary-foreground/60 bg-primary-foreground/10 hover:bg-primary-foreground/20"
           : "border-primary/60 bg-primary/5 hover:bg-primary/10"
       )}
       title="Go to the message this replies to"
     >
-      <span className={cn("text-[10px] font-semibold", isOwn ? "text-primary-foreground/90" : "text-primary")}>
-        {reply.name}
-      </span>
-      <span className={cn(
-        "line-clamp-2 text-[11px] leading-snug",
-        isOwn ? "text-primary-foreground/70" : "text-muted-foreground"
-      )}>
-        {reply.preview || "Attachment"}
-      </span>
+      <div className="flex w-full items-center gap-2">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className={cn("text-[10px] font-semibold", isOwn ? "text-primary-foreground/90" : "text-primary")}>
+            {reply.name}
+          </span>
+          <span className={cn(
+            "line-clamp-2 text-[11px] leading-snug",
+            isOwn ? "text-primary-foreground/70" : "text-muted-foreground"
+          )}>
+            {reply.preview || "Attachment"}
+          </span>
+        </div>
+        {reply.attachment && <ReplyThumb att={reply.attachment} onExpired={onExpired} />}
+      </div>
     </button>
   );
 }
@@ -627,6 +707,10 @@ function Bubble({
   const senderLabel = monitorMode && allUsers
     ? (allUsers[msg.from_user_id] ?? "Unknown")
     : null;
+  // A quoted thumbnail carries a signed URL that expires like any other; when
+  // one 403s, refetch so the backend re-signs it.
+  const qc = useQueryClient();
+  const refreshSignedUrls = () => qc.invalidateQueries({ queryKey: ["chat"] });
 
   return (
     <motion.div
@@ -651,7 +735,7 @@ function Bubble({
             : "bg-card border text-foreground rounded-bl-[5px] shadow-sm"
         )}
       >
-        {msg.reply_to && <QuotedMessage reply={msg.reply_to} isOwn={isOwn} />}
+        {msg.reply_to && <QuotedMessage reply={msg.reply_to} isOwn={isOwn} onExpired={refreshSignedUrls} />}
         {msg.content && (
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
             {msg.content}
@@ -759,7 +843,9 @@ function MyChatWindow({
                         id: x.id,
                         from_user_id: x.from_user_id,
                         name: x.from_user_id === myId ? "You" : partner.name,
-                        preview: x.content || (x.attachments?.length ? "Attachment" : ""),
+                        preview: x.content || attachmentLabel(x.attachments),
+                        attachment: x.attachments?.[0] ?? null,
+                        attachment_count: x.attachments?.length ?? 0,
                       })
                     }
                   />
@@ -808,6 +894,9 @@ function groupMsgsByDate(msgs: GroupMessage[]) {
 function GroupBubble({ msg, isOwn, onReply }: {
   msg: GroupMessage; isOwn: boolean; onReply?: (m: GroupMessage) => void;
 }) {
+  // See Bubble: a quoted thumbnail's signed URL expires and needs re-signing.
+  const qc = useQueryClient();
+  const refreshSignedUrls = () => qc.invalidateQueries({ queryKey: ["chat"] });
   if (msg.is_system) {
     return (
       <motion.div
@@ -848,7 +937,7 @@ function GroupBubble({ msg, isOwn, onReply }: {
             : "bg-card border text-foreground rounded-bl-[5px] shadow-sm"
         )}
       >
-        {msg.reply_to && <QuotedMessage reply={msg.reply_to} isOwn={isOwn} />}
+        {msg.reply_to && <QuotedMessage reply={msg.reply_to} isOwn={isOwn} onExpired={refreshSignedUrls} />}
         {msg.content && (
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
         )}
@@ -1025,7 +1114,9 @@ function GroupChatWindow({
                         id: x.id,
                         from_user_id: x.from_user_id,
                         name: x.from_user_id === myId ? "You" : x.from_user_name,
-                        preview: x.content || (x.attachments?.length ? "Attachment" : ""),
+                        preview: x.content || attachmentLabel(x.attachments),
+                        attachment: x.attachments?.[0] ?? null,
+                        attachment_count: x.attachments?.length ?? 0,
                       })
                     }
                   />
