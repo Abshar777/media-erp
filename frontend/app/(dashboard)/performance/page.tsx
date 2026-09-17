@@ -13,6 +13,7 @@ import { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import {
   Trophy, Clock, Users, ShieldCheck, Stamp, Loader2, AlertCircle, Info, X,
+  Search, ArrowUpDown, RotateCcw,
 } from "lucide-react";
 import { useTeams } from "@/hooks/useTeams";
 import { useAuthStore } from "@/stores/authStore";
@@ -27,7 +28,76 @@ const RANGES = [
   { id: "30",    label: "Last 30 days" },
   { id: "90",    label: "Last 90 days" },
   { id: "365",   label: "Last year" },
+  { id: "custom", label: "Custom" },
 ] as const;
+
+const SECTIONS = [
+  { id: "all",       label: "Everything" },
+  { id: "member",    label: "Members" },
+  { id: "approver",  label: "Approvers" },
+  { id: "verifier",  label: "Verifiers" },
+] as const;
+type SectionId = (typeof SECTIONS)[number]["id"];
+
+const SORTS = [
+  { id: "fastest", label: "Fastest first" },
+  { id: "slowest", label: "Slowest first" },
+  { id: "volume",  label: "Most tasks" },
+  { id: "name",    label: "Name (A–Z)" },
+] as const;
+type SortId = (typeof SORTS)[number]["id"];
+
+/** How many measurements a row is built from, whichever table it is in. */
+function sampleCount(r: MemberPerf | ApproverPerf | VerifierPerf): number {
+  return (r as MemberPerf).completed
+    ?? (r as ApproverPerf).approvals
+    ?? (r as VerifierPerf).verifications
+    ?? 0;
+}
+
+/**
+ * Search, sort and thin-sample filtering, applied to any of the three tables.
+ *
+ * Sorting here rather than re-fetching keeps the rank badges meaningful: rank
+ * is assigned by the server against the whole team, so re-ordering the rows on
+ * screen shows "3rd fastest" next to a row sitting fourth in a by-volume sort,
+ * which is the honest reading — the medal belongs to the person, not the row
+ * position.
+ */
+function teamHasMatches(
+  team: TeamPerf, search: string, rankedOnly: boolean, section: SectionId
+): boolean {
+  const check = (rows: (MemberPerf | ApproverPerf | VerifierPerf)[], id: SectionId) =>
+    (section === "all" || section === id) &&
+    applyRowFilters(rows, search, "fastest", rankedOnly).length > 0;
+  return (
+    check(team.members, "member") ||
+    check(team.approvers, "approver") ||
+    check(team.verifiers, "verifier")
+  );
+}
+
+function applyRowFilters<T extends MemberPerf | ApproverPerf | VerifierPerf>(
+  rows: T[], search: string, sort: SortId, rankedOnly: boolean
+): T[] {
+  const q = search.trim().toLowerCase();
+  let out = rows;
+  if (q) out = out.filter((r) => r.name.toLowerCase().includes(q));
+  if (rankedOnly) out = out.filter((r) => r.ranked);
+
+  const copy = [...out];
+  copy.sort((a, b) => {
+    if (sort === "name") return a.name.localeCompare(b.name);
+    if (sort === "volume") return sampleCount(b) - sampleCount(a);
+    const av = a.avg_seconds, bv = b.avg_seconds;
+    // Rows with nothing measured sink to the bottom either way — they are not
+    // "infinitely fast".
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return sort === "slowest" ? bv - av : av - bv;
+  });
+  return copy;
+}
 
 function daysAgo(n: number): string {
   const d = new Date();
@@ -71,7 +141,13 @@ function DrillDownModal({ target, dateFrom, onClose }: {
     ...(dateFrom ? { date_from: dateFrom } : {}),
   });
   const copy = ROLE_COPY[target.role];
+  const [q, setQ] = useState("");
   if (typeof document === "undefined") return null;
+
+  const all = data?.items ?? [];
+  const items = q.trim()
+    ? all.filter((t) => t.title.toLowerCase().includes(q.trim().toLowerCase()))
+    : all;
 
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -93,13 +169,30 @@ function DrillDownModal({ target, dateFrom, onClose }: {
           </button>
         </div>
 
+        {/* A hundred-row drill-down needs a way to find one task in it. */}
+        {all.length > 8 && (
+          <div className="relative border-b px-4 py-2">
+            <Search className="pointer-events-none absolute left-6 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search these tasks…"
+              className="w-full rounded-lg border bg-background py-1.5 pl-8 pr-3 text-sm outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
+            />
+          </div>
+        )}
+
         <div className="min-h-0 flex-1 overflow-auto">
           {isLoading ? (
             <div className="flex justify-center py-16"><Loader2 className="size-5 animate-spin text-muted-foreground/50" /></div>
           ) : error ? (
             <p className="py-16 text-center text-sm text-muted-foreground">Couldn&apos;t load these tasks.</p>
-          ) : !data?.items.length ? (
+          ) : !all.length ? (
             <p className="py-16 text-center text-sm text-muted-foreground">No tasks in this period.</p>
+          ) : !items.length ? (
+            <p className="py-16 text-center text-sm text-muted-foreground">
+              No task here matches &ldquo;{q}&rdquo;.
+            </p>
           ) : (
             <table className="w-full min-w-[560px] text-sm">
               <thead className="sticky top-0 bg-muted/80 text-[11px] uppercase tracking-wide text-muted-foreground backdrop-blur">
@@ -113,7 +206,7 @@ function DrillDownModal({ target, dateFrom, onClose }: {
                 </tr>
               </thead>
               <tbody>
-                {data.items.map((t) => (
+                {items.map((t) => (
                   <tr key={`${t.task_id}-${t.at ?? "open"}`} className="border-t hover:bg-muted/40">
                     <td className="max-w-[260px] px-3 py-2">
                       <span className="block truncate font-medium">{t.title || "Untitled"}</span>
@@ -153,9 +246,11 @@ function DrillDownModal({ target, dateFrom, onClose }: {
           )}
         </div>
 
-        {data && data.items.length > 0 && (
+        {all.length > 0 && (
           <div className="border-t px-4 py-2 text-[11px] text-muted-foreground">
-            {data.total} task{data.total !== 1 ? "s" : ""}
+            {items.length === all.length
+              ? `${all.length} task${all.length !== 1 ? "s" : ""}`
+              : `${items.length} of ${all.length} tasks`}
           </div>
         )}
       </div>
@@ -366,12 +461,24 @@ function VerifierTable({ rows, onOpen }: {
   );
 }
 
-function TeamBlock({ team, onOpen }: {
+function TeamBlock({ team, onOpen, search, sort, rankedOnly, section }: {
   team: TeamPerf;
   onOpen: (t: DrillTarget) => void;
+  search: string;
+  sort: SortId;
+  rankedOnly: boolean;
+  section: SectionId;
 }) {
   const open = (role: PerfRole) => (r: { user_id: string; name: string }) =>
     onOpen({ userId: r.user_id, name: r.name, role, teamId: team.team_id, teamName: team.team_name });
+
+  const members   = applyRowFilters(team.members,   search, sort, rankedOnly);
+  const approvers = applyRowFilters(team.approvers, search, sort, rankedOnly);
+  const verifiers = applyRowFilters(team.verifiers, search, sort, rankedOnly);
+  const show = (id: SectionId) => section === "all" || section === id;
+
+  // A team with nothing matching the search is noise — the caller drops it.
+  if (!members.length && !approvers.length && !verifiers.length) return null;
 
   return (
     <section className="rounded-2xl border bg-card p-4">
@@ -381,32 +488,38 @@ function TeamBlock({ team, onOpen }: {
       </h2>
 
       <div className="space-y-5">
-        <div>
-          <SectionTitle
-            icon={Clock}
-            title="Members"
-            hint="time actually spent on a task, from the task timer"
-          />
-          <MemberTable rows={team.members} onOpen={open("member")} />
-        </div>
+        {show("member") && (
+          <div>
+            <SectionTitle
+              icon={Clock}
+              title="Members"
+              hint="time actually spent on a task, from the task timer"
+            />
+            <MemberTable rows={members} onOpen={open("member")} />
+          </div>
+        )}
 
-        <div>
-          <SectionTitle
-            icon={Stamp}
-            title="Approvers"
-            hint="how long a submitted task waits for their sign-off"
-          />
-          <ApproverTable rows={team.approvers} onOpen={open("approver")} />
-        </div>
+        {show("approver") && (
+          <div>
+            <SectionTitle
+              icon={Stamp}
+              title="Approvers"
+              hint="how long a submitted task waits for their sign-off"
+            />
+            <ApproverTable rows={approvers} onOpen={open("approver")} />
+          </div>
+        )}
 
-        <div>
-          <SectionTitle
-            icon={ShieldCheck}
-            title="Verifiers"
-            hint="delay they add before responding — work still open counts"
-          />
-          <VerifierTable rows={team.verifiers} onOpen={open("verifier")} />
-        </div>
+        {show("verifier") && (
+          <div>
+            <SectionTitle
+              icon={ShieldCheck}
+              title="Verifiers"
+              hint="delay they add before responding — work still open counts"
+            />
+            <VerifierTable rows={verifiers} onOpen={open("verifier")} />
+          </div>
+        )}
       </div>
     </section>
   );
@@ -415,12 +528,28 @@ function TeamBlock({ team, onOpen }: {
 export default function PerformancePage() {
   const [teamId, setTeamId] = useState("");
   const [range, setRange] = useState<(typeof RANGES)[number]["id"]>("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortId>("fastest");
+  const [rankedOnly, setRankedOnly] = useState(false);
+  const [section, setSection] = useState<SectionId>("all");
   const [drill, setDrill] = useState<DrillTarget | null>(null);
 
+  // Only the team and the dates reach the server — everything else reshapes
+  // rows already in hand, so typing in the search box costs no round trip.
   const filters = useMemo(() => ({
     ...(teamId ? { team_id: teamId } : {}),
-    ...(range ? { date_from: daysAgo(Number(range)) } : {}),
-  }), [teamId, range]);
+    ...(range === "custom"
+      ? { ...(from ? { date_from: from } : {}), ...(to ? { date_to: to } : {}) }
+      : range ? { date_from: daysAgo(Number(range)) } : {}),
+  }), [teamId, range, from, to]);
+
+  const dirty = !!(teamId || range || search || rankedOnly || section !== "all" || sort !== "fastest");
+  function resetAll() {
+    setTeamId(""); setRange(""); setFrom(""); setTo("");
+    setSearch(""); setSort("fastest"); setRankedOnly(false); setSection("all");
+  }
 
   const { data, isLoading, error } = usePerformance(filters);
   const { data: allTeams = [] } = useTeams();
@@ -479,9 +608,91 @@ export default function PerformancePage() {
           ))}
         </div>
 
+        {range === "custom" && (
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => setFrom(e.target.value)}
+              className="rounded-lg border bg-background px-2 py-1.5 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+            />
+            <span className="text-xs text-muted-foreground">to</span>
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => setTo(e.target.value)}
+              className="rounded-lg border bg-background px-2 py-1.5 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+            />
+          </div>
+        )}
+
+        {/* Search a person */}
+        <div className="relative min-w-[180px] flex-1 sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search a person…"
+            className="w-full rounded-lg border bg-background py-1.5 pl-8 pr-7 text-sm outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Which of the three tables to show */}
+        <select
+          value={section}
+          onChange={(e) => setSection(e.target.value as SectionId)}
+          className="rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
+        >
+          {SECTIONS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+        </select>
+
+        {/* Sort */}
+        <div className="flex items-center gap-1.5">
+          <ArrowUpDown className="size-3.5 text-muted-foreground" />
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortId)}
+            className="rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
+          >
+            {SORTS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+          </select>
+        </div>
+
+        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={rankedOnly}
+            onChange={(e) => setRankedOnly(e.target.checked)}
+            className="size-3.5 accent-[var(--primary)]"
+          />
+          Ranked only
+        </label>
+
+        {dirty && (
+          <button
+            type="button"
+            onClick={resetAll}
+            className="flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            <RotateCcw className="size-3" /> Reset
+          </button>
+        )}
+
         {data && (
-          <span className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <Info className="size-3.5" />
+          <span className="flex w-full items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Info className="size-3.5 shrink-0" />
             Shift hours only ({data.shift.start}–{data.shift.end} IST, {data.shift.days_off.join(", ")} off
             {data.shift.holidays > 0 ? `, ${data.shift.holidays} holidays` : ""}).
             Ranked from {data.min_sample}+. Click a row for its tasks.
@@ -517,11 +728,49 @@ export default function PerformancePage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-5">
-          {data.teams.map((t) => (
-            <TeamBlock key={t.team_id || "none"} team={t} onOpen={setDrill} />
-          ))}
-        </div>
+        (() => {
+          // Decided from the data, not from the rendered elements: a JSX
+          // element is truthy whether or not the component returns null, so
+          // filtering the array of <TeamBlock/> would never drop anything and
+          // a search with no hits would show a blank page and no explanation.
+          const visible = data.teams.filter((t) =>
+            teamHasMatches(t, search, rankedOnly, section)
+          );
+
+          if (!visible.length) {
+            return (
+              <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed py-16 text-center">
+                <Search className="size-6 text-muted-foreground" />
+                <p className="text-sm font-medium">Nothing matches those filters</p>
+                <p className="text-xs text-muted-foreground">
+                  {search ? <>No one called &ldquo;{search}&rdquo; in this period.</> : "Try widening the period or clearing a filter."}
+                </p>
+                <button
+                  type="button"
+                  onClick={resetAll}
+                  className="mt-1 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                >
+                  <RotateCcw className="size-3" /> Reset filters
+                </button>
+              </div>
+            );
+          }
+          return (
+            <div className="space-y-5">
+              {visible.map((t) => (
+                <TeamBlock
+                  key={t.team_id || "none"}
+                  team={t}
+                  onOpen={setDrill}
+                  search={search}
+                  sort={sort}
+                  rankedOnly={rankedOnly}
+                  section={section}
+                />
+              ))}
+            </div>
+          );
+        })()
       )}
 
       {drill && (
