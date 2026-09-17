@@ -25,6 +25,75 @@ async def get_messages(
     return list(reversed(docs))  # chronological order
 
 
+REPLY_PREVIEW_CHARS = 220
+
+
+def _preview(doc: dict) -> str:
+    """What the quote shows when the original had no text of its own."""
+    content = (doc.get("content") or "").strip()
+    if content:
+        return content[:REPLY_PREVIEW_CHARS]
+    if doc.get("attachments"):
+        n = len(doc["attachments"])
+        return f"{n} attachment{'s' if n != 1 else ''}"
+    if doc.get("task_ids"):
+        n = len(doc["task_ids"])
+        return f"{n} task{'s' if n != 1 else ''}"
+    return ""
+
+
+async def build_reply_snapshot(
+    reply_to_id: str,
+    *,
+    dm_pair: tuple[str, str] | None = None,
+    group_id: str = "",
+) -> dict | None:
+    """
+    Snapshot the message being replied to.
+
+    Read from the database, never from what the client sent: the quote is
+    displayed to everyone in the conversation, so trusting a client-supplied
+    preview would let a sender put words in someone else's mouth.
+
+    The reference is also confined to the conversation it is quoted into — a
+    message id is guessable enough that accepting any id would turn a reply
+    into a way to pull the text of a private message into a group.
+
+    Returns None when the reference is unusable. A quote that cannot be
+    resolved should cost the reply its quote, not the reply itself.
+    """
+    if not reply_to_id or not ObjectId.is_valid(reply_to_id):
+        return None
+    db = get_db()
+    doc = await db["messages"].find_one({"_id": ObjectId(reply_to_id)})
+    if not doc:
+        return None
+
+    if group_id:
+        if doc.get("group_id") != group_id:
+            return None
+        name = doc.get("from_user_name", "") or "Unknown"
+    elif dm_pair:
+        # Same two people, in either direction — and not a group message.
+        if doc.get("group_id"):
+            return None
+        if {doc.get("from_user_id"), doc.get("to_user_id")} != set(dm_pair):
+            return None
+        sender = await db["users"].find_one(
+            {"_id": ObjectId(doc["from_user_id"])}, {"name": 1}
+        ) if ObjectId.is_valid(doc.get("from_user_id", "")) else None
+        name = (sender or {}).get("name", "") or "Unknown"
+    else:
+        return None
+
+    return {
+        "id": str(doc["_id"]),
+        "from_user_id": doc.get("from_user_id", ""),
+        "name": name,
+        "preview": _preview(doc),
+    }
+
+
 async def save_message(
     from_user_id: str,
     to_user_id: str,
@@ -32,6 +101,7 @@ async def save_message(
     attachments: list | None = None,
     task_ids: list | None = None,
     mention_user_ids: list | None = None,
+    reply_to: dict | None = None,
 ) -> dict:
     db = get_db()
     doc = {
@@ -43,6 +113,7 @@ async def save_message(
         "attachments": canonicalize_attachments(attachments),
         "task_ids": task_ids or [],
         "mention_user_ids": mention_user_ids or [],
+        "reply_to": reply_to,
         "created_at": datetime.now(timezone.utc),
     }
     result = await db["messages"].insert_one(doc)

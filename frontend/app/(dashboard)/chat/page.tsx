@@ -22,6 +22,7 @@ import {
   UsersRound,
   Megaphone,
   X,
+  Reply,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
@@ -46,7 +47,7 @@ import { useUploadAttachments } from "@/hooks/useUpload";
 import { useTaskDetail } from "@/hooks/useProjects";
 import { TaskDetailModal } from "@/components/projects/TaskDetailModal";
 import { SignedImg } from "@/components/shared/SignedImg";
-import type { ChatAttachment, ChatGroup, ChatMessage, ChatUser, ConversationPair, GroupMessage, TaskRef } from "@/types/chat";
+import type { ChatAttachment, ChatGroup, ChatMessage, ChatUser, ConversationPair, GroupMessage, ReplyRef, TaskRef } from "@/types/chat";
 import { fmtDate as fmtDateIST, fmtTime as fmtTimeIST, istDateKey, istTodayKey } from "@/lib/datetime";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -210,9 +211,13 @@ function MessageExtras({ attachments, tasks }: { attachments?: ChatAttachment[];
 function ChatComposer({
   placeholder,
   onSend,
+  replyTo,
+  onCancelReply,
 }: {
   placeholder: string;
   onSend: (content: string, extras: SendExtras) => void;
+  replyTo?: ReplyRef | null;
+  onCancelReply?: () => void;
 }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -249,6 +254,9 @@ function ChatComposer({
     onSend(text.trim(), {
       attachments,
       taskIds: tasks.map((t) => t.id),
+      replyToId: replyTo?.id,
+      // Local echo only — the authoritative quote comes back from the server.
+      replyTo: replyTo ?? null,
       // Only people still named in the text — deleting the handle should
       // withdraw the mention rather than silently notifying them anyway.
       mentionUserIds: mentionedPeople
@@ -258,6 +266,7 @@ function ChatComposer({
     setText("");
     setAttachments([]);
     setTasks([]);
+    onCancelReply?.();
     setMentionedPeople([]);
     setShowMention(false);
     if (taRef.current) taRef.current.style.height = "auto";
@@ -413,6 +422,28 @@ function ChatComposer({
         </div>
       )}
 
+      {replyTo && (
+        <div className="mb-2 flex items-start gap-2 rounded-xl border-l-[3px] border-primary bg-primary/5 px-3 py-2">
+          <Reply className="mt-0.5 size-3.5 shrink-0 text-primary" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold text-primary">
+              Replying to {replyTo.name}
+            </p>
+            <p className="line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+              {replyTo.preview || "Attachment"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancelReply}
+            className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label="Cancel reply"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={onPickFiles} />
         <button
@@ -522,16 +553,76 @@ function DateSeparator({ label }: { label: string }) {
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
+/**
+ * Scroll the original into view and flash it, so a quote in a long thread
+ * answers "what was that about?" without the reader hunting for it.
+ */
+function jumpToMessage(id: string) {
+  const el = document.getElementById(`msg-${id}`);
+  if (!el) return;                       // scrolled out of the loaded window
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.add("ring-2", "ring-primary/60");
+  setTimeout(() => el.classList.remove("ring-2", "ring-primary/60"), 1400);
+}
+
+/** The quoted original, shown above the reply's own text. */
+function QuotedMessage({ reply, isOwn }: { reply: ReplyRef; isOwn: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={() => jumpToMessage(reply.id)}
+      className={cn(
+        "mb-1.5 flex w-full flex-col gap-0.5 rounded-lg border-l-[3px] px-2 py-1 text-left transition-colors",
+        isOwn
+          ? "border-primary-foreground/60 bg-primary-foreground/10 hover:bg-primary-foreground/20"
+          : "border-primary/60 bg-primary/5 hover:bg-primary/10"
+      )}
+      title="Go to the message this replies to"
+    >
+      <span className={cn("text-[10px] font-semibold", isOwn ? "text-primary-foreground/90" : "text-primary")}>
+        {reply.name}
+      </span>
+      <span className={cn(
+        "line-clamp-2 text-[11px] leading-snug",
+        isOwn ? "text-primary-foreground/70" : "text-muted-foreground"
+      )}>
+        {reply.preview || "Attachment"}
+      </span>
+    </button>
+  );
+}
+
+/** Appears beside a bubble on hover. */
+function ReplyButton({ onClick, isOwn }: { onClick: () => void; isOwn: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex size-7 shrink-0 items-center justify-center self-center rounded-full text-muted-foreground",
+        "opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus:opacity-100 group-hover:opacity-100",
+        isOwn ? "order-first mr-1" : "ml-1"
+      )}
+      title="Reply"
+      aria-label="Reply to this message"
+    >
+      <Reply className="size-3.5" />
+    </button>
+  );
+}
+
 function Bubble({
   msg,
   isOwn,
   monitorMode = false,
   allUsers,
+  onReply,
 }: {
   msg: ChatMessage;
   isOwn: boolean;
   monitorMode?: boolean;
   allUsers?: Record<string, string>; // id → name map for monitor mode
+  onReply?: (m: ChatMessage) => void;
 }) {
   const senderLabel = monitorMode && allUsers
     ? (allUsers[msg.from_user_id] ?? "Unknown")
@@ -542,21 +633,25 @@ function Bubble({
       initial={{ opacity: 0, y: 6, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: "spring", stiffness: 420, damping: 36 }}
-      className={cn("flex flex-col", isOwn ? "items-end" : "items-start")}
+      className={cn("group flex flex-col", isOwn ? "items-end" : "items-start")}
     >
       {senderLabel && (
         <span className="mb-0.5 text-[10px] font-medium text-muted-foreground px-1">
           {senderLabel}
         </span>
       )}
+      <div className={cn("flex w-full items-stretch", isOwn ? "justify-end" : "justify-start")}>
+      {onReply && <ReplyButton isOwn={isOwn} onClick={() => onReply(msg)} />}
       <div
+        id={`msg-${msg.id}`}
         className={cn(
-          "max-w-[72%] rounded-2xl px-4 py-2.5",
+          "max-w-[72%] rounded-2xl px-4 py-2.5 transition-shadow",
           isOwn
             ? "bg-primary text-primary-foreground rounded-br-[5px] shadow-sm"
             : "bg-card border text-foreground rounded-bl-[5px] shadow-sm"
         )}
       >
+        {msg.reply_to && <QuotedMessage reply={msg.reply_to} isOwn={isOwn} />}
         {msg.content && (
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
             {msg.content}
@@ -583,6 +678,7 @@ function Bubble({
           )}
         </p>
       </div>
+      </div>
     </motion.div>
   );
 }
@@ -602,6 +698,11 @@ function MyChatWindow({
 }) {
   const { data: messages = [], isLoading } = useChatMessages(partner.id);
   const endRef = useRef<HTMLDivElement>(null);
+  const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+
+  // Quoting across conversations makes no sense, and the server rejects it
+  // anyway — drop a half-written reply when the partner changes.
+  useEffect(() => { setReplyTo(null); }, [partner.id]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -649,7 +750,19 @@ function MyChatWindow({
               <DateSeparator label={g.date} />
               <div className="space-y-1.5">
                 {g.msgs.map((m) => (
-                  <Bubble key={m.id} msg={m} isOwn={m.from_user_id === myId} />
+                  <Bubble
+                    key={m.id}
+                    msg={m}
+                    isOwn={m.from_user_id === myId}
+                    onReply={(x) =>
+                      setReplyTo({
+                        id: x.id,
+                        from_user_id: x.from_user_id,
+                        name: x.from_user_id === myId ? "You" : partner.name,
+                        preview: x.content || (x.attachments?.length ? "Attachment" : ""),
+                      })
+                    }
+                  />
                 ))}
               </div>
             </div>
@@ -661,6 +774,8 @@ function MyChatWindow({
       <ChatComposer
         placeholder={`Message ${partner.name.split(" ")[0]}…`}
         onSend={(content, extras) => sendMessage(partner.id, content, extras)}
+        replyTo={replyTo}
+        onCancelReply={() => setReplyTo(null)}
       />
     </div>
   );
@@ -690,7 +805,9 @@ function groupMsgsByDate(msgs: GroupMessage[]) {
   return groups;
 }
 
-function GroupBubble({ msg, isOwn }: { msg: GroupMessage; isOwn: boolean }) {
+function GroupBubble({ msg, isOwn, onReply }: {
+  msg: GroupMessage; isOwn: boolean; onReply?: (m: GroupMessage) => void;
+}) {
   if (msg.is_system) {
     return (
       <motion.div
@@ -715,19 +832,23 @@ function GroupBubble({ msg, isOwn }: { msg: GroupMessage; isOwn: boolean }) {
       initial={{ opacity: 0, y: 6, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: "spring", stiffness: 420, damping: 36 }}
-      className={cn("flex flex-col", isOwn ? "items-end" : "items-start")}
+      className={cn("group flex flex-col", isOwn ? "items-end" : "items-start")}
     >
       {!isOwn && (
         <span className="mb-0.5 px-1 text-[10px] font-medium text-muted-foreground">{msg.from_user_name}</span>
       )}
+      <div className={cn("flex w-full items-stretch", isOwn ? "justify-end" : "justify-start")}>
+      {onReply && <ReplyButton isOwn={isOwn} onClick={() => onReply(msg)} />}
       <div
+        id={`msg-${msg.id}`}
         className={cn(
-          "max-w-[72%] rounded-2xl px-4 py-2.5",
+          "max-w-[72%] rounded-2xl px-4 py-2.5 transition-shadow",
           isOwn
             ? "bg-primary text-primary-foreground rounded-br-[5px] shadow-sm"
             : "bg-card border text-foreground rounded-bl-[5px] shadow-sm"
         )}
       >
+        {msg.reply_to && <QuotedMessage reply={msg.reply_to} isOwn={isOwn} />}
         {msg.content && (
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
         )}
@@ -740,6 +861,7 @@ function GroupBubble({ msg, isOwn }: { msg: GroupMessage; isOwn: boolean }) {
               : <Check className="size-3.5" />
           )}
         </p>
+      </div>
       </div>
     </motion.div>
   );
@@ -836,6 +958,11 @@ function GroupChatWindow({
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+  // Switching groups abandons a half-written reply; the server would refuse a
+  // quote from another conversation anyway.
+  useEffect(() => { setReplyTo(null); }, [group.id]);
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Header */}
@@ -889,7 +1016,19 @@ function GroupChatWindow({
               <DateSeparator label={g.date} />
               <div className="space-y-1.5">
                 {g.msgs.map((m) => (
-                  <GroupBubble key={m.id} msg={m} isOwn={m.from_user_id === myId} />
+                  <GroupBubble
+                    key={m.id}
+                    msg={m}
+                    isOwn={m.from_user_id === myId}
+                    onReply={(x) =>
+                      setReplyTo({
+                        id: x.id,
+                        from_user_id: x.from_user_id,
+                        name: x.from_user_id === myId ? "You" : x.from_user_name,
+                        preview: x.content || (x.attachments?.length ? "Attachment" : ""),
+                      })
+                    }
+                  />
                 ))}
               </div>
             </div>
@@ -901,6 +1040,8 @@ function GroupChatWindow({
       <ChatComposer
         placeholder={`Message ${group.name}…`}
         onSend={(content, extras) => sendGroupMessage(group.id, content, extras)}
+        replyTo={replyTo}
+        onCancelReply={() => setReplyTo(null)}
       />
     </div>
   );

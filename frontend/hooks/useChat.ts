@@ -21,6 +21,12 @@ export interface SendExtras {
   taskIds?: string[];
   /** Ids of people @mentioned — the server notifies each of them. */
   mentionUserIds?: string[];
+  /** Id of the message being replied to. The server snapshots it; the quote
+      shown to everyone is built there, not from anything sent here. */
+  replyToId?: string;
+  /** Local-only preview so the optimistic bubble can show the quote before
+      the server echo arrives. Never sent. */
+  replyTo?: import("@/types/chat").ReplyRef | null;
 }
 
 function newClientId(): string {
@@ -437,6 +443,7 @@ export function useChatSocket(currentUserId: string | null) {
           attachments: extras?.attachments ?? [],
           task_ids: extras?.taskIds ?? [],
           tasks: [],
+          reply_to: extras?.replyTo ?? null,
           status: "sending",
           created_at: new Date().toISOString(),
         };
@@ -454,6 +461,7 @@ export function useChatSocket(currentUserId: string | null) {
             attachments: extras?.attachments ?? [],
             task_ids: extras?.taskIds ?? [],
             mention_user_ids: extras?.mentionUserIds ?? [],
+            reply_to_id: extras?.replyToId ?? "",
             client_id: clientId,
           })
         );
@@ -477,6 +485,7 @@ export function useChatSocket(currentUserId: string | null) {
           attachments: extras?.attachments ?? [],
           task_ids: extras?.taskIds ?? [],
           tasks: [],
+          reply_to: extras?.replyTo ?? null,
           status: "sending",
           created_at: new Date().toISOString(),
         };
@@ -494,6 +503,7 @@ export function useChatSocket(currentUserId: string | null) {
             attachments: extras?.attachments ?? [],
             task_ids: extras?.taskIds ?? [],
             mention_user_ids: extras?.mentionUserIds ?? [],
+            reply_to_id: extras?.replyToId ?? "",
             client_id: clientId,
           })
         );

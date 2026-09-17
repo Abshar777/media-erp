@@ -190,8 +190,14 @@ async def chat_ws(ws: WebSocket, token: str = Query(...)) -> None:
                 if not to_id or not (content or attachments or task_ids):
                     continue
                 mention_ids = [str(m) for m in (data.get("mention_user_ids") or []) if m]
+                from app.services.chat_service import build_reply_snapshot
+                reply_to = await build_reply_snapshot(
+                    str(data.get("reply_to_id", "")).strip(),
+                    dm_pair=(user_id, to_id),
+                )
                 doc = await db_save_message(
-                    user_id, to_id, content, attachments, task_ids, mention_ids
+                    user_id, to_id, content, attachments, task_ids, mention_ids,
+                    reply_to=reply_to,
                 )
                 from app.services.chat_service import resolve_task_snapshots
                 snapshots = await resolve_task_snapshots(task_ids)
@@ -228,10 +234,14 @@ async def chat_ws(ws: WebSocket, token: str = Query(...)) -> None:
                 except (InvalidId, Exception):
                     pass
                 mention_ids = [str(m) for m in (data.get("mention_user_ids") or []) if m]
+                from app.services.chat_service import build_reply_snapshot
+                reply_to = await build_reply_snapshot(
+                    str(data.get("reply_to_id", "")).strip(), group_id=gid,
+                )
                 doc = await groups.save_group_message(
                     db, gid, user_id, sender_name, content,
                     attachments=attachments, task_ids=task_ids,
-                    mention_user_ids=mention_ids,
+                    mention_user_ids=mention_ids, reply_to=reply_to,
                 )
                 if mention_ids:
                     group_doc = await groups.get_group(db, gid)

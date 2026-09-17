@@ -11,5 +11,7 @@ def message_to_dict(doc: dict) -> dict:
         # Private bucket — attachments are signed per read (see utils/storage.py).
         "attachments": sign_attachments(doc.get("attachments", [])),
         "task_ids": doc.get("task_ids", []),
+        # Snapshot of the quoted message, or None. See chat_service.build_reply_snapshot.
+        "reply_to": doc.get("reply_to"),
         "created_at": doc["created_at"].isoformat() if doc.get("created_at") else None,
     }

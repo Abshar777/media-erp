@@ -53,6 +53,7 @@ def group_message_to_dict(doc: dict) -> dict:
         # Private bucket — attachments are signed per read (see utils/storage.py).
         "attachments": sign_attachments(doc.get("attachments", [])),
         "task_ids": doc.get("task_ids", []),
+        "reply_to": doc.get("reply_to"),
         "created_at": utc_iso(doc.get("created_at")),
     }
 
@@ -230,6 +231,7 @@ async def save_group_message(
     attachments: list | None = None,
     task_ids: list | None = None,
     mention_user_ids: list | None = None,
+    reply_to: dict | None = None,
 ) -> dict:
     doc = {
         "group_id": group_id,
@@ -241,6 +243,7 @@ async def save_group_message(
         "attachments": canonicalize_attachments(attachments),
         "task_ids": task_ids or [],
         "mention_user_ids": mention_user_ids or [],
+        "reply_to": reply_to,
         "created_at": datetime.now(timezone.utc),
     }
     result = await db["messages"].insert_one(doc)
