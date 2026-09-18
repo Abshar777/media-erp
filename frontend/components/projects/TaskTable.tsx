@@ -10,7 +10,7 @@ import { BOARD_COLUMNS, PRIORITY_META, isTaskOverdue, assigneeLabel, statusStyle
 import { listItemVariants, listVariants } from "@/lib/animations";
 import { fmtDate, fmtDateOnly } from "@/lib/datetime";
 import { useCanApprove } from "@/hooks/useCanApprove";
-import { ApproveRouteModal, ReeditModal } from "./ReviewActionModals";
+import { ApproveRouteModal, ReeditModal, SubmitReviewModal } from "./ReviewActionModals";
 import { VerificationBadge } from "./VerificationBadge";
 import { toast } from "sonner";
 
@@ -30,6 +30,7 @@ export function TaskTable({ tasks }: Props) {
   const [reviewAction, setReviewAction] = useState<
     { task: Task; to: "approved" | "reedit" } | null
   >(null);
+  const [submitFor, setSubmitFor] = useState<Task | null>(null);
 
   function changeStatus(task: Task, next: TaskStatus) {
     if (task.status === "pending_review" && (next === "approved" || next === "reedit")) {
@@ -38,6 +39,12 @@ export function TaskTable({ tasks }: Props) {
         return;
       }
       setReviewAction({ task, to: next });
+      return;
+    }
+    // Entering review needs a note — ask for it rather than firing an update
+    // the server will reject.
+    if (next === "pending_review") {
+      setSubmitFor(task);
       return;
     }
     updateTask.mutate({ id: task.id, payload: { status: next } });
@@ -226,6 +233,9 @@ export function TaskTable({ tasks }: Props) {
       <AnimatePresence>
         {reviewAction?.to === "approved" && (
           <ApproveRouteModal task={reviewAction.task} onClose={() => setReviewAction(null)} />
+        )}
+        {submitFor && (
+          <SubmitReviewModal task={submitFor} onClose={() => setSubmitFor(null)} />
         )}
         {reviewAction?.to === "reedit" && (
           <ReeditModal task={reviewAction.task} onClose={() => setReviewAction(null)} />

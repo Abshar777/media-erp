@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 import { useUpdateTask } from "@/hooks/useProjects";
 import { KanbanCard } from "./KanbanCard";
 import { AddTaskModal } from "./AddTaskModal";
-import { ApproveRouteModal, ReeditModal } from "./ReviewActionModals";
+import { ApproveRouteModal, ReeditModal, SubmitReviewModal } from "./ReviewActionModals";
 import { toast } from "sonner";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import type { Task, TaskStatus, BoardColumn } from "@/types/project";
@@ -216,6 +216,7 @@ export function KanbanBoard({
   const [addOpen,      setAddOpen]      = useState(false);
   const [addStatus,    setAddStatus]    = useState<TaskStatus>("pending");
   // A pending_review exit is confirmed in a modal, never by the drop itself.
+  const [submitFor, setSubmitFor] = useState<Task | null>(null);
   const [reviewAction, setReviewAction] = useState<
     { task: Task; to: "approved" | "reedit" } | null
   >(null);
@@ -310,6 +311,14 @@ export function KanbanBoard({
     if (draggedTask.status === "pending_review") {
       syncFromServer();
       setReviewAction({ task: draggedTask, to: targetStatus as "approved" | "reedit" });
+      return;
+    }
+
+    // Dropping INTO review needs a note, which a drag cannot carry. Snap the
+    // card back and ask for one — committing the drop would only 422.
+    if (targetStatus === "pending_review") {
+      syncFromServer();
+      setSubmitFor(draggedTask);
       return;
     }
 
@@ -420,6 +429,13 @@ export function KanbanBoard({
       <AnimatePresence>
         {reviewAction?.to === "approved" && (
           <ApproveRouteModal task={reviewAction.task} onClose={() => setReviewAction(null)} />
+        )}
+        {submitFor && (
+          <SubmitReviewModal
+            task={submitFor}
+            onClose={() => setSubmitFor(null)}
+            onDone={syncFromServer}
+          />
         )}
         {reviewAction?.to === "reedit" && (
           <ReeditModal task={reviewAction.task} onClose={() => setReviewAction(null)} />

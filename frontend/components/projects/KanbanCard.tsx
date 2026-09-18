@@ -12,7 +12,7 @@ import { BOARD_COLUMNS, PRIORITY_META, allowedColumns } from "@/types/project";
 import { useTaskTimer, formatSeconds, formatSecondsHMS } from "@/hooks/useTaskTimer";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { VerificationBadge } from "./VerificationBadge";
-import { ApproveRouteModal, ReeditModal } from "./ReviewActionModals";
+import { ApproveRouteModal, ReeditModal, SubmitReviewModal } from "./ReviewActionModals";
 
 interface Props {
   task: Task;
@@ -66,10 +66,17 @@ export function KanbanCard({ task, overlay = false }: Props) {
   // Leaving pending_review is a decision (route the approval / give a reedit
   // reason) — confirm it in the same modal the Leader Desk uses.
   const [reviewTo, setReviewTo] = useState<"approved" | "reedit" | null>(null);
+  // Entering review needs a note (the server rejects one without), so the
+  // dropdown opens the submit form rather than firing an update that fails.
+  const [submitOpen, setSubmitOpen] = useState(false);
 
   function handleStatusChange(s: TaskStatus) {
     if (task.status === "pending_review" && (s === "approved" || s === "reedit")) {
       setReviewTo(s);
+      return;
+    }
+    if (s === "pending_review") {
+      setSubmitOpen(true);
       return;
     }
     updateTask.mutate({ id: task.id, payload: { status: s } });
@@ -247,6 +254,9 @@ export function KanbanCard({ task, overlay = false }: Props) {
       )}
       {reviewTo === "reedit" && (
         <ReeditModal task={task} onClose={() => setReviewTo(null)} />
+      )}
+      {submitOpen && (
+        <SubmitReviewModal task={task} onClose={() => setSubmitOpen(false)} />
       )}
     </div>
   );

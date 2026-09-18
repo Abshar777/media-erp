@@ -31,9 +31,10 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask } from "@/hooks/useProjects";
 import { FileUploader } from "@/components/shared/FileUploader";
+import { GrowTextarea } from "@/components/shared/GrowTextarea";
 import { useRemindVerifiers } from "@/hooks/useVerify";
 import { useAllTeams, useTeam } from "@/hooks/useTeams";
-import type { Task, UpdateTaskPayload } from "@/types/project";
+import type { Attachment, Task, UpdateTaskPayload } from "@/types/project";
 import { PRIORITY_META, assigneeLabel, pendingVerifiers } from "@/types/project";
 import { fmtDateOnly } from "@/lib/datetime";
 import { toast } from "sonner";
@@ -415,6 +416,100 @@ export function ApproveRouteModal({
 }
 
 // ── Send to reedit (reason required) ──────────────────────────────────────────
+
+/**
+ * Submit for review, from wherever the move was made.
+ *
+ * Entering review requires a note saying what was done — enforced on the
+ * server — so the quick paths that just set a status (the card's dropdown,
+ * the table's, dragging onto the column) have to ask for one too. Without
+ * this they simply failed, which read as the board being broken rather than
+ * as a missing note.
+ */
+export function SubmitReviewModal({
+  task, onClose, onDone,
+}: {
+  task: Task;
+  onClose: () => void;
+  onDone?: () => void;
+}) {
+  const [note, setNote] = useState("");
+  const [shots, setShots] = useState<Attachment[]>([]);
+  const update = useUpdateTask();
+  const { data: allTeams = [] } = useAllTeams();
+  const teamName = allTeams.find((t) => t.id === task.team_id)?.name;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!note.trim()) return;
+    await update.mutateAsync({
+      id: task.id,
+      payload: {
+        status: "pending_review",
+        caption: note.trim(),
+        submission_attachments: shots,
+      },
+    });
+    toast.success("Submitted for review");
+    onDone?.();
+    onClose();
+  }
+
+  return (
+    <Shell
+      wide
+      onSubmit={submit}
+      title="Submit for Review"
+      icon={<Send className="size-4 text-purple-500" />}
+      onClose={onClose}
+      footer={
+        <>
+          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            type="submit"
+            disabled={!note.trim() || update.isPending}
+            className="bg-purple-600 text-white hover:bg-purple-700"
+          >
+            {update.isPending
+              ? <Loader2 className="mr-1.5 size-4 animate-spin" />
+              : <Send className="mr-1.5 size-4" />}
+            Submit
+          </Button>
+        </>
+      }
+    >
+      <TaskContext task={task} teamName={teamName} />
+
+      <GrowTextarea
+        autoFocus
+        value={note}
+        onChange={setNote}
+        minRows={3}
+        maxRows={8}
+        placeholder="e.g. Completed design mockups and updated the colour scheme…"
+        label={<label className="text-sm font-medium">Submission note *</label>}
+        hint={
+          <p className="text-xs text-muted-foreground">
+            Briefly explain what you completed or updated. Required.
+          </p>
+        }
+      />
+
+      <div className="space-y-1.5">
+        <p className="flex items-center gap-1 text-sm font-medium">
+          <Paperclip className="size-3.5" /> Screenshots
+          <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+        </p>
+        <FileUploader
+          value={shots}
+          onChange={setShots}
+          compact
+          label="Add a screenshot"
+        />
+      </div>
+    </Shell>
+  );
+}
 
 export function ReeditModal({
   task, onClose, onDone,
