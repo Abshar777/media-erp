@@ -3,6 +3,9 @@ node_modules/
 frontend/.next/
 frontend/out/
 frontend/build/
+# Incremental compile cache — rewritten by every `tsc` run, so tracking it
+# made a phantom change appear in everyone's working tree after any build.
+*.tsbuildinfo
 frontend/.env*.local
 frontend/.env
 
