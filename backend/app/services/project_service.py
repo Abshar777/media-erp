@@ -163,6 +163,9 @@ async def list_tasks(
     date_from: str = "",
     date_to: str = "",
     team_id: str = "",
+    # Widen a team filter to also match work that belongs to no team. Set when
+    # browsing one person: see the note where it is applied.
+    include_teamless: bool = False,
     # Visibility: "all" | "team" | "leader_teams" | "own"
     visibility: str = "all",
     user_id: str = "",
@@ -191,7 +194,20 @@ async def list_tasks(
 
     # Team filter
     if team_id:
-        query["team_id"] = team_id
+        if include_teamless:
+            # Looking at one person, not one board. A task raised with no team
+            # has no board to sit on, so a strict team match hid it from
+            # everyone but its assignee — including whoever had to approve it.
+            # Nested under $and: `search` above already owns the top-level $or.
+            query.setdefault("$and", []).append({
+                "$or": [
+                    {"team_id": team_id},
+                    {"team_id": {"$in": ["", None]}},
+                    {"team_id": {"$exists": False}},
+                ]
+            })
+        else:
+            query["team_id"] = team_id
 
     # Visibility filter (role-based)
     if visibility == "own" and user_id:

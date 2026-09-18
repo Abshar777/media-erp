@@ -80,7 +80,16 @@ function ReviewCard({
                 {assigneeLabel(task)}
               </span>
             )}
-            {teamName && <span className="rounded-full bg-muted px-2 py-0.5">{teamName}</span>}
+            {teamName ? (
+              <span className="rounded-full bg-muted px-2 py-0.5">{teamName}</span>
+            ) : (
+              /* Personal work has no team board and therefore no team leader,
+                 so it lands on the admins' desk — say so rather than leaving a
+                 gap where every other card shows a team. */
+              <span className="rounded-full bg-muted/60 px-2 py-0.5 italic text-muted-foreground/70">
+                No team
+              </span>
+            )}
             {task.due_date && (
               <span className={cn("flex items-center gap-0.5", overdue && "text-red-500 font-semibold")}>
                 <Calendar className="size-3" />

@@ -277,10 +277,12 @@ async def get_tasks(
 
     # Member filter — only allowed for elevated roles or team leaders.
     # A regular member is locked to their own tasks regardless of this param.
+    browsing_member = False
     if member_id and visibility in ("all", "team", "leader_teams"):
         visibility       = "own"   # reuse own-filter logic
         uid              = member_id
         leader_team_ids  = None    # clear team scope
+        browsing_member  = True
 
     # "Needs my approval" has to know which teams you lead, which visibility
     # only works out for a plain Team Leader. Resolve it directly so the scope
@@ -297,6 +299,7 @@ async def get_tasks(
         search=search,
         status=status,
         priority=priority,
+        include_teamless=browsing_member,
         date_filter=date_filter,
         date_from=date_from,
         date_to=date_to,
@@ -538,8 +541,33 @@ async def leader_queue(
     # spreading one instance into all three desks would let an append in the
     # second leak into the third.
 
+    def _in_scope(q: dict) -> dict:
+        """
+        Restrict a desk to the teams in view — plus, for elevated roles, work
+        that belongs to no team at all.
+
+        A task can be raised with no team (work you take on yourself), and such
+        a task has no team leader to own it. Matching on team alone therefore
+        hid it from every desk, so nobody could see it to approve it and it sat
+        in review forever. There is no leader to route it to, so it lands with
+        the admins, who may approve anything anyway.
+
+        Nested under $and rather than written to `team_id`: _filters() already
+        owns a top-level $or for `search`, and a second one would silently drop
+        the search terms.
+        """
+        scope: dict = {"team_id": {"$in": team_ids}}
+        if is_elevated:
+            scope = {"$or": [
+                {"team_id": {"$in": team_ids}},
+                {"team_id": {"$in": ["", None]}},
+                {"team_id": {"$exists": False}},
+            ]}
+        q.setdefault("$and", []).append(scope)
+        return q
+
     review = await db["project_tasks"].find(
-        {"status": "pending_review", "team_id": {"$in": team_ids}, **_filters()}
+        _in_scope({"status": "pending_review", **_filters()})
     ).sort("updated_at", -1).to_list(500)
 
     # Only work that is still UNASSIGNED belongs in the "Assign Work" queue.
@@ -549,7 +577,7 @@ async def leader_queue(
     #  leader's self-assigned work here forever and made self-assign look broken.)
     # `assigned` widens this beyond the default unassigned-only view, so a
     # leader can also look at work they have already handed out.
-    incoming_q: dict = {"status": "pending", "team_id": {"$in": team_ids}, **_filters()}
+    incoming_q: dict = _in_scope({"status": "pending", **_filters()})
     # Nested under $and rather than assigned to the key directly: a scope like
     # assigned_to_me has already set `assigned_to`, and writing it again here
     # silently threw that away — the chip appeared active while the desk went
@@ -565,7 +593,7 @@ async def leader_queue(
     # sends it back to reedit, it is returned to the routing leader's team (see
     # edit_task), so it surfaces here for the leader who originally routed it.
     reedit = await db["project_tasks"].find(
-        {"status": "reedit", "team_id": {"$in": team_ids}, **_filters()}
+        _in_scope({"status": "reedit", **_filters()})
     ).sort("updated_at", -1).to_list(500)
 
     return success_response(
