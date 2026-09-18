@@ -117,6 +117,9 @@ export interface Task {
   verify_instructions?: string;
   /** Resolved sign-off list, present once the task has entered review. */
   verifications?: TaskVerification[];
+  /** Screenshots handed in with the submission note, kept apart from
+      `attachments` so the approver sees what this round of review is about. */
+  submission_attachments?: Attachment[];
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -151,6 +154,8 @@ export interface UpdateTaskPayload {
   due_date?: string | null;
   team_id?: string | null;
   attachments?: Attachment[];
+  /** Screenshots sent with the submission note when entering pending_review. */
+  submission_attachments?: Attachment[];
   reedit_reason?: string;
   destination_team_id?: string;
   /** Assign the routed copy to this specific person in the destination team.

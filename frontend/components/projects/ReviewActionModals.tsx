@@ -13,12 +13,24 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import {
-  CheckCircle2, RotateCcw, Loader2, X, ChevronDown, Crown, AlertTriangle,
-  Users, UserPlus, Send, CalendarDays, ShieldCheck,
+  CheckCircle2,
+  RotateCcw,
+  Loader2,
+  X,
+  ChevronDown,
+  Crown,
+  AlertTriangle,
+  Users,
+  UserPlus,
+  Send,
+  CalendarDays,
+  ShieldCheck,
+  Paperclip,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask } from "@/hooks/useProjects";
+import { FileUploader } from "@/components/shared/FileUploader";
 import { useRemindVerifiers } from "@/hooks/useVerify";
 import { useAllTeams, useTeam } from "@/hooks/useTeams";
 import type { Task, UpdateTaskPayload } from "@/types/project";
@@ -34,6 +46,7 @@ import { toast } from "sonner";
  * is, where it currently sits, and who is allowed to sign it off.
  */
 function TaskContext({ task, teamName }: { task: Task; teamName?: string }) {
+  const [noteOpen, setNoteOpen] = useState(false);
   const priority = PRIORITY_META[task.priority] ?? PRIORITY_META.medium;
   // The creator is stored as an id; its display name only exists on the
   // "created" history entry, which every task gets at insert time.
@@ -77,10 +90,36 @@ function TaskContext({ task, teamName }: { task: Task; teamName?: string }) {
         )}
       </div>
 
+      {/* The note and screenshots are the case being made for approval, so
+          they belong in front of whoever is about to decide — not one tab away
+          in the task panel. */}
       {task.caption && (
-        <p className="rounded-lg border-l-2 border-primary/40 bg-background/60 px-2.5 py-1.5 text-xs italic text-foreground/80">
-          &ldquo;{task.caption}&rdquo;
-        </p>
+        <div className="rounded-lg border-l-2 border-primary/40 bg-background/60 px-2.5 py-1.5">
+          <p className={cn(
+            "whitespace-pre-wrap text-xs italic leading-relaxed text-foreground/80",
+            !noteOpen && "line-clamp-3"
+          )}>
+            &ldquo;{task.caption}&rdquo;
+          </p>
+          {task.caption.length > 180 && (
+            <button
+              type="button"
+              onClick={() => setNoteOpen((v) => !v)}
+              className="mt-1 text-[11px] font-medium text-primary hover:underline"
+            >
+              {noteOpen ? "Show less" : "Show full note"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {(task.submission_attachments?.length ?? 0) > 0 && (
+        <div className="space-y-1">
+          <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <Paperclip className="size-3" /> Submitted screenshots
+          </p>
+          <FileUploader value={task.submission_attachments ?? []} readOnly compact />
+        </div>
       )}
     </div>
   );

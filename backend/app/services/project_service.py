@@ -79,6 +79,8 @@ def _serialize(doc: dict) -> dict:
     # and each has already run its own access check before calling us.
     if out.get("attachments"):
         out["attachments"] = sign_attachments(out["attachments"])
+    if out.get("submission_attachments"):
+        out["submission_attachments"] = sign_attachments(out["submission_attachments"])
     return out
 
 

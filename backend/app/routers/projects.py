@@ -29,6 +29,7 @@ from app.services.project_service import (
     update_task,
 )
 from app.utils.response import error_response, success_response
+from app.utils.storage import canonicalize_attachments
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
@@ -827,6 +828,23 @@ async def edit_task(
             updates["verify_users"] = [u for u in verify_users if u]
         if verify_teams is not None:
             updates["verify_teams"] = [t for t in verify_teams if t]
+
+    # ── Entering review: require the note, and keep the screenshots ──────────
+    # The note is what the approver reads first, so it is enforced here and not
+    # only in the UI — an API caller must not be able to hand in work with no
+    # word about what was done.
+    if new_status == "pending_review" and new_status != cur_status:
+        note = (body.caption if body.caption is not None else current.get("caption", "")) or ""
+        if not note.strip():
+            return error_response(
+                "Add a note saying what you completed before submitting for review.",
+                status_code=422,
+            )
+        if body.submission_attachments is not None:
+            # Persist `key`, not the read-time signed URL the client sent back.
+            updates["submission_attachments"] = canonicalize_attachments(
+                [a.model_dump() for a in body.submission_attachments]
+            )
 
     # ── Entering review: expand the verifier list and ask them ────────────────
     # Only those who rejected are re-armed; anyone who already passed is not

@@ -19,6 +19,7 @@ import { TransferTaskModal } from "@/components/projects/TransferTaskModal";
 import { VerifierPicker } from "@/components/projects/VerifierPicker";
 import { useRemoveVerifier } from "@/hooks/useVerify";
 import { FileUploader } from "@/components/shared/FileUploader";
+import { GrowTextarea } from "@/components/shared/GrowTextarea";
 import { useTeams, useTeam, useAllTeams, useAssignableUsers } from "@/hooks/useTeams";
 import { useAuthStore } from "@/stores/authStore";
 import { useCanApprove } from "@/hooks/useCanApprove";
@@ -327,6 +328,7 @@ export function TaskDetailModal({
   const [attachments, setAttachments] = useState<Attachment[]>(task.attachments ?? []);
   const [descExpanded, setDescExpanded] = useState(false);
   const [caption, setCaption] = useState("");
+  const [submissionShots, setSubmissionShots] = useState<Attachment[]>([]);
   const [showCaptionInput, setShowCaptionInput] = useState(false);
   const [dirty, setDirty] = useState(false);
 
@@ -426,6 +428,7 @@ export function TaskDetailModal({
         attachments,
         status: "pending_review",
         caption: caption.trim(),
+        submission_attachments: submissionShots,
       },
     });
     toast.success("Submitted for review");
@@ -617,14 +620,20 @@ export function TaskDetailModal({
                 )}
 
                 {/* Submission note */}
-                {task.caption && (
-                  <div className="rounded-xl border border-purple-400/30 bg-purple-500/5 p-3 space-y-1.5">
+                {(task.caption || (task.submission_attachments?.length ?? 0) > 0) && (
+                  <div className="rounded-xl border border-purple-400/30 bg-purple-500/5 p-3 space-y-2">
                     <p className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide flex items-center gap-1">
                       <MessageSquare className="size-3" /> Submission Note
                     </p>
-                    <p className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap">
-                      {task.caption}
-                    </p>
+                    {task.caption && <ExpandableText text={task.caption} />}
+                    {(task.submission_attachments?.length ?? 0) > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Screenshots
+                        </p>
+                        <FileUploader value={task.submission_attachments ?? []} readOnly compact />
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -777,21 +786,40 @@ export function TaskDetailModal({
 
                 {/* Caption input (submit for review flow) */}
                 {!readOnly && showCaptionInput && (
-                  <div className="space-y-1.5 rounded-xl border border-purple-400/30 bg-purple-500/5 p-3">
-                    <label className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide flex items-center gap-1">
-                      <MessageSquare className="size-3" /> Submission Note *
-                    </label>
-                    <p className="text-xs text-muted-foreground">
-                      Briefly explain what you completed or updated.
-                    </p>
-                    <textarea
+                  <div className="space-y-2.5 rounded-xl border border-purple-400/30 bg-purple-500/5 p-3">
+                    <GrowTextarea
                       autoFocus
                       value={caption}
-                      onChange={(e) => setCaption(e.target.value)}
-                      rows={3}
+                      onChange={setCaption}
+                      minRows={3}
+                      maxRows={8}
                       placeholder="e.g. Completed design mockups and updated the colour scheme…"
-                      className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
+                      label={
+                        <label className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-purple-600 dark:text-purple-400">
+                          <MessageSquare className="size-3" /> Submission Note *
+                        </label>
+                      }
+                      hint={
+                        <p className="text-xs text-muted-foreground">
+                          Briefly explain what you completed or updated. Required.
+                        </p>
+                      }
                     />
+
+                    <div className="space-y-1.5">
+                      <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-purple-600 dark:text-purple-400">
+                        <Paperclip className="size-3" /> Screenshots
+                        <span className="normal-case text-muted-foreground">(optional)</span>
+                      </p>
+                      {/* Kept apart from the task's own files so the approver
+                          sees what was handed in for this round of review. */}
+                      <FileUploader
+                        value={submissionShots}
+                        onChange={setSubmissionShots}
+                        compact
+                        label="Add a screenshot"
+                      />
+                    </div>
                   </div>
                 )}
               </motion.div>

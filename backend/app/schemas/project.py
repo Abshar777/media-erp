@@ -59,3 +59,7 @@ class UpdateTaskRequest(BaseModel):
     verify_teams: Optional[list[str]] = None
     verify_instructions: Optional[str] = None
     caption: Optional[str] = None             # submission note added when sending to pending_review
+    # Screenshots attached at submission. Kept apart from `attachments` so the
+    # approver sees what was handed in for review, not a pile mixing the task's
+    # own working files with the evidence for this round.
+    submission_attachments: Optional[list[Attachment]] = None
