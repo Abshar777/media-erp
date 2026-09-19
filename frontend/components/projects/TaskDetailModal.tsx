@@ -11,6 +11,8 @@ import {
   UserPlus, GitBranch, Circle, AlertTriangle, BarChart2, ArrowLeftRight,
   Maximize2,
   Minimize2,
+  Copy,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
@@ -327,6 +329,7 @@ export function TaskDetailModal({
   const [description, setDesc] = useState(task.description || "");
   const [attachments, setAttachments] = useState<Attachment[]>(task.attachments ?? []);
   const [descExpanded, setDescExpanded] = useState(false);
+  const [descCopied, setDescCopied] = useState(false);
   const [caption, setCaption] = useState("");
   const [submissionShots, setSubmissionShots] = useState<Attachment[]>([]);
   const [showCaptionInput, setShowCaptionInput] = useState(false);
@@ -588,7 +591,25 @@ export function TaskDetailModal({
                 {readOnly ? (
                   task.description ? (
                     <div className="space-y-1.5">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Description</p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Description</p>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(task.description || "");
+                              setDescCopied(true);
+                              setTimeout(() => setDescCopied(false), 2000);
+                            } catch {
+                              toast.error("Couldn't copy description");
+                            }
+                          }}
+                          className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                        >
+                          {descCopied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+                          {descCopied ? "Copied" : "Copy"}
+                        </button>
+                      </div>
                       <ExpandableText text={task.description} />
                     </div>
                   ) : null
@@ -596,18 +617,36 @@ export function TaskDetailModal({
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
                       <label className="text-xs font-medium text-muted-foreground">Description</label>
-                      {/* Only offered once there is enough text to be worth it —
-                          a toggle on two lines is noise. */}
-                      {description.length > 120 && (
+                      <div className="flex items-center gap-2.5">
                         <button
                           type="button"
-                          onClick={() => setDescExpanded((v) => !v)}
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(description);
+                              setDescCopied(true);
+                              setTimeout(() => setDescCopied(false), 2000);
+                            } catch {
+                              toast.error("Couldn't copy description");
+                            }
+                          }}
                           className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
                         >
-                          {descExpanded ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
-                          {descExpanded ? "Collapse" : "Expand"}
+                          {descCopied ? <Check className="size-3 text-emerald-500" /> : <Copy className="size-3" />}
+                          {descCopied ? "Copied" : "Copy"}
                         </button>
-                      )}
+                        {/* Only offered once there is enough text to be worth it —
+                            a toggle on two lines is noise. */}
+                        {description.length > 120 && (
+                          <button
+                            type="button"
+                            onClick={() => setDescExpanded((v) => !v)}
+                            className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                          >
+                            {descExpanded ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+                            {descExpanded ? "Collapse" : "Expand"}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <textarea
                       value={description}
