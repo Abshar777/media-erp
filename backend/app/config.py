@@ -18,6 +18,14 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
 
+    # Where the Root portal lives.
+    #
+    # Somebody arriving from it carries a single-use token this server cannot
+    # validate alone, so it asks the portal to vouch for it. Blank means
+    # signing in from the portal is unavailable — never a fall back to a
+    # default host, which would mean trusting whatever answers there.
+    root_erp_api_url: str = ""
+
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15

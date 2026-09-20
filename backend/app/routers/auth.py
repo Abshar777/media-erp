@@ -3,7 +3,6 @@ import hmac as _hmac
 import hashlib
 import httpx
 import logging
-import os
 import secrets
 import struct
 import time
@@ -401,10 +400,25 @@ class SsoLoginRequest(BaseModel):
 
 @router.post("/sso-login")
 async def sso_login(body: SsoLoginRequest, db: AsyncIOMotorDatabase = Depends(get_db)):
-    """Exchange a Root ERP SSO token for a local Media ERP access token."""
-    root_erp_url = os.environ.get("ROOT_ERP_API_URL", "http://localhost:5001")
+    """
+    Exchange a Root ERP SSO token for a local Media ERP access token.
+
+    The portal is where this estate signs people in: once, there, and then into
+    each system from it. What arrives is a single-use token this server cannot
+    validate alone, so it asks the portal whether the token is good and who it
+    belongs to.
+    """
+    # Unset means unavailable, never a default host. Falling back to localhost
+    # in production means asking whatever happens to be listening there to
+    # vouch for the token, which is the whole of the check.
+    root_erp_url = (settings.root_erp_api_url or "").rstrip("/")
+    if not root_erp_url:
+        return error_response(
+            "Signing in from the portal is not configured on this server", 503
+        )
+
     try:
-        async with httpx.AsyncClient(timeout=5) as http:
+        async with httpx.AsyncClient(timeout=8) as http:
             resp = await http.get(
                 f"{root_erp_url}/api/auth/verify-sso-token",
                 params={"token": body.ssoToken},
@@ -417,19 +431,28 @@ async def sso_login(body: SsoLoginRequest, db: AsyncIOMotorDatabase = Depends(ge
     except httpx.RequestError:
         return error_response("Could not reach Root ERP", 503)
 
-    # Find or create user
-    user = await db["users"].find_one({"email": admin["email"]})
-    if not user:
-        from app.utils.hash import hash_password as _hash_password
-        new_user = {
-            "email": admin["email"],
-            "name": admin.get("name", "Super Admin"),
-            "password": _hash_password(secrets.token_hex(32)),
-            "is_active": True,
-            "role_id": "",
-        }
-        result = await db["users"].insert_one(new_user)
-        user = await db["users"].find_one({"_id": result.inserted_id})
+    email = str(admin["email"]).strip().lower()
+    user = await db["users"].find_one({"email": email})
 
+    # No account is created here, deliberately.
+    #
+    # This used to make one for any address the portal named, active and
+    # awaiting a role. That turns a spoofed or compromised portal into an
+    # instant account: the token is the only thing vouching for the address,
+    # and it is checked by asking the very system that would be spoofed.
+    # Somebody has to be given an account here on purpose first.
+    if not user:
+        return error_response(
+            f"There is no account here for {email}. It has to be created "
+            "before signing in from the portal.",
+            403,
+        )
+
+    # The same gate a password sign-in applies: disabling somebody has to close
+    # every door, not merely the one with a password on it.
+    if not user.get("is_active", True):
+        return error_response("Invalid or expired SSO token", 401)
+
+    logger.info("User %s signed in via the Root portal", email)
     payload = await _token_payload(user, db)
     return success_response(payload, "SSO sign-in successful")
