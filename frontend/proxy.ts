@@ -7,6 +7,11 @@ const PUBLIC_PATHS = [
   "/forgot-password",
   "/reset-password",
   "/reports/shared", // public read-only shared reports
+  // Somebody arriving from the Root portal has no session yet, by definition.
+  // Without this the guard sent them to /login before the page could redeem
+  // their token, so the one route whose job is to establish a session was the
+  // one route that required one already.
+  "/sso",
 ];
 
 export function proxy(request: NextRequest) {
