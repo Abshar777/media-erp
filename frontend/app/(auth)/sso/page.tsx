@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AlertCircle, ArrowRight } from "lucide-react";
 import api from "@/lib/axios";
+import { useAuthStore } from "@/stores/authStore";
 import { redirectAfterLogin } from "@/lib/redirectTo";
 
 /**
@@ -29,6 +30,7 @@ function Redeem() {
   // login page has always accepted. Both are read so neither link breaks.
   const token = params.get("token") ?? params.get("sso");
   const [error, setError] = useState<string | null>(null);
+  const setAuth = useAuthStore((s) => s.setAuth);
 
   /*
    * Redeemed once, even under React's development double-mount.
@@ -51,13 +53,22 @@ function Redeem() {
     void (async () => {
       try {
         const res = await api.post("/auth/sso-login", { ssoToken: token });
-        const { access_token, refresh_token } = res.data?.data ?? res.data ?? {};
+        const { access_token, refresh_token, user } = res.data?.data ?? res.data ?? {};
         if (!access_token) {
           setError("That sign-in could not be completed. Open Media ERP from the portal again.");
           return;
         }
-        localStorage.setItem("access_token", access_token);
-        if (refresh_token) localStorage.setItem("refresh_token", refresh_token);
+        /*
+         * Through the store, not straight into localStorage.
+         *
+         * Writing the tokens by hand looked equivalent and was not: the store
+         * holds `isAuthenticated`, the dashboard layout gates every page on
+         * it, and router.replace is a client-side navigation — so nothing
+         * reloads and nothing rehydrates the store from localStorage. The
+         * tokens were there, the flag was false, and the layout sent the
+         * person straight back to /login having just signed them in.
+         */
+        setAuth(user, access_token, refresh_token);
         // replace, not push: the address holds a spent token, and Back should
         // not return to a page that will now refuse.
         router.replace(redirectAfterLogin());
@@ -73,7 +84,7 @@ function Redeem() {
         setError(message);
       }
     })();
-  }, [token, router]);
+  }, [token, router, setAuth]);
 
   if (error) {
     return (

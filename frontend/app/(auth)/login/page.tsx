@@ -10,6 +10,7 @@ import Image from "next/image";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, Loader2, ArrowRight, AlertCircle } from "lucide-react";
 import { useLogin } from "@/hooks/useAuth";
+import { useAuthStore } from "@/stores/authStore";
 import api from "@/lib/axios";
 import { redirectAfterLogin } from "@/lib/redirectTo";
 
@@ -23,6 +24,7 @@ const BLUE = "#0057b8";
 
 export default function LoginPage() {
   const login  = useLogin();
+  const setAuth = useAuthStore((s) => s.setAuth);
   const router = useRouter();
 
   const [ssoLoading, setSsoLoading] = useState(false);
@@ -40,10 +42,17 @@ export default function LoginPage() {
     setSsoLoading(true);
     api.post("/auth/sso-login", { ssoToken: token })
       .then(res => {
-        const { access_token, refresh_token } = res.data?.data ?? res.data ?? {};
+        const { access_token, refresh_token, user } = res.data?.data ?? res.data ?? {};
         if (access_token) {
-          localStorage.setItem("access_token", access_token);
-          if (refresh_token) localStorage.setItem("refresh_token", refresh_token);
+          /*
+           * Through the store. Writing the tokens straight to localStorage
+           * looked equivalent and was not: the store holds `isAuthenticated`,
+           * the dashboard layout gates every page on it, and router.replace
+           * is a client-side navigation — nothing reloads, so nothing
+           * rehydrates the store. The tokens were there, the flag was false,
+           * and the layout sent the person back here having just signed in.
+           */
+          setAuth(user, access_token, refresh_token);
           router.replace(redirectAfterLogin());
         } else {
           setSsoLoading(false);
