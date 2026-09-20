@@ -1,5 +1,5 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
-import { writeAuthCookie, clearAuthCookie } from "@/lib/authCookie";
+import { clearAuthCookie } from "@/lib/authCookie";
 
 // The browser ALWAYS calls same-origin `/api/v1` — never the backend's real
 // domain. next.config.ts rewrites that path to the backend server-side (see
@@ -101,7 +101,6 @@ export async function refreshAccessToken(): Promise<string | null> {
     // Persist new tokens
     localStorage.setItem("access_token", newAccess);
     localStorage.setItem("refresh_token", newRefresh);
-    writeAuthCookie(newAccess);
 
     // Update Zustand store so UI reflects any user changes
     try {

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { User } from "@/types/user";
-import { writeAuthCookie, clearAuthCookie } from "@/lib/authCookie";
+import { clearAuthCookie } from "@/lib/authCookie";
 
 interface OriginalAuth {
   user: User;
@@ -33,8 +33,6 @@ export const useAuthStore = create<AuthState>()(
         if (isBrowser) {
           localStorage.setItem("access_token", accessToken);
           localStorage.setItem("refresh_token", refreshToken);
-          // Cookie read by the route guard for SSR-safe protection.
-          writeAuthCookie(accessToken);
         }
         set({ user, isAuthenticated: true });
       },
