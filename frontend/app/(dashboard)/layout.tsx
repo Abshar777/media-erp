@@ -38,9 +38,20 @@ export default function DashboardLayout({
 
   useEffect(() => {
     if (hydrated && !isAuthenticated) {
-      router.replace("/login");
+      /*
+       * Record where they were going, as `?from=`.
+       *
+       * proxy.ts used to do this when it turned somebody away, and
+       * redirectAfterLogin reads it to land them back where they meant to be.
+       * That gate is gone — it could not work inside the Root portal's frame —
+       * so this check is now the only thing that turns anybody away, and it
+       * has to carry the same information or people always land on the
+       * dashboard no matter which page they asked for.
+       */
+      const from = pathname && pathname !== "/" ? `?from=${encodeURIComponent(pathname)}` : "";
+      router.replace(`/login${from}`);
     }
-  }, [hydrated, isAuthenticated, router]);
+  }, [hydrated, isAuthenticated, router, pathname]);
 
   if (!hydrated || !isAuthenticated) {
     return (
