@@ -11,6 +11,7 @@ import { motion } from "framer-motion";
 import { Eye, EyeOff, Loader2, ArrowRight, AlertCircle } from "lucide-react";
 import { useLogin } from "@/hooks/useAuth";
 import api from "@/lib/axios";
+import { redirectAfterLogin } from "@/lib/redirectTo";
 
 const schema = z.object({
   email:    z.string().email("Invalid email address"),
@@ -43,7 +44,7 @@ export default function LoginPage() {
         if (access_token) {
           localStorage.setItem("access_token", access_token);
           if (refresh_token) localStorage.setItem("refresh_token", refresh_token);
-          router.replace("/dashboard");
+          router.replace(redirectAfterLogin());
         } else {
           setSsoLoading(false);
           setSsoError("SSO login failed. Please sign in manually.");

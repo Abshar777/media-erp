@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AlertCircle, ArrowRight } from "lucide-react";
 import api from "@/lib/axios";
+import { redirectAfterLogin } from "@/lib/redirectTo";
 
 /**
  * Arriving from the Root portal.
@@ -59,7 +60,7 @@ function Redeem() {
         if (refresh_token) localStorage.setItem("refresh_token", refresh_token);
         // replace, not push: the address holds a spent token, and Back should
         // not return to a page that will now refuse.
-        router.replace("/dashboard");
+        router.replace(redirectAfterLogin());
       } catch (err) {
         // The server's own words. It knows whether the token was spent, the
         // account is unknown here, or the portal could not be reached — and

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { redirectAfterLogin } from "@/lib/redirectTo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import api from "@/lib/axios";
@@ -33,7 +34,9 @@ export function useLogin() {
     onSuccess(data) {
       setAuth(data.user, data.access_token, data.refresh_token);
       toast.success("Welcome back!");
-      router.push("/dashboard");
+      // The route guard records where it turned you away from; go back there
+      // rather than to the dashboard, which is not where you were headed.
+      router.push(redirectAfterLogin());
     },
     onError() {
       toast.error("Invalid email or password");
