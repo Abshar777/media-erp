@@ -1,4 +1,5 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import { writeAuthCookie, clearAuthCookie } from "@/lib/authCookie";
 
 // The browser ALWAYS calls same-origin `/api/v1` — never the backend's real
 // domain. next.config.ts rewrites that path to the backend server-side (see
@@ -51,7 +52,7 @@ function _clearAuth() {
   if (typeof window === "undefined") return;
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
-  document.cookie = "access_token=; path=/; max-age=0";
+  clearAuthCookie();
   // Clear Zustand store without importing the hook (avoids hook rules)
   try {
     const { useAuthStore } = require("@/stores/authStore");
@@ -100,7 +101,7 @@ export async function refreshAccessToken(): Promise<string | null> {
     // Persist new tokens
     localStorage.setItem("access_token", newAccess);
     localStorage.setItem("refresh_token", newRefresh);
-    document.cookie = `access_token=${newAccess}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
+    writeAuthCookie(newAccess);
 
     // Update Zustand store so UI reflects any user changes
     try {
