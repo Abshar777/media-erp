@@ -19,6 +19,7 @@ from app.database import get_db
 from app.services.portal_service import (
     PortalError,
     describe_user_for_portal,
+    describe_many_for_portal,
     list_roles_for_portal,
     provision_from_portal,
     set_user_role_from_portal,
@@ -109,6 +110,30 @@ async def provision_user(
                 db, body.get("email", ""), body.get("name", ""), body.get("role", "")
             ),
             "Account created",
+        )
+    except PortalError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+
+
+@router.post("/accounts")
+async def accounts(
+    body: dict,
+    x_portal_secret: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    The same question as /user, asked about many people at once.
+
+    POST rather than GET because a page of addresses does not belong in a
+    query string, where every proxy in front of this would log it.
+    """
+    refused = _guard(x_portal_secret)
+    if refused:
+        return refused
+    try:
+        return success_response(
+            await describe_many_for_portal(db, body.get("emails")),
+            "Accounts",
         )
     except PortalError as exc:
         return error_response(exc.message, status_code=exc.status_code)

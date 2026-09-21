@@ -247,3 +247,104 @@ async def provision_from_portal(
         "userId": str(result.inserted_id),
         "detail": f"Created {wanted} as {_role_key(found)}",
     }
+
+
+# At most this many addresses in one question.
+#
+# The portal asks about a page of its user list, which is twenty-five. The cap
+# is far above that so it never has to think about the limit, and low enough
+# that this endpoint cannot be turned into a way to sweep everybody here one
+# large request at a time.
+MAX_EMAILS = 500
+
+
+async def describe_many_for_portal(db: AsyncIOMotorDatabase, emails: object) -> dict:
+    """
+    The same question as describe_user_for_portal, asked about many at once.
+
+    The portal shows a column saying which systems each person actually has an
+    account on, across a page of its user list. Asked one at a time that is
+    twenty-five requests to each system for a single screen, so it is asked
+    once instead.
+
+    Two queries, not two per person: the accounts, then the roles they hold,
+    each fetched in one go. Looking a role up per account would put back the
+    per-person cost this endpoint exists to remove.
+
+    Permissions are deliberately left out. They are the heaviest part of the
+    answer and a column showing which systems somebody is on does not use
+    them; whoever wants them opens that one person, where /user still gives
+    the full picture.
+
+    Every address asked about comes back, including the ones with no account
+    here. The portal has to tell "asked, and there is nobody" apart from
+    "never answered" — those mean opposite things on its screen, and a
+    response that simply omitted the misses would make them indistinguishable.
+    """
+    if not isinstance(emails, list):
+        raise PortalError("emails must be a list of addresses", 400)
+
+    # Normalised and de-duplicated the same way a single lookup is, so that
+    # asking about "A@x.com" and "a@x.com " is one question, answered once.
+    wanted: list[str] = []
+    seen: set[str] = set()
+    for raw in emails:
+        if not isinstance(raw, str):
+            continue
+        email = raw.strip().lower()
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        wanted.append(email)
+
+    if not wanted:
+        return {"accounts": []}
+    if len(wanted) > MAX_EMAILS:
+        raise PortalError(
+            f"At most {MAX_EMAILS} addresses at a time, and {len(wanted)} were asked for",
+            400,
+        )
+
+    users = await db["users"].find({"email": {"$in": wanted}}).to_list(length=MAX_EMAILS)
+    by_email = {str(u.get("email", "")).lower(): u for u in users}
+
+    role_ids = []
+    for user in users:
+        raw_id = user.get("role_id")
+        if not raw_id:
+            continue
+        try:
+            role_ids.append(ObjectId(raw_id))
+        except Exception:
+            # A malformed id is the same as no role here, as it is singly.
+            continue
+
+    roles_by_id: dict[str, dict] = {}
+    if role_ids:
+        found = await db["roles"].find({"_id": {"$in": role_ids}}).to_list(length=len(role_ids))
+        roles_by_id = {str(role["_id"]): role for role in found}
+
+    accounts = []
+    for email in wanted:
+        user = by_email.get(email)
+        if not user:
+            accounts.append({
+                "email": email, "exists": False, "inOrganization": False,
+                "name": "", "status": "", "roleKey": None, "roleName": None,
+            })
+            continue
+
+        role = roles_by_id.get(str(user.get("role_id"))) if user.get("role_id") else None
+        status = "active" if user.get("is_active", True) else "inactive"
+        accounts.append({
+            "email": email,
+            "exists": True,
+            # One organization per deployment, so being here is being a member.
+            "inOrganization": True,
+            "name": user.get("name", "") or "",
+            "status": status,
+            "roleKey": _role_key(role) if role else None,
+            "roleName": _role_key(role) if role else None,
+        })
+
+    return {"accounts": accounts}
