@@ -26,6 +26,7 @@ if settings.sentry_dsn:
     )
     logger.info("Sentry initialised (env=%s)", settings.app_env)
 from app.routers import auth as auth_router
+from app.routers import portal as portal_router
 from app.routers import connectors as connectors_router
 from app.routers import sync as sync_router
 from app.routers import reports as reports_router
@@ -124,6 +125,8 @@ app.add_middleware(RateLimitMiddleware)
 
 
 app.include_router(auth_router.router)
+# Server-to-server, from the Root portal. A shared secret, not a session.
+app.include_router(portal_router.router)
 app.include_router(connectors_router.router)
 app.include_router(sync_router.router)
 app.include_router(reports_router.router)

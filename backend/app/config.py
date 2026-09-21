@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # default host, which would mean trusting whatever answers there.
     root_erp_api_url: str = ""
 
+    # The shared secret the Root portal presents when it asks this server
+    # about its roles or its people. Distinct from root_erp_api_url above,
+    # which is how this server calls the portal to verify a sign-in — this is
+    # how the portal calls here. Blank means those endpoints are off rather
+    # than open. Must match the portal's MEDIA_ERP_SSO_SECRET.
+    root_erp_secret: str = ""
+
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
