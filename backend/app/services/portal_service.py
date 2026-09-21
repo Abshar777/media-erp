@@ -348,3 +348,244 @@ async def describe_many_for_portal(db: AsyncIOMotorDatabase, emails: object) -> 
         })
 
     return {"accounts": accounts}
+
+
+# ── Tasks, driven from the Root portal ───────────────────────────────────────
+#
+# This application already has a task system worth more than anything the
+# portal could grow: teams, assignment, a leader's review desk, a verification
+# gate before approval, push notifications and WhatsApp. None of that is
+# reimplemented here.
+#
+# What follows resolves *who is acting* and then calls the same handlers the
+# web app calls, with that person as the current user. Writing a parallel
+# create-or-approve path would have meant two sets of rules, and the one that
+# drifts is always the one with fewer eyes on it.
+
+
+
+def _unwrap(result):
+    """
+    What a handler actually said.
+
+    These return this application's own JSONResponse, so a refusal — a missing
+    due date, a team somebody may not assign into — comes back as a perfectly
+    ordinary object with success:false inside it. Passing that straight through
+    told the portal a task had been created when nothing had, which is the one
+    answer a create endpoint must never give.
+    """
+    import json as _json
+
+    if isinstance(result, dict):
+        body = result
+    else:
+        raw = getattr(result, "body", None)
+        if raw is None:
+            return {"success": True, "data": None}
+        try:
+            body = _json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+        except Exception:
+            return {"success": True, "data": None}
+
+    if body.get("success") is False:
+        status = getattr(result, "status_code", 400) or 400
+        raise PortalError(body.get("message") or "That was refused", status)
+    return body
+
+
+async def _role_of(db: AsyncIOMotorDatabase, user: dict) -> dict:
+    """The role document the handlers expect hung off the user as `_role`."""
+    rid = user.get("role_id")
+    if not rid:
+        return {}
+    try:
+        return await db["roles"].find_one({"_id": ObjectId(rid)}) or {}
+    except Exception:
+        return {}
+
+
+async def _actor(
+    db: AsyncIOMotorDatabase,
+    actor_email: str,
+    fallback_email: str = "",
+    *,
+    require_own_account: bool = False,
+) -> tuple[dict, bool]:
+    """
+    Who the portal is acting as, and whether it had to fall back.
+
+    Anybody in the portal may raise work here, and most of them have no account
+    in this application — so when the person is unknown, the portal's own
+    service account stands in and the task is recorded against that. Their real
+    name is not lost: the portal writes it to its own audit log, which is the
+    only place it was ever going to live for somebody who does not exist here.
+
+    Approving is different and says so. It turns on leading a team, and a shared
+    account approving on somebody's behalf would let anybody with the portal
+    open wave work through a gate they are not behind. That path asks for a real
+    account and refuses without one.
+    """
+    email = (actor_email or "").strip().lower()
+    user = await db["users"].find_one({"email": email}) if email else None
+    if user:
+        user["_role"] = await _role_of(db, user)
+        return user, False
+
+    if require_own_account:
+        raise PortalError(
+            f"{actor_email or 'That person'} has no account here, and approving needs one.",
+            403,
+        )
+
+    fb = (fallback_email or "").strip().lower()
+    stand_in = await db["users"].find_one({"email": fb}) if fb else None
+    if not stand_in:
+        raise PortalError(
+            "Nobody here to act as — set MEDIA_ERP_SERVICE_EMAIL on the portal to an account on this server.",
+            503,
+        )
+    stand_in["_role"] = await _role_of(db, stand_in)
+    return stand_in, True
+
+
+async def list_task_teams_for_portal(db: AsyncIOMotorDatabase) -> dict:
+    """The teams work can be put on, and who is in them."""
+    teams = await db["teams"].find({}).to_list(500)
+
+    member_ids = {m.get("user_id") for t in teams for m in (t.get("members") or []) if m.get("user_id")}
+    valid = [ObjectId(i) for i in member_ids if ObjectId.is_valid(i)]
+    users = await db["users"].find({"_id": {"$in": valid}}, {"name": 1, "email": 1}).to_list(1000)
+    by_id = {str(u["_id"]): u for u in users}
+
+    return {
+        "teams": [
+            {
+                "id": str(t["_id"]),
+                "name": t.get("name", ""),
+                "color": t.get("color", "#6366f1"),
+                "members": [
+                    {
+                        "id": m.get("user_id", ""),
+                        "name": (by_id.get(m.get("user_id"), {}) or {}).get("name", ""),
+                        "email": (by_id.get(m.get("user_id"), {}) or {}).get("email", ""),
+                        "role": m.get("role", "member"),
+                    }
+                    for m in (t.get("members") or [])
+                    if by_id.get(m.get("user_id"))
+                ],
+            }
+            for t in teams
+        ]
+    }
+
+
+async def create_task_for_portal(db: AsyncIOMotorDatabase, body: dict) -> dict:
+    """
+    Raise work on somebody's plate, through this application's own front door.
+
+    Every rule the web app applies still applies — a title, a team, a due date,
+    who may assign to whom — because this hands the same request to the same
+    handler rather than repeating any of it.
+    """
+    from app.routers.projects import add_task
+    from app.schemas.project import CreateTaskRequest
+
+    actor, stood_in = await _actor(
+        db,
+        str(body.get("actorEmail") or ""),
+        str(body.get("fallbackEmail") or ""),
+    )
+
+    try:
+        payload = CreateTaskRequest(**{
+            "title": str(body.get("title") or ""),
+            "description": str(body.get("description") or ""),
+            "priority": str(body.get("priority") or "medium"),
+            "assigned_to": str(body.get("assignedTo") or ""),
+            "due_date": str(body.get("dueDate") or ""),
+            "team_id": str(body.get("teamId") or ""),
+        })
+    except Exception as exc:
+        raise PortalError(f"That task is not valid: {exc}", 400)
+
+    body = _unwrap(await add_task(payload, actor, db))
+    return {
+        "createdAs": actor.get("email", ""),
+        "stoodIn": stood_in,
+        "task": body.get("data"),
+    }
+
+
+async def list_approvals_for_portal(db: AsyncIOMotorDatabase, actor_email: str) -> dict:
+    """
+    What is waiting on this person, and nothing else.
+
+    Only work sitting at pending_review, and only in the teams they lead —
+    or every team, if their role here is one that oversees all of them. The
+    wider leader desk also carries unassigned work waiting to be handed out;
+    that is a different job and is left where it lives.
+    """
+    from app.services.project_service import _serialize
+
+    actor, _ = await _actor(db, actor_email, require_own_account=True)
+    uid = str(actor["_id"])
+    role_name = (actor.get("_role") or {}).get("role_name", "")
+
+    if role_name in ("Super Admin", "Admin", "Coordinator"):
+        teams = await db["teams"].find({}).to_list(500)
+    else:
+        teams = await db["teams"].find(
+            {"members": {"$elemMatch": {"user_id": uid, "role": "leader"}}}
+        ).to_list(500)
+
+    team_ids = [str(t["_id"]) for t in teams]
+    names = {str(t["_id"]): t.get("name", "") for t in teams}
+
+    # Named approver as well as team leader: a task can name somebody who is not
+    # a leader, and leaving those out would hide work from the one person it was
+    # deliberately pointed at.
+    query = {
+        "status": "pending_review",
+        "$or": [{"team_id": {"$in": team_ids}}, {"approver_id": uid}],
+    }
+    if not team_ids:
+        query = {"status": "pending_review", "approver_id": uid}
+
+    tasks = await db["project_tasks"].find(query).sort("due_date", 1).to_list(200)
+
+    out = []
+    for t in tasks:
+        row = _serialize(t)
+        row["teamName"] = names.get(str(t.get("team_id") or ""), "")
+        out.append(row)
+
+    return {"reviewerEmail": actor.get("email", ""), "tasks": out}
+
+
+async def decide_task_for_portal(db: AsyncIOMotorDatabase, task_id: str, body: dict) -> dict:
+    """
+    Approve a task, or send it back.
+
+    Handed to the same handler the web app uses, as the real person — so the
+    verification gate, the allowed transitions and the notifications that follow
+    are exactly the ones this application already applies. A shared account
+    cannot do this: see _actor.
+    """
+    from app.routers.projects import edit_task
+    from app.schemas.project import UpdateTaskRequest
+
+    actor, _ = await _actor(db, str(body.get("actorEmail") or ""), require_own_account=True)
+
+    approve = bool(body.get("approve"))
+    updates = {"status": "approved" if approve else "reedit"}
+    note = str(body.get("note") or "").strip()
+    if note and not approve:
+        updates["reedit_note"] = note
+
+    try:
+        payload = UpdateTaskRequest(**updates)
+    except Exception as exc:
+        raise PortalError(f"That decision is not valid: {exc}", 400)
+
+    body = _unwrap(await edit_task(task_id, payload, actor, db))
+    return {"decidedAs": actor.get("email", ""), "approved": approve, "task": body.get("data")}

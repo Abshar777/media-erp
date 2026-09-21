@@ -20,6 +20,10 @@ from app.services.portal_service import (
     PortalError,
     describe_user_for_portal,
     describe_many_for_portal,
+    list_task_teams_for_portal,
+    create_task_for_portal,
+    list_approvals_for_portal,
+    decide_task_for_portal,
     list_roles_for_portal,
     provision_from_portal,
     set_user_role_from_portal,
@@ -135,5 +139,76 @@ async def accounts(
             await describe_many_for_portal(db, body.get("emails")),
             "Accounts",
         )
+    except PortalError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+
+
+@router.get("/task-teams")
+async def task_teams(
+    x_portal_secret: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """The teams work can be put on, and who is in them."""
+    refused = _guard(x_portal_secret)
+    if refused:
+        return refused
+    try:
+        return success_response(await list_task_teams_for_portal(db), "Teams")
+    except PortalError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+
+
+@router.post("/tasks")
+async def create_task(
+    body: dict,
+    x_portal_secret: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Raise work from the portal.
+
+    Who is asking travels in the body, because this server has no idea who is
+    signed in over there. Somebody with an account here acts as themselves;
+    everybody else acts as the portal's own service account, and their real name
+    is kept in the portal's audit log instead.
+    """
+    refused = _guard(x_portal_secret)
+    if refused:
+        return refused
+    try:
+        return success_response(await create_task_for_portal(db, body), "Task created")
+    except PortalError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+
+
+@router.get("/task-approvals")
+async def task_approvals(
+    actorEmail: str = "",
+    x_portal_secret: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """What is waiting on this person to approve. Needs a real account here."""
+    refused = _guard(x_portal_secret)
+    if refused:
+        return refused
+    try:
+        return success_response(await list_approvals_for_portal(db, actorEmail), "Approvals")
+    except PortalError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+
+
+@router.post("/tasks/{task_id}/decide")
+async def decide_task(
+    task_id: str,
+    body: dict,
+    x_portal_secret: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Approve it, or send it back for another pass."""
+    refused = _guard(x_portal_secret)
+    if refused:
+        return refused
+    try:
+        return success_response(await decide_task_for_portal(db, task_id, body), "Decision recorded")
     except PortalError as exc:
         return error_response(exc.message, status_code=exc.status_code)
