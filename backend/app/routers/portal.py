@@ -22,8 +22,10 @@ from app.services.portal_service import (
     describe_many_for_portal,
     list_task_teams_for_portal,
     create_task_for_portal,
-    list_approvals_for_portal,
-    decide_task_for_portal,
+    get_task_for_portal,
+    list_raised_for_portal,
+    list_verifications_for_portal,
+    submit_verification_for_portal,
     list_roles_for_portal,
     provision_from_portal,
     set_user_role_from_portal,
@@ -181,34 +183,68 @@ async def create_task(
         return error_response(exc.message, status_code=exc.status_code)
 
 
-@router.get("/task-approvals")
-async def task_approvals(
+@router.get("/tasks/{task_id}")
+async def task_detail(
+    task_id: str,
     actorEmail: str = "",
     x_portal_secret: str | None = Header(default=None),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """What is waiting on this person to approve. Needs a real account here."""
+    """One task in full — where it is, how it got there, what is attached."""
     refused = _guard(x_portal_secret)
     if refused:
         return refused
     try:
-        return success_response(await list_approvals_for_portal(db, actorEmail), "Approvals")
+        return success_response(await get_task_for_portal(db, task_id, actorEmail), "Task")
     except PortalError as exc:
         return error_response(exc.message, status_code=exc.status_code)
 
 
-@router.post("/tasks/{task_id}/decide")
-async def decide_task(
+@router.get("/tasks-raised")
+async def tasks_raised(
+    actorEmail: str = "",
+    x_portal_secret: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """What this person has asked for, whatever became of it."""
+    refused = _guard(x_portal_secret)
+    if refused:
+        return refused
+    try:
+        return success_response(await list_raised_for_portal(db, actorEmail), "Raised")
+    except PortalError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+
+
+@router.get("/verifications")
+async def verifications(
+    actorEmail: str = "",
+    scope: str = "pending",
+    x_portal_secret: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """What is waiting on this person to verify. Needs a real account here."""
+    refused = _guard(x_portal_secret)
+    if refused:
+        return refused
+    try:
+        return success_response(await list_verifications_for_portal(db, actorEmail, scope), "Verifications")
+    except PortalError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+
+
+@router.post("/verifications/{task_id}")
+async def verify_task(
     task_id: str,
     body: dict,
     x_portal_secret: str | None = Header(default=None),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Approve it, or send it back for another pass."""
+    """Pass it, or say what is wrong with it."""
     refused = _guard(x_portal_secret)
     if refused:
         return refused
     try:
-        return success_response(await decide_task_for_portal(db, task_id, body), "Decision recorded")
+        return success_response(await submit_verification_for_portal(db, task_id, body), "Recorded")
     except PortalError as exc:
         return error_response(exc.message, status_code=exc.status_code)
