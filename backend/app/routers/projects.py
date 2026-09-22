@@ -415,6 +415,33 @@ async def add_task(
         data.pop("approver_id", None)
         data.pop("approver_name", None)
 
+    # ── Whoever raised the work checks the result ─────────────────────────────
+    # Unless they said otherwise, the creator is named a verifier, so nothing
+    # they asked for is approved without them having seen what came back.
+    #
+    # Skipped when they could approve it themselves: a leader who raises work
+    # for their own team already signs it off at the end, and asking them to
+    # verify first only makes them sign the same task twice.
+    #
+    # Raising work for yourself needs no special case — resolve_verifiers drops
+    # the assignee when the list is expanded, because signing off your own work
+    # is the thing verification exists to prevent.
+    # `is None` rather than falsy: an empty list is somebody saying "nobody",
+    # which is a decision and not the absence of one. Treating the two alike
+    # made the default impossible to remove.
+    if data.get("verify_users") is None and data.get("verify_teams") is None:
+        creator_may_approve = await workflow.can_approve(
+            current_user,
+            {
+                "team_id": data.get("team_id"),
+                "assigned_to": assignee,
+                "approver_id": data.get("approver_id", ""),
+            },
+            db,
+        )
+        if not creator_may_approve:
+            data["verify_users"] = [str(current_user["_id"])]
+
     task = await create_task(db, data)
 
     await _fire_notifications(

@@ -25,6 +25,11 @@ class CreateTaskRequest(BaseModel):
     # Setting it requires leader/admin rights (see workflow.can_assign_to_others).
     approver_id: Optional[str] = None
     approver_name: Optional[str] = None
+    # Who must sign the work off before it can be approved. Naming a verifier
+    # is open to every role, unlike naming an approver. Left unset, the creator
+    # is added — see add_task.
+    verify_users: Optional[list[str]] = None
+    verify_teams: Optional[list[str]] = None
 
 
 class UpdateTaskRequest(BaseModel):

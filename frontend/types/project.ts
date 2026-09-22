@@ -142,6 +142,11 @@ export interface CreateTaskPayload {
   /** Named approver (leader/admin only — server rejects otherwise). */
   approver_id?: string;
   approver_name?: string;
+  /** Who must sign the work off before it can be approved. Sent explicitly,
+   *  empty list included, so "nobody" is not mistaken for "not specified" —
+   *  the server fills the latter with the creator (see add_task). */
+  verify_users?: string[];
+  verify_teams?: string[];
 }
 
 export interface UpdateTaskPayload {

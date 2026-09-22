@@ -320,6 +320,10 @@ async def create_task(db: AsyncIOMotorDatabase, data: dict) -> dict:
         # Named approver (optional) — validated by the router before we get here.
         "approver_id": data.get("approver_id", ""),
         "approver_name": data.get("approver_name", ""),
+        # Who must sign off before approval. Expanded into `verifications` when
+        # the work is actually submitted, not now — see edit_task.
+        "verify_users": data.get("verify_users") or [],
+        "verify_teams": data.get("verify_teams") or [],
         "created_at": now,
         "updated_at": now,
         "timing": {"intervals": [], "total_seconds": None},

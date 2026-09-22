@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Plus, Paperclip, Link } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCreateTask } from "@/hooks/useProjects";
 import { FileUploader } from "@/components/shared/FileUploader";
 import { useAllTeams, useTeam, useAssignableUsers } from "@/hooks/useTeams";
+import { VerifierPicker } from "@/components/projects/VerifierPicker";
+import { useCanApprove } from "@/hooks/useCanApprove";
 import { useAuthStore } from "@/stores/authStore";
 import type { TaskPriority, TaskStatus, Attachment } from "@/types/project";
 import { cn } from "@/lib/utils";
@@ -54,6 +56,28 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   // hits /users, which needs the users:view permission and 403s for an
   // Employee — that is why the assignee list used to come up empty for them.
   const { data: directory = [] } = useAssignableUsers();
+  const canApprove = useCanApprove();
+
+  // Whoever raises the work checks the result — unless they could approve it
+  // themselves, in which case they would only be signing the same task twice.
+  // Mirrors the server rule in add_task; the server is the real gate.
+  const creatorWouldApprove = canApprove({
+    team_id: teamId || null,
+    assigned_to: assignedTo,
+    approver_id: approverId,
+  });
+  const [verifyUsers, setVerifyUsers] = useState<string[]>([]);
+  const [verifyTeams, setVerifyTeams] = useState<string[]>([]);
+  // Touched once the user adds or removes anybody, so their choice — including
+  // the choice of nobody — is sent as-is rather than re-defaulted server-side.
+  const [verifyTouched, setVerifyTouched] = useState(false);
+
+  // The default follows the form: change the team or the assignee and whether
+  // you could approve it changes with them.
+  useEffect(() => {
+    if (verifyTouched) return;
+    setVerifyUsers(!creatorWouldApprove && me?.id ? [me.id] : []);
+  }, [creatorWouldApprove, me?.id, verifyTouched]);
 
   const isLeaderOfTeam = !!teamId && (teamDetail?.my_role === "leader" || teamDetail?.my_role === "admin");
 
@@ -98,6 +122,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
     setTeamId(defaultTeamId);
     setAssignedTo(""); setApproverId(""); setDueDate(""); setAttachments([]);
     setShowLinkForm(false); setLinkUrl(""); setLinkLabel("");
+    setVerifyUsers([]); setVerifyTeams([]); setVerifyTouched(false);
   }
 
   function close() { reset(); onClose(); }
@@ -149,6 +174,11 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
       assigned_to_name: finalAssigneeName,
       due_date: dueDate || null,
       attachments,
+      // Sent explicitly — including as an empty list, which is how "nobody"
+      // reaches the server as a decision rather than as silence it would fill
+      // in with the creator again.
+      verify_users: verifyUsers,
+      verify_teams: verifyTeams,
       // Only send when the user may actually set it; the server enforces the
       // same rule and would 403 otherwise.
       ...(canSetApprover && approverId
@@ -335,6 +365,47 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                   )}
                 </div>
               )}
+
+              {/* Verification — the creator is pre-filled, and can be removed.
+                  Shown rather than applied silently: a task that will not reach
+                  approved until somebody signs it should say who, at the moment
+                  it is raised. */}
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Verified by
+                </label>
+                <VerifierPicker
+                  teams={teams.map((t) => ({ id: t.id, name: t.name }))}
+                  people={directory.map((u) => ({
+                    id: u.id,
+                    name: u.name || u.email,
+                    designation: u.designation,
+                  }))}
+                  selectedTeams={verifyTeams}
+                  selectedPeople={verifyUsers}
+                  excludePersonId={assignedTo}
+                  onToggleTeam={(id) => {
+                    setVerifyTouched(true);
+                    setVerifyTeams((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+                  }}
+                  onTogglePerson={(id) => {
+                    setVerifyTouched(true);
+                    setVerifyUsers((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+                  }}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {verifyUsers.length === 0 && verifyTeams.length === 0
+                    ? "Nobody has to sign this off before it can be approved."
+                    : creatorWouldApprove
+                    ? "They are asked to check the work when it goes for review."
+                    : "You raised it, so you check the result — remove yourself if somebody else should."}
+                </p>
+                {isSelfAssigned && verifyUsers.includes(me?.id ?? "") && (
+                  <p className="text-[11px] text-amber-600">
+                    This is your own task, so you won&apos;t be asked to verify it.
+                  </p>
+                )}
+              </div>
 
               {/* Attachments */}
               <div className="space-y-2">
