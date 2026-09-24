@@ -201,7 +201,10 @@ function EditTeamModal({ team, onClose }: { team: Team; onClose: () => void }) {
   );
 
   const update = useUpdateTeam(team.id);
-  const { data: users = [], isLoading: usersLoading } = useAssignableUsers();
+  const { data: users = [], isLoading: usersLoading } = useAssignableUsers(team.id);
+  const unresolvedMembers = usersLoading
+    ? []
+    : (team.members ?? []).filter((member) => !users.some((user) => user.id === member.user_id));
 
   function toggle(list: string[], setList: (v: string[]) => void, id: string) {
     setList(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
@@ -239,6 +242,36 @@ function EditTeamModal({ team, onClose }: { team: Team; onClose: () => void }) {
 
         <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1">
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            {unresolvedMembers.length > 0 && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+                <p className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
+                  <AlertCircle className="size-4 shrink-0" />
+                  {unresolvedMembers.length} current team member(s) are unavailable in the user picker.
+                  Remove them here to save the roster.
+                </p>
+                <div className="space-y-1">
+                  {unresolvedMembers.map((member) => (
+                    <div key={member.user_id} className="flex items-center justify-between gap-3 rounded-md bg-background/70 px-2.5 py-1.5 text-xs">
+                      <span className="min-w-0 truncate">
+                        {member.name && member.name !== "Unknown" ? member.name : "Unavailable user"}
+                        <span className="ml-2 font-mono text-muted-foreground">{member.user_id}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLeaderIds((ids) => ids.filter((id) => id !== member.user_id));
+                          setMemberIds((ids) => ids.filter((id) => id !== member.user_id));
+                        }}
+                        className="shrink-0 rounded px-2 py-1 font-medium text-destructive hover:bg-destructive/10"
+                        aria-label={`Remove unavailable member ${member.user_id}`}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="space-y-2">
               <label className="text-sm font-medium">Team Name *</label>
               <Input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />

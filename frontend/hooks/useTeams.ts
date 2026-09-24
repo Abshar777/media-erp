@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import type { AxiosError } from "axios";
 import api from "@/lib/axios";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -179,12 +180,13 @@ export function useTeam(teamId: string) {
   });
 }
 
-export function useAssignableUsers() {
+export function useAssignableUsers(teamId?: string) {
   return useQuery({
-    queryKey: ["teams", "assignable-users"],
+    queryKey: ["teams", "assignable-users", teamId ?? "all"],
     queryFn: async () => {
       const { data } = await api.get<{ success: boolean; data: AssignableUser[] }>(
-        "/teams/users"
+        "/teams/users",
+        { params: teamId ? { team_id: teamId } : undefined },
       );
       return data.data;
     },
@@ -305,8 +307,14 @@ export function useUpdateTeam(teamId: string) {
       qc.invalidateQueries({ queryKey: ["teams", "all"] });
       toast.success("Team updated");
     },
-    onError() {
-      toast.error("Failed to update team");
+    onError(error: AxiosError<{ message?: string; errors?: { missing_user_ids?: string[]; invalid_user_ids?: string[] } }>) {
+      const data = error.response?.data;
+      const affectedIds = [
+        ...(data?.errors?.missing_user_ids ?? []),
+        ...(data?.errors?.invalid_user_ids ?? []),
+      ];
+      const details = affectedIds.length ? ` IDs: ${affectedIds.join(", ")}` : "";
+      toast.error(`${data?.message || "Failed to update team"}${details}`);
     },
   });
 }

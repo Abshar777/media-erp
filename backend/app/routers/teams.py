@@ -202,6 +202,7 @@ async def list_my_teams(
 @router.get("/users")
 async def list_assignable_users(
     search: str = "",
+    team_id: str | None = None,
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
@@ -216,9 +217,24 @@ async def list_assignable_users(
             {"name": {"$regex": search, "$options": "i"}},
             {"email": {"$regex": search, "$options": "i"}},
         ]
-    docs = await db["users"].find(
-        query, {"name": 1, "email": 1, "designation": 1, "avatar": 1, "status": 1, "role_id": 1}
-    ).sort("name", 1).to_list(500)
+    projection = {"name": 1, "email": 1, "designation": 1, "avatar": 1, "status": 1, "role_id": 1}
+    docs = await db["users"].find(query, projection).sort("name", 1).to_list(500)
+    if team_id:
+        team, err = await _get_team_or_404(db, team_id)
+        if err:
+            return err
+        roster_ids = {
+            member.get("user_id") for member in team.get("members", [])
+            if ObjectId.is_valid(member.get("user_id", ""))
+        }
+        included_ids = {str(user["_id"]) for user in docs}
+        missing_from_directory = roster_ids - included_ids
+        if missing_from_directory:
+            roster_users = await db["users"].find(
+                {"_id": {"$in": [ObjectId(user_id) for user_id in missing_from_directory]}},
+                projection,
+            ).to_list(len(missing_from_directory))
+            docs.extend(roster_users)
 
     # Resolve role names in a single batch query
     raw_role_ids = {u.get("role_id") for u in docs if u.get("role_id")}
@@ -371,16 +387,24 @@ async def update_team(
             )
 
         all_desired = desired_leaders | desired_members
-        for u in all_desired:
-            if not ObjectId.is_valid(u):
-                return error_response("Invalid user ID in members list", status_code=422)
+        invalid_ids = sorted(u for u in all_desired if not ObjectId.is_valid(u))
+        if invalid_ids:
+            return error_response(
+                "One or more selected user IDs are invalid",
+                status_code=422,
+                errors={"invalid_user_ids": invalid_ids},
+            )
         found = await db["users"].find(
             {"_id": {"$in": [ObjectId(u) for u in all_desired]}}, {"role_id": 1}
         ).to_list(len(all_desired) or 1)
         found_by_id = {str(u["_id"]): u for u in found}
         missing = all_desired - set(found_by_id)
         if missing:
-            return error_response("One or more selected users no longer exist", status_code=422)
+            return error_response(
+                "One or more selected users no longer exist. Remove them from the roster and save again.",
+                status_code=422,
+                errors={"missing_user_ids": sorted(missing)},
+            )
 
         if not _can_manage_any_team(current_user):
             # Mirrors add_member / update_member_role: a Team Leader may not
