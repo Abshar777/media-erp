@@ -35,6 +35,7 @@ export const MODULES = [
   "chat",
   "clients",
   "pipeline",
+  "fund_requests",
 ] as const;
 
 export type ModuleKey = (typeof MODULES)[number];
@@ -61,6 +62,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   chat:         "Chat",
   clients:      "Clients",
   pipeline:     "Pipelines",
+  fund_requests: "Fund Requests",
 };
 
 export function emptyPermissions(): Record<string, ModulePermissions> {

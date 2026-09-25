@@ -11,7 +11,7 @@ import {
   AtSign,
   Bell, CheckCheck, RefreshCw, ServerCrash, Wifi,
   ClipboardList, Play, Coffee, Eye, CheckCircle2,
-  RotateCcw, Users, Clock,
+  RotateCcw, Users, Clock, Wallet,
 } from "lucide-react";
 import { fadeVariants, listItemVariants, listVariants } from "@/lib/animations";
 import { useMarkAllRead, useMarkRead, useNotifications } from "@/hooks/useNotifications";
@@ -67,6 +67,8 @@ function typeConfig(type: string): { icon: React.ReactNode; bg: string } {
       return { icon: <AtSign className="size-3.5 text-sky-500" />,            bg: "bg-sky-100 dark:bg-sky-900/30" };
     case "sync_success":
       return { icon: <Wifi className="size-3.5 text-emerald-500" />,          bg: "bg-emerald-100 dark:bg-emerald-900/30" };
+    case "fund_request":
+      return { icon: <Wallet className="size-3.5 text-emerald-600" />,        bg: "bg-emerald-100 dark:bg-emerald-900/30" };
     case "sync_error":
       return { icon: <ServerCrash className="size-3.5 text-destructive" />,   bg: "bg-red-100 dark:bg-red-900/30" };
     default:
@@ -89,6 +91,7 @@ const TASK_TYPES = new Set([
  * the only other route to it is the email link.
  */
 function destination(item: Notification): string | null {
+  if (item.type === "fund_request") return "/fund-requests";
   if (item.type === "verify_requested") {
     const taskId = (item.metadata as { task_id?: string })?.task_id;
     return taskId ? `/verify/${taskId}` : null;

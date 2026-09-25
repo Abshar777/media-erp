@@ -20,6 +20,7 @@ const ALERT_TYPES = new Set<string>([
   "task_assigned",
   "pending_review",   // something needs your approval
   "task_reedit",      // your work came back
+  "fund_request",     // finance approved or rejected your request
 ]);
 
 const PREF_KEY = "notify:desktop";

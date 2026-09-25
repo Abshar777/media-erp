@@ -30,6 +30,7 @@ import {
   TrendingUp,
   Users,
   UsersRound,
+  Wallet,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -62,6 +63,7 @@ const NAV_ITEMS = [
   { label: "Leader Desk",   href: "/leader",         icon: ClipboardCheck },
   { label: "Verifications", href: "/verify",         icon: ShieldCheck },
   { label: "Performance",   href: "/performance",    icon: Trophy },
+  { label: "Fund Requests", href: "/fund-requests",  icon: Wallet,          module: "fund_requests" },
   { label: "AI Queries",    href: "/ai",             icon: Sparkles,        module: "ai", hidden: true },
   { label: "Publish",       href: "/social",         icon: Share2,                              hidden: true },
   { label: "Send DM",       href: "/social/dm",      icon: Send,                                hidden: true },

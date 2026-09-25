@@ -18,6 +18,8 @@ export type NotificationType =
   // ── Data sync ─────────────────────────────────────────────────────────────
   | "sync_success"
   | "sync_error"
+  // ── Fund requests ─────────────────────────────────────────────────────────
+  | "fund_request"        // finance approved, rejected or refused your request
   // ── Generic ───────────────────────────────────────────────────────────────
   | "info";
 

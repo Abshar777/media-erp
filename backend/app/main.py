@@ -65,6 +65,7 @@ from app.routers import notification_prefs as notification_prefs_router
 from app.routers import media_schedule as media_schedule_router
 from app.routers import whatsapp as whatsapp_router
 from app.routers import email_logs as email_logs_router
+from app.routers import fund_requests as fund_requests_router
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.utils.response import success_response
 
@@ -98,6 +99,11 @@ async def lifespan(app: FastAPI):
     from app.services.group_chat_service import start_group_report_scheduler
     threading.Thread(target=start_group_report_scheduler, daemon=True, name="group-report-scheduler").start()
     logger.info("Group daily-report scheduler started")
+
+    # Fund requests: hand pending ones to finance, collect decisions (every 60 s)
+    from app.services.fund_request_service import start_fund_request_worker
+    threading.Thread(target=start_fund_request_worker, daemon=True, name="fund-request-worker").start()
+    logger.info("Fund request worker started")
     yield
     await close_db()
 
@@ -165,6 +171,7 @@ app.include_router(notification_prefs_router.router)
 app.include_router(media_schedule_router.router)
 app.include_router(whatsapp_router.router)
 app.include_router(email_logs_router.router)
+app.include_router(fund_requests_router.router)
 
 # Serve uploaded files at /uploads/<filename>
 # These are publicly reachable via ngrok so Instagram can fetch images.

@@ -129,3 +129,7 @@ async def create_indexes() -> None:
     await db["email_logs"].create_index([("created_at", DESCENDING)])
     await db["email_logs"].create_index([("status", ASCENDING), ("created_at", DESCENDING)])
     await db["email_logs"].create_index([("category", ASCENDING), ("created_at", DESCENDING)])
+    # fund_requests — asks to finance for money out of Marketing's allocation
+    await db["fund_requests"].create_index([("requested_by.id", ASCENDING), ("created_at", DESCENDING)])
+    await db["fund_requests"].create_index([("status", ASCENDING), ("next_attempt_at", ASCENDING)])
+    await db["fund_requests"].create_index([("created_at", DESCENDING)])

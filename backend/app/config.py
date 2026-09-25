@@ -33,6 +33,20 @@ class Settings(BaseSettings):
     # than open. Must match the portal's MEDIA_ERP_SSO_SECRET.
     root_erp_secret: str = ""
 
+    # ── Finance (fund requests) ───────────────────────────────────────────────
+    # Where a fund request goes: the finance app's signed integration API, as
+    # a drawdown against one department's allocation (Marketing). The client
+    # id, secret and URL are the same values the sales CRMs use; the org and
+    # department are ids from finance. Any of them blank means requests are
+    # still saved here, and wait — visibly — until it is configured, rather
+    # than being sent somewhere half-set-up.
+    finance_api_url: str = ""
+    finance_client_id: str = ""
+    finance_integration_secret: str = ""
+    finance_org_id: str = ""
+    finance_department_id: str = ""
+    finance_currency: str = "AED"
+
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15

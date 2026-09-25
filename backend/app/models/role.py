@@ -22,6 +22,7 @@ MODULES = [
     "chat",
     "clients",
     "pipeline",
+    "fund_requests",
 ]
 
 ACTIONS = ["view", "create", "edit", "delete", "export"]
@@ -42,6 +43,9 @@ def viewer_permissions() -> dict:
     perms = default_permissions()
     for m in ["dashboard", "reports", "campaigns", "projects", "teams", "ai"]:
         perms[m]["view"] = True
+    # fund requests — every role may ask finance for money
+    for a in ["view", "create"]:
+        perms["fund_requests"][a] = True
     return perms
 
 
@@ -67,6 +71,9 @@ def manager_permissions() -> dict:
     perms["ai"]["create"] = True
     perms["users"]["view"] = True
     perms["settings"]["view"] = True
+    # fund requests — every role may ask finance for money
+    for a in ["view", "create"]:
+        perms["fund_requests"][a] = True
     return perms
 
 
@@ -110,6 +117,9 @@ def coordinator_permissions() -> dict:
         perms["clients"][a] = True
     for a in ["view", "create", "edit", "delete"]:
         perms["pipeline"][a] = True
+    # fund requests — every role may ask finance for money
+    for a in ["view", "create"]:
+        perms["fund_requests"][a] = True
     return perms
 
 
@@ -136,6 +146,9 @@ def team_leader_permissions() -> dict:
         perms["chat"][a] = True
     perms["clients"]["view"] = True
     perms["pipeline"]["view"] = True
+    # fund requests — every role may ask finance for money
+    for a in ["view", "create"]:
+        perms["fund_requests"][a] = True
     return perms
 
 
@@ -155,4 +168,7 @@ def employee_permissions() -> dict:
         perms["social"][a] = True
     for a in ["view", "create"]:
         perms["chat"][a] = True
+    # fund requests — every role may ask finance for money
+    for a in ["view", "create"]:
+        perms["fund_requests"][a] = True
     return perms

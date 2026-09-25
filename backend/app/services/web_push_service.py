@@ -19,7 +19,7 @@ COLLECTION = "push_subscriptions"
 
 # Only interrupt someone for these. Mirrors ALERT_TYPES in the frontend's
 # lib/browserNotifications.ts — keep the two in step.
-ALERT_TYPES = {"mention", "task_assigned", "pending_review", "task_reedit"}
+ALERT_TYPES = {"mention", "task_assigned", "pending_review", "task_reedit", "fund_request"}
 
 
 async def save_subscription(db, user_id: str, subscription: dict) -> None:
@@ -110,5 +110,36 @@ async def send_to_user(db, user_id: str, notification: dict) -> None:
         if status in (404, 410):
             # Subscription is permanently gone (site data cleared, app removed).
             await db[COLLECTION].delete_one({"_id": sub["_id"]})
+        elif status:
+            logger.warning("web push rejected (%s) for %s", status, sub.get("endpoint", "")[:60])
+
+
+def send_to_user_sync(db, user_id: str, notification: dict) -> None:
+    """
+    The blocking twin of send_to_user, for daemon threads that have a sync
+    PyMongo handle and no event loop (the fund-request worker). Same rules:
+    alert types only, never raises, and gone subscriptions are removed.
+    """
+    if not settings.web_push_enabled:
+        return
+    if notification.get("type") not in ALERT_TYPES:
+        return
+    try:
+        subs = list(db[COLLECTION].find({"user_id": user_id}).limit(50))
+    except Exception as exc:
+        logger.warning("web push lookup failed: %s", exc)
+        return
+
+    payload = {
+        "id": notification.get("id", ""),
+        "type": notification.get("type", "info"),
+        "title": notification.get("title", "mediaERP"),
+        "message": notification.get("message", ""),
+        "metadata": notification.get("metadata", {}),
+    }
+    for sub in subs:
+        status = _send_one_sync(sub, payload)
+        if status in (404, 410):
+            db[COLLECTION].delete_one({"_id": sub["_id"]})
         elif status:
             logger.warning("web push rejected (%s) for %s", status, sub.get("endpoint", "")[:60])

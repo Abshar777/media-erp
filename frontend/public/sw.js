@@ -108,6 +108,7 @@ self.addEventListener("notificationclick", (event) => {
   const taskId = (d.metadata && d.metadata.task_id) || "";
   let path = "/dashboard";
   if (d.type === "mention") path = "/chat";
+  else if (d.type === "fund_request") path = "/fund-requests";
   else if (taskId) path = "/projects";
 
   event.waitUntil(
