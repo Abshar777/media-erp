@@ -11,6 +11,7 @@ import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { useNotificationSocket } from "@/hooks/useNotificationSocket";
 import { useOnboardingStatus, useCompleteOnboarding, useStopImpersonation } from "@/hooks/useAuth";
+import { RootPortalHistoryBridge } from "@/components/RootPortalHistoryBridge";
 
 export default function DashboardLayout({
   children,
@@ -70,6 +71,7 @@ export default function DashboardLayout({
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
+      <RootPortalHistoryBridge />
       {/* Impersonation banner — full-width amber strip when active */}
       <AnimatePresence>
         {originalAuth && (
