@@ -20,6 +20,9 @@ export type NotificationType =
   | "sync_error"
   // ── Fund requests ─────────────────────────────────────────────────────────
   | "fund_request"        // finance approved, rejected or refused your request
+  // ── Ad reports ────────────────────────────────────────────────────────────
+  | "ad_report_due"       // a day's Meta numbers are missing (→ the assignee)
+  | "ad_report_overdue"   // still missing at the escalation time (→ assignee + leader)
   // ── Generic ───────────────────────────────────────────────────────────────
   | "info";
 

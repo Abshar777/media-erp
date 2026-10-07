@@ -21,6 +21,8 @@ const ALERT_TYPES = new Set<string>([
   "pending_review",   // something needs your approval
   "task_reedit",      // your work came back
   "fund_request",     // finance approved or rejected your request
+  "ad_report_due",    // today's ad numbers are missing
+  "ad_report_overdue",
 ]);
 
 const PREF_KEY = "notify:desktop";

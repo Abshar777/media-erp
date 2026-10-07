@@ -129,6 +129,13 @@ async def create_indexes() -> None:
     await db["email_logs"].create_index([("created_at", DESCENDING)])
     await db["email_logs"].create_index([("status", ASCENDING), ("created_at", DESCENDING)])
     await db["email_logs"].create_index([("category", ASCENDING), ("created_at", DESCENDING)])
+    # repeating tasks — includes the partial unique index that stops two workers
+    # creating the same copy twice (see services/recurrence.py)
+    from app.services.recurrence import ensure_indexes as _ensure_recurrence_indexes
+    await _ensure_recurrence_indexes(db)
+    # ad reports — one row per report per day, and the exactly-once reminder ledger
+    from app.services.ad_report_service import ensure_indexes as _ensure_ad_report_indexes
+    await _ensure_ad_report_indexes(db)
     # fund_requests — asks to finance for money out of Marketing's allocation
     await db["fund_requests"].create_index([("requested_by.id", ASCENDING), ("created_at", DESCENDING)])
     await db["fund_requests"].create_index([("status", ASCENDING), ("next_attempt_at", ASCENDING)])

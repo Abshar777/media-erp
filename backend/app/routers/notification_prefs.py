@@ -13,6 +13,7 @@ _ALL_TYPES = [
     "pending_review", "team_task_assigned", "task_started", "task_break",
     "task_transferred", "mention",
     "verify_requested", "verify_rejected", "verify_passed", "verify_removed",
+    "ad_report_due", "ad_report_overdue",
 ]
 
 

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 
@@ -30,6 +30,38 @@ class CreateTaskRequest(BaseModel):
     # is added — see add_task.
     verify_users: Optional[list[str]] = None
     verify_teams: Optional[list[str]] = None
+
+
+class RepeatSpec(BaseModel):
+    """How a task repeats. Dates are IST calendar days — see services/recurrence.py."""
+    frequency: Literal["daily", "weekly", "monthly"]
+    # Copies in total, today's included. None = until someone stops it.
+    count: Optional[int] = None
+    # Each copy is due this many days after its own date (0 = same day).
+    due_offset_days: int = 0
+
+
+class BatchCreateRequest(CreateTaskRequest):
+    """
+    One task for several people, optionally repeating.
+
+    Each assignee gets their OWN copy — every per-person feature (timer, status,
+    approval, verification, reports) keys on a single assigned_to, so a task
+    shared by several people would break them all. `assigned_to` and
+    `assigned_to_name` from the parent model are ignored here.
+    """
+    assignees: list[str]
+    repeat: Optional[RepeatSpec] = None
+
+
+class UpdateRecurringRequest(BaseModel):
+    """Pause / resume / stop a series, or edit what its FUTURE copies look like."""
+    action: Optional[Literal["pause", "resume", "stop"]] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[str] = None
+    assignees: Optional[list[str]] = None
+    due_offset_days: Optional[int] = None
 
 
 class UpdateTaskRequest(BaseModel):

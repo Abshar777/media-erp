@@ -139,6 +139,11 @@ async def _send_email_if_opted_in(
 
 
 def _notif_email_html(title: str, message: str) -> str:
+    # Titles and messages carry user-typed text (task titles, report names,
+    # people's names). Escape them so nobody can put a link or markup into a
+    # mediaERP email by naming a task "<a href=…>Verify your account</a>".
+    from html import escape
+    title, message = escape(title or ""), escape(message or "")
     return f"""<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,sans-serif;">

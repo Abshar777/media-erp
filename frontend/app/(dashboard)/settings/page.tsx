@@ -53,6 +53,7 @@ const NOTIF_DEFS: Record<NotifCategory, NotifDef[]> = {
     { key: "task_approved",     label: "Task Approved",       desc: "When your task is approved by a leader" },
     { key: "task_reedit",       label: "Sent for Revision",   desc: "When your task is returned for revision" },
     { key: "due_date_reminder", label: "Due Date Reminder",   desc: "When a task is due the next day" },
+    { key: "ad_report_due",     label: "Ad Report Reminder",  desc: "When a day's ad numbers are still missing" },
   ],
   leader: [
     { key: "team_task_assigned", label: "New Team Task",     desc: "When new work is assigned to your team" },
@@ -61,6 +62,7 @@ const NOTIF_DEFS: Record<NotifCategory, NotifDef[]> = {
     { key: "task_reedit",        label: "Sent for Revision", desc: "When a task is returned to a member for revision" },
     { key: "task_started",       label: "Task Started",      desc: "When a team member begins working on a task" },
     { key: "task_break",         label: "Task Paused",       desc: "When a team member takes a break on a task" },
+    { key: "ad_report_overdue",  label: "Ad Numbers Missing", desc: "When a member still hasn't entered a day's ad numbers" },
   ],
   elevated: [
     { key: "team_task_assigned", label: "Task Assigned",     desc: "When any task is assigned to a team" },

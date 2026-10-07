@@ -127,8 +127,11 @@ async def save_message(
     task_ids: list | None = None,
     mention_user_ids: list | None = None,
     reply_to: dict | None = None,
+    db=None,
 ) -> dict:
-    db = get_db()
+    # `db` lets a background thread pass its own handle: the global client is
+    # bound to the main event loop and fails from any other loop.
+    db = db if db is not None else get_db()
     doc = {
         "from_user_id": from_user_id,
         "to_user_id": to_user_id,
@@ -146,11 +149,11 @@ async def save_message(
     return doc
 
 
-async def resolve_task_snapshots(task_ids: list[str]) -> list[dict]:
+async def resolve_task_snapshots(task_ids: list[str], db=None) -> list[dict]:
     """Return live {id, title, status, priority} snapshots for a set of task ids."""
     if not task_ids:
         return []
-    db = get_db()
+    db = db if db is not None else get_db()
     oids = [ObjectId(t) for t in task_ids if ObjectId.is_valid(t)]
     if not oids:
         return []

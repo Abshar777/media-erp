@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle, Calendar, CheckCircle2, Circle,
   ClipboardCheck, Clock, FileClock, Kanban,
-  Layers, Loader2, PauseCircle, RotateCcw, Users, Zap,
+  Layers, Loader2, PauseCircle, RotateCcw, Users, X, Zap,
 } from "lucide-react";
 import Link from "next/link";
 import { useTasks } from "@/hooks/useProjects";
 import { useTeams } from "@/hooks/useTeams";
+import { MemberScopePicker, type ScopeGroup, type ScopeMember } from "@/components/dashboard/MemberScopePicker";
+import { AdReportsBanner } from "@/components/ad-reports/AdReportsBanner";
 import { useAuthStore } from "@/stores/authStore";
 import { BOARD_COLUMNS, isTaskOverdue, assigneeLabel } from "@/types/project";
 import type { Task } from "@/types/project";
@@ -137,13 +139,122 @@ function TaskRow({ task }: { task: Task }) {
   );
 }
 
+// ── Member scope ──────────────────────────────────────────────────────────────
+
+/** Roles the backend lets browse anyone (see projects._resolve_visibility). */
+const ELEVATED_ROLES = new Set(["Super Admin", "Admin", "Coordinator"]);
+
+/** URL query key that carries whose overview is shown. */
+const MEMBER_PARAM = "member";
+
+function readMemberParam(): string {
+  // Read once on mount. A lazy initializer keeps us clear of useSearchParams'
+  // Suspense requirement — the same approach the Projects page uses.
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get(MEMBER_PARAM) ?? "";
+}
+
+function writeMemberParam(id: string) {
+  // replaceState, not pushState: a scope filter is not a page, so Back should
+  // leave the Overview rather than step through every person you looked at.
+  // Next.js syncs native history calls with its router.
+  const url = new URL(window.location.href);
+  if (id) url.searchParams.set(MEMBER_PARAM, id);
+  else url.searchParams.delete(MEMBER_PARAM);
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+}
+
+const firstNameOf = (name: string) => name.trim().split(/\s+/)[0] || name;
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const user      = useAuthStore(s => s.user);
   const firstName = user?.name?.split(" ")[0] ?? "there";
 
-  const { data: tasks = [], isLoading } = useTasks({});
-  const { data: teams = [] } = useTeams();
+  const { data: teams = [], isLoading: teamsLoading } = useTeams();
+
+  // ── Who can be browsed ───────────────────────────────────────────────────
+  // This must mirror the backend EXACTLY. It honours member_id only for an
+  // elevated role or the "Team Leader" role. An Employee-role user who happens
+  // to lead a team gets plain "own" visibility, so offering them the picker
+  // would show "Viewing Amith" over their own tasks.
+  const roleName = user?.role?.role_name ?? "";
+  const isElevated = ELEVATED_ROLES.has(roleName);
+  const isTeamLeaderRole = roleName === "Team Leader";
+
+  const scopeTeams = useMemo(() => {
+    if (isElevated) return teams;
+    if (isTeamLeaderRole) return teams.filter(t => t.my_role === "leader");
+    return [];
+  }, [teams, isElevated, isTeamLeaderRole]);
+
+  // Each person is listed under EVERY team they're in. Deduping across teams
+  // ("first team wins") was tried and is wrong: when every member of a team
+  // also belongs to a team listed earlier, that team's group comes out empty
+  // and vanishes from the picker — and searching by its name finds nothing.
+  // The team header above each row makes a repeat obviously the same person,
+  // and picking either row selects the same id.
+  const memberGroups: ScopeGroup[] = useMemo(() => {
+    return scopeTeams
+      .map(team => {
+        const members: ScopeMember[] = [];
+        for (const m of team.members ?? []) {
+          if (m.user_id === user?.id) continue;
+          members.push({
+            id: m.user_id,
+            name: m.name || m.email || "Unnamed member",
+            designation: m.designation,
+            role: m.role,
+          });
+        }
+        members.sort((a, b) => a.name.localeCompare(b.name));
+        return { id: team.id, name: team.name, color: team.color, members };
+      })
+      .filter(g => g.members.length > 0);
+  }, [scopeTeams, user?.id]);
+
+  const memberIndex = useMemo(() => {
+    const map = new Map<string, ScopeMember>();
+    for (const g of memberGroups) for (const m of g.members) map.set(m.id, m);
+    return map;
+  }, [memberGroups]);
+
+  const canViewMembers = memberGroups.length > 0;
+
+  // ── Selected member (URL-backed) ─────────────────────────────────────────
+  const [memberParam, setMemberParam] = useState<string>(readMemberParam);
+
+  const selectMember = useCallback((id: string) => {
+    setMemberParam(id);
+    writeMemberParam(id);
+  }, []);
+
+  // A hand-edited or stale ?member= that isn't one of yours falls back to your
+  // own overview. The backend enforces this too; this keeps the UI honest.
+  useEffect(() => {
+    if (teamsLoading || !memberParam) return;
+    if (!memberIndex.has(memberParam)) selectMember("");
+  }, [teamsLoading, memberParam, memberIndex, selectMember]);
+
+  const viewingMember = memberParam ? memberIndex.get(memberParam) ?? null : null;
+
+  // Fetch in parallel with teams rather than waiting on them: the common case
+  // (a valid id from a shared link) loads faster, and the backend refuses
+  // anyone who isn't yours regardless.
+  const { data: tasks = [], isLoading: tasksLoading } = useTasks(
+    memberParam ? { member_id: memberParam } : {}
+  );
+
+  // Never show one person's numbers under another's name: while a ?member= is
+  // unresolved (teams still loading, or about to be rejected), show loading.
+  const isLoading = tasksLoading || (!!memberParam && !viewingMember);
+
+  const memberTeams = useMemo(
+    () => viewingMember
+      ? scopeTeams.filter(t => t.members?.some(m => m.user_id === viewingMember.id))
+      : [],
+    [scopeTeams, viewingMember]
+  );
 
   const hour     = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -200,18 +311,62 @@ export default function DashboardPage() {
     <div className="space-y-6 pb-6">
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* The scope picker sits on the greeting's row: it changes the whole page,
+          so it belongs above everything it affects, and sharing the row keeps
+          the KPI cards above the fold. Stacks under the greeting on mobile. */}
       <motion.div
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
+        className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
       >
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {greeting}, {firstName} 👋
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Here&apos;s what&apos;s happening across your media projects today.
-        </p>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {greeting}, {firstName} 👋
+          </h1>
+          {viewingMember ? (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+              <span>
+                Viewing <span className="font-semibold text-foreground">{viewingMember.name}</span>&apos;s overview
+              </span>
+              {memberTeams.length > 0 && (
+                <span className="flex items-center gap-1.5">
+                  <span aria-hidden>·</span>
+                  {memberTeams.map(t => (
+                    <span key={t.id} className="inline-flex items-center gap-1">
+                      <span className="size-1.5 rounded-full" style={{ background: t.color || "#6366f1" }} />
+                      {t.name}
+                    </span>
+                  ))}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => selectMember("")}
+                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+              >
+                <X className="size-3" /> Back to mine
+              </button>
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Here&apos;s what&apos;s happening across your media projects today.
+            </p>
+          )}
+        </div>
+
+        {canViewMembers && (
+          <MemberScopePicker
+            groups={memberGroups}
+            value={viewingMember ? viewingMember.id : ""}
+            onChange={selectMember}
+            className="sm:shrink-0"
+          />
+        )}
       </motion.div>
+
+      {/* Only when one of *your* ad reports is waiting for numbers. */}
+      {!viewingMember && <AdReportsBanner />}
 
       {/* ── KPI Cards ──────────────────────────────────────────────────────── */}
       {isLoading ? (
@@ -291,7 +446,9 @@ export default function DashboardPage() {
           {isLoading ? (
             <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
           ) : recentTasks.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No tasks yet.</p>
+            <p className="text-sm text-muted-foreground text-center py-8">
+              {viewingMember ? `${firstNameOf(viewingMember.name)} has no tasks yet.` : "No tasks yet."}
+            </p>
           ) : (
             <div>{recentTasks.map(t => <TaskRow key={t.id} task={t} />)}</div>
           )}
@@ -320,13 +477,16 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Team summary (shows if user has teams) ─────────────────────────── */}
-      {teams.length > 0 && (
+      {/* Follows the scope: when viewing someone, show the teams you share with
+          them, so each card's numbers are that person's work in that team. */}
+      {(viewingMember ? memberTeams : teams).length > 0 && (
         <div className="rounded-xl border bg-card p-5 shadow-sm">
           <p className="text-sm font-semibold mb-4 flex items-center gap-2">
-            <Users className="size-4 text-primary" /> My Teams
+            <Users className="size-4 text-primary" />
+            {viewingMember ? `${firstNameOf(viewingMember.name)}'s Teams` : "My Teams"}
           </p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {teams.slice(0, 6).map(team => {
+            {(viewingMember ? memberTeams : teams).slice(0, 6).map(team => {
               const teamTasks   = tasks.filter(t => t.team_id === team.id);
               const teamApproved = teamTasks.filter(t => t.status === "approved").length;
               const teamActive   = teamTasks.filter(t => t.status === "started").length;

@@ -33,11 +33,14 @@ async def _send_dm(db, actor_id: str, to_id: str, content: str, task_id: str) ->
     """Persist a DM from actor→recipient with a task reference, and push if online."""
     if not to_id or to_id == actor_id:
         return
-    doc = await save_message(actor_id, to_id, content, task_ids=[task_id] if task_id else None)
+    # Pass our own handle: the repeating-task scheduler calls this from its own
+    # thread and event loop, where the global client raises "attached to a
+    # different loop" — which used to cut the DM loop short after one message.
+    doc = await save_message(actor_id, to_id, content, task_ids=[task_id] if task_id else None, db=db)
     try:
         # Lazy import to avoid a circular import with the chat router
         from app.routers.chat import manager
-        snapshots = await resolve_task_snapshots([task_id]) if task_id else []
+        snapshots = await resolve_task_snapshots([task_id], db=db) if task_id else []
         envelope = {"type": "message", **message_to_dict(doc), "tasks": snapshots}
         await manager.send(to_id, envelope)
         await manager.send(actor_id, envelope)  # echo into the sender's thread too

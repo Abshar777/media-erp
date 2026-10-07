@@ -2,12 +2,15 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Paperclip, Link } from "lucide-react";
+import { X, Plus, Paperclip, Link, UserPlus, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useCreateTask } from "@/hooks/useProjects";
+import { useCreateTask, useCreateTaskBatch } from "@/hooks/useProjects";
 import { FileUploader } from "@/components/shared/FileUploader";
-import { useAllTeams, useTeam, useAssignableUsers } from "@/hooks/useTeams";
+import { useAllTeams, useTeam, useTeams, useAssignableUsers } from "@/hooks/useTeams";
 import { VerifierPicker } from "@/components/projects/VerifierPicker";
+import { UserPicker } from "@/components/teams/UserPicker";
+import { RepeatField, REPEAT_DEFAULT, type RepeatValue } from "@/components/projects/RepeatField";
+import { istTodayKey } from "@/lib/datetime";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import { useAuthStore } from "@/stores/authStore";
 import type { TaskPriority, TaskStatus, Attachment } from "@/types/project";
@@ -23,12 +26,23 @@ interface Props {
 
 export function AddTaskModal({ open, onClose, defaultStatus = "pending", defaultTeamId = "" }: Props) {
   const create = useCreateTask();
+  const createBatch = useCreateTaskBatch();
 
   const [title, setTitle]           = useState("");
   const [description, setDesc]      = useState("");
   const [priority, setPriority]     = useState<TaskPriority>("medium");
   const [teamId, setTeamId]         = useState(defaultTeamId);
-  const [assignedTo, setAssignedTo] = useState("");
+  // Several people may be picked; each gets their own copy (see POST /projects/batch).
+  const [assignees, setAssignees]   = useState<string[]>([]);
+  // The rules below (approver warning, default verifier, self-assign) were
+  // written for one assignee; they read the first, which is exact for the
+  // common single-person case. The server applies them per copy regardless.
+  const assignedTo = assignees[0] ?? "";
+  // "first": open until the first pick, then collapses — one click for the
+  // usual single assignee. "multi": opened via "Add more", stays open.
+  const [pickerMode, setPickerMode] = useState<"first" | "multi" | "closed">("first");
+  const [repeat, setRepeat]         = useState<RepeatValue>(REPEAT_DEFAULT);
+  const repeating = repeat.frequency !== "once";
   const [approverId, setApproverId] = useState("");
   const [dueDate, setDueDate]       = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -105,6 +119,36 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
     return scoped.length > 0 ? scoped : all;
   }, [directory, teamId, teamDetail]);
 
+  // Same list as assigneeOptions, but as full user records for UserPicker.
+  const assigneeUsers = useMemo(() => {
+    if (!teamId || !teamDetail?.members) return directory;
+    const inTeam = new Set(teamDetail.members.map((m) => m.user_id));
+    const scoped = directory.filter((u) => inTeam.has(u.id));
+    return scoped.length > 0 ? scoped : directory;
+  }, [directory, teamId, teamDetail]);
+
+  const nameOf = (id: string) => {
+    const u = directory.find((x) => x.id === id);
+    return u?.name || u?.email || "Unknown";
+  };
+
+  function toggleAssignee(id: string) {
+    setAssignees((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    if (pickerMode === "first") setPickerMode("closed");
+  }
+
+  // Repeating keeps assigning work on someone's behalf, so — like naming an
+  // approver — it's for team leaders and admin roles. Mirrors the server rule
+  // (recurrence.can_create_series → workflow.can_assign_to_others).
+  const canRepeat = isElevated || isLeaderOfTeam;
+  const { data: myTeams = [] } = useTeams();
+  const leadsAnyTeam = myTeams.some((t) => t.my_role === "leader");
+  useEffect(() => {
+    // e.g. switching to a team you don't lead: drop back to a one-off task
+    // rather than submit something the server will refuse.
+    if (!canRepeat && repeating) setRepeat((r) => ({ ...r, frequency: "once" }));
+  }, [canRepeat, repeating]);
+
   // Approver candidates come from the team's own member list — the server
   // rejects anyone outside it (workflow.is_team_member).
   const approverOptions = useMemo(() => {
@@ -120,7 +164,8 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   function reset() {
     setTitle(""); setDesc(""); setPriority("medium");
     setTeamId(defaultTeamId);
-    setAssignedTo(""); setApproverId(""); setDueDate(""); setAttachments([]);
+    setAssignees([]); setPickerMode("first"); setRepeat(REPEAT_DEFAULT);
+    setApproverId(""); setDueDate(""); setAttachments([]);
     setShowLinkForm(false); setLinkUrl(""); setLinkLabel("");
     setVerifyUsers([]); setVerifyTeams([]); setVerifyTouched(false);
   }
@@ -147,14 +192,26 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   // needed only when the work is for someone else — it is the board their
   // leader reviews. Taking something on yourself needs no team, so an employee
   // on no team can still raise their own work. Mirrors POST /projects.
-  const finalAssigneeId = assignedTo;
-  const isSelfAssigned = !!finalAssigneeId && finalAssigneeId === me?.id;
+  // "Just me": no team needed. Anyone else in the list makes a team required —
+  // the same rule the server applies (raise_task, and up front in /batch).
+  const isSelfAssigned = assignees.length === 1 && assignees[0] === me?.id;
   const missing: string[] = [];
   if (!title.trim())                    missing.push("a task name");
   if (!teamId && !isSelfAssigned)       missing.push("a team");
-  if (!finalAssigneeId)                 missing.push("an assignee");
-  if (!dueDate)                         missing.push("a due date");
+  if (assignees.length === 0)           missing.push("an assignee");
+  // A repeating task's due dates come from the schedule ("each copy due…").
+  if (!repeating && !dueDate)           missing.push("a due date");
   const canSubmit = missing.length === 0;
+  const pending = create.isPending || createBatch.isPending;
+  const useBatch = assignees.length > 1 || repeating;
+
+  const submitLabel = pending
+    ? "Creating…"
+    : repeating
+    ? "Start repeating"
+    : assignees.length > 1
+    ? `Create ${assignees.length} tasks`
+    : "Create Task";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -162,6 +219,46 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
       toast.error(`Please add ${missing.join(", ")}.`);
       return;
     }
+
+    // Shared by both paths.
+    const common = {
+      title: title.trim(),
+      description,
+      priority,
+      status: "pending" as const,
+      team_id: teamId || null,
+      attachments,
+      verify_users: verifyUsers,
+      verify_teams: verifyTeams,
+      ...(canSetApprover && approverId
+        ? {
+            approver_id: approverId,
+            approver_name: approverOptions.find((o) => o.id === approverId)?.name ?? "",
+          }
+        : {}),
+    };
+
+    // Several people, or a repeat → the batch endpoint. Every copy still goes
+    // through the same server-side factory as a single task.
+    if (useBatch) {
+      await createBatch.mutateAsync({
+        ...common,
+        assignees,
+        // Ignored by the server when repeating — each copy's due date comes from the schedule.
+        due_date: repeating ? null : dueDate || null,
+        repeat: repeating
+          ? {
+              frequency: repeat.frequency as Exclude<RepeatValue["frequency"], "once">,
+              count: repeat.untilStopped ? null : repeat.count,
+              due_offset_days: repeat.dueOffset,
+            }
+          : null,
+      });
+      close();
+      return;
+    }
+
+    // One person, once → the original path, untouched.
     const finalAssignee = assignedTo;
     const finalAssigneeName = assigneeOptions.find(o => o.id === assignedTo)?.name ?? "";
     await create.mutateAsync({
@@ -267,7 +364,8 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                     onChange={e => {
                       setTeamId(e.target.value);
                       // Whoever was picked may not be on the newly chosen team.
-                      setAssignedTo("");
+                      setAssignees([]);
+                      setPickerMode("first");
                     }}
                     className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
                   >
@@ -304,26 +402,78 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                 </div>
               </div>
 
-              {/* Assigned To + Due Date */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">Assigned To *</label>
-                  {/* Every role may assign to anyone, so there is no longer a
-                      permission fallback here — and the list no longer depends
-                      on which team is selected. */}
-                  <select
-                    value={assignedTo}
-                    onChange={e => setAssignedTo(e.target.value)}
-                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
-                  >
-                    <option value="">Unassigned</option>
-                    {assigneeOptions.map(o => (
-                      <option key={o.id} value={o.id}>
-                        {o.name}{o.designation ? ` — ${o.designation}` : ""}
-                      </option>
+              {/* Assign to — one or several people. Chips show who's picked;
+                  the picker opens until the first pick (one click for the
+                  usual single assignee) and "Add more" reopens it for several. */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Assign to *</label>
+                {assignees.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {assignees.map((id) => (
+                      <span
+                        key={id}
+                        className="inline-flex items-center gap-1.5 rounded-full border bg-muted/40 py-0.5 pl-1 pr-1.5 text-xs font-medium"
+                      >
+                        <span className="flex size-5 items-center justify-center rounded-full bg-primary/15 text-[9px] font-bold text-primary">
+                          {nameOf(id).split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+                        </span>
+                        {nameOf(id)}{id === me?.id && <span className="text-muted-foreground">(you)</span>}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAssignees((p) => p.filter((x) => x !== id));
+                            if (assignees.length === 1) setPickerMode("first");
+                          }}
+                          className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-label={`Remove ${nameOf(id)}`}
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </span>
                     ))}
-                  </select>
-                </div>
+                    {pickerMode === "closed" && (
+                      <button
+                        type="button"
+                        onClick={() => setPickerMode("multi")}
+                        className="inline-flex items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/5 transition-colors"
+                      >
+                        <UserPlus className="size-3" /> Add more
+                      </button>
+                    )}
+                  </div>
+                )}
+                {(pickerMode !== "closed" || assignees.length === 0) && (
+                  <div className="space-y-1.5">
+                    <UserPicker
+                      users={assigneeUsers}
+                      selectedIds={assignees}
+                      onToggle={toggleAssignee}
+                      placeholder="Search people…"
+                      maxHeightClass="max-h-44"
+                    />
+                    {pickerMode === "multi" && (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setPickerMode("closed")}
+                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/5"
+                        >
+                          <Check className="size-3" /> Done
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {assignees.length > 1 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Each person gets their own copy of this task — with their own timer, status and approval.
+                  </p>
+                )}
+              </div>
+
+              {/* Due date — a one-off task's own date. A repeating task's copies
+                  take theirs from the schedule ("Each copy due…" below). */}
+              {!repeating && (
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">Due Date *</label>
                   <input
@@ -333,7 +483,28 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                     className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
                   />
                 </div>
-              </div>
+              )}
+
+              {/* Repeat — right under the date, where repetition belongs. Only
+                  for those allowed to set it up, so nobody meets a refusal. */}
+              {canRepeat ? (
+                <RepeatField
+                  value={repeat}
+                  onChange={setRepeat}
+                  anchorISO={istTodayKey()}
+                  assigneeCount={assignees.length}
+                />
+              ) : leadsAnyTeam && (
+                // A leader who hasn't picked one of their teams yet: say where
+                // the option is rather than hide it — otherwise they may never
+                // learn tasks can repeat.
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-muted-foreground">Repeat</label>
+                  <p className="rounded-lg border border-dashed px-3 py-2 text-[11px] text-muted-foreground">
+                    Choose a team you lead above to make this task repeat daily, weekly or monthly.
+                  </p>
+                </div>
+              )}
 
               {/* Approver — leader/admin only, matching the server gate */}
               {canSetApprover && teamId && (
@@ -358,7 +529,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                     Lets a chosen member approve this task, not just team leaders.
                     Leaders keep their approval rights either way.
                   </p>
-                  {approverId && approverId === assignedTo && (
+                  {approverId && assignees.includes(approverId) && (
                     <p className="text-[11px] text-amber-600">
                       This person would approve their own work.
                     </p>
@@ -383,7 +554,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                   }))}
                   selectedTeams={verifyTeams}
                   selectedPeople={verifyUsers}
-                  excludePersonId={assignedTo}
+                  excludePersonId={assignees.length === 1 ? assignedTo : undefined}
                   onToggleTeam={(id) => {
                     setVerifyTouched(true);
                     setVerifyTeams((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
@@ -488,10 +659,10 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                 <Button
                   type="submit"
                   size="sm"
-                  disabled={!canSubmit || create.isPending}
+                  disabled={!canSubmit || pending}
                   title={canSubmit ? undefined : `Please add ${missing.join(", ")}`}
                 >
-                  {create.isPending ? "Creating…" : "Create Task"}
+                  {submitLabel}
                 </Button>
               </div>
             </form>

@@ -12,6 +12,7 @@ import { BOARD_COLUMNS, PRIORITY_META, allowedColumns } from "@/types/project";
 import { useTaskTimer, formatSeconds, formatSecondsHMS } from "@/hooks/useTaskTimer";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { VerificationBadge } from "./VerificationBadge";
+import { RepeatBadge } from "./RepeatBadge";
 import { ApproveRouteModal, ReeditModal, SubmitReviewModal } from "./ReviewActionModals";
 
 interface Props {
@@ -169,7 +170,10 @@ export function KanbanCard({ task, overlay = false }: Props) {
           On its own line rather than beside the title: the title is the one
           thing that must always be readable, and a badge sharing that row
           squeezed it to nothing on narrow columns. */}
-      <div className="pl-5 mt-1.5 empty:hidden">
+      {/* Repeating-copy badge shares the row; both render nothing on an
+          ordinary task, so empty:hidden keeps those cards unchanged. */}
+      <div className="pl-5 mt-1.5 flex flex-wrap items-center gap-1.5 empty:hidden">
+        <RepeatBadge task={task} />
         <VerificationBadge task={task} compact />
       </div>
 

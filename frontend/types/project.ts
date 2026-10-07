@@ -120,6 +120,10 @@ export interface Task {
   /** Screenshots handed in with the submission note, kept apart from
       `attachments` so the approver sees what this round of review is about. */
   submission_attachments?: Attachment[];
+  /** Present only on a copy of a repeating series (see services/recurrence.py). */
+  recurrence?: TaskRecurrence;
+  /** Shared by the copies created together for several people. */
+  batch_id?: string;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -147,6 +151,75 @@ export interface CreateTaskPayload {
    *  the server fills the latter with the creator (see add_task). */
   verify_users?: string[];
   verify_teams?: string[];
+}
+
+// ── Repeating tasks + multiple assignees ──────────────────────────────────────
+
+export type RepeatFrequency = "daily" | "weekly" | "monthly";
+
+/** Stamped on each copy of a repeating series. */
+export interface TaskRecurrence {
+  id: string;
+  frequency: RepeatFrequency;
+  /** Copy number, 1-based ("3 of 5"). */
+  index: number;
+  /** Copies in total, or null = until stopped. */
+  total: number | null;
+  /** This copy's date, YYYY-MM-DD (IST). */
+  date: string;
+}
+
+export interface RepeatSpec {
+  frequency: RepeatFrequency;
+  /** Copies in total, today's included. null = until stopped. */
+  count: number | null;
+  due_offset_days: number;
+}
+
+/** POST /projects/batch — one task for several people, optionally repeating. */
+export interface BatchCreatePayload extends Omit<CreateTaskPayload, "assigned_to" | "assigned_to_name"> {
+  assignees: string[];
+  repeat?: RepeatSpec | null;
+}
+
+export interface BatchCreateResult {
+  tasks: Task[];
+  errors: { user_id: string; name?: string; message: string }[];
+  series: RecurringSeries | null;
+}
+
+export type RecurringStatus = "active" | "paused" | "completed" | "stopped";
+
+export interface RecurringSeries {
+  id: string;
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  team_id: string | null;
+  assignees: { id: string; name: string }[];
+  frequency: RepeatFrequency;
+  anchor_date: string;
+  next_date: string | null;
+  occurrences_total: number | null;
+  occurrences_done: number;
+  due_offset_days: number;
+  status: RecurringStatus;
+  paused_reason: string;
+  last_errors: { user_id: string; message: string }[];
+  created_by: string;
+  created_by_name: string;
+  created_at: string;
+  updated_at: string;
+  can_manage?: boolean;
+}
+
+export interface UpdateRecurringPayload {
+  action?: "pause" | "resume" | "stop";
+  title?: string;
+  description?: string;
+  priority?: TaskPriority;
+  assignees?: string[];
+  due_offset_days?: number;
 }
 
 export interface UpdateTaskPayload {

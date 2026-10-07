@@ -166,6 +166,11 @@ async def list_tasks(
     # Widen a team filter to also match work that belongs to no team. Set when
     # browsing one person: see the note where it is applied.
     include_teamless: bool = False,
+    # Confine the result to these teams (plus teamless work). Set when a Team
+    # Leader browses one of their people with no single team chosen: they may
+    # see that person's work in the teams they lead them in, and nowhere else.
+    # None = no restriction, which keeps every other caller unchanged.
+    team_ids: list | None = None,
     # Visibility: "all" | "team" | "leader_teams" | "own"
     visibility: str = "all",
     user_id: str = "",
@@ -208,6 +213,19 @@ async def list_tasks(
             })
         else:
             query["team_id"] = team_id
+
+    # Multi-team confinement (Team Leader browsing a person across the teams
+    # they lead). Teamless work is included for the same reason as the
+    # include_teamless branch above — a personal task has no board, and hiding
+    # it would hide it from whoever has to approve it.
+    if team_ids is not None:
+        query.setdefault("$and", []).append({
+            "$or": [
+                {"team_id": {"$in": list(team_ids)}},
+                {"team_id": {"$in": ["", None]}},
+                {"team_id": {"$exists": False}},
+            ]
+        })
 
     # Visibility filter (role-based)
     if visibility == "own" and user_id:
@@ -333,6 +351,14 @@ async def create_task(db: AsyncIOMotorDatabase, data: dict) -> dict:
         "pipeline_node_id": data.get("pipeline_node_id") or None,
         "pipeline_parent_task_id": data.get("pipeline_parent_task_id") or None,
     }
+    # Only on tasks that are part of something larger, and only when set:
+    #   recurrence — this task is copy N of a repeating series (services/recurrence.py)
+    #   batch_id   — created together with copies for other people
+    # Absent, not null, on ordinary tasks — so their documents keep exactly the
+    # shape they always had, and the partial unique index on recurrence ignores them.
+    for key in ("recurrence", "batch_id"):
+        if data.get(key):
+            doc[key] = data[key]
     result = await db["project_tasks"].insert_one(doc)
     doc["_id"] = result.inserted_id
     return _serialize(doc)

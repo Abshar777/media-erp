@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import api from "@/lib/axios";
 import { BOARD_COLUMNS } from "@/types/project";
 import type {
+  BatchCreatePayload,
+  BatchCreateResult,
   CreateTaskPayload,
   ProjectFilters,
   Task,
@@ -265,6 +267,37 @@ export function useCreateTask() {
     },
     onError() {
       toast.error("Failed to create task");
+    },
+  });
+}
+
+/**
+ * One task for several people (each gets their own copy), optionally repeating.
+ * The form only uses this for 2+ people or a repeat — one person with no
+ * repeat still goes through useCreateTask / POST /projects, unchanged.
+ */
+export function useCreateTaskBatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: BatchCreatePayload) => {
+      const { data } = await api.post<{ success: boolean; data: BatchCreateResult; message: string }>(
+        "/projects/batch",
+        payload
+      );
+      return { ...data.data, message: data.message };
+    },
+    onSuccess(result) {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      toast.success(result.message || "Tasks created!");
+      // Somebody was skipped (e.g. deactivated mid-way) — say who, don't bury it.
+      if (result.errors?.length) {
+        const who = result.errors.map((e) => e.name || "someone").join(", ");
+        toast.warning(`Not created for ${who}: ${result.errors[0].message}`);
+      }
+    },
+    onError(err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(msg || "Failed to create tasks");
     },
   });
 }

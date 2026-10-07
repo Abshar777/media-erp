@@ -21,7 +21,12 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
-from app.schemas.project import CreateTaskRequest, UpdateTaskRequest
+from app.schemas.project import (
+    BatchCreateRequest,
+    CreateTaskRequest,
+    UpdateRecurringRequest,
+    UpdateTaskRequest,
+)
 from app.services.project_service import (
     create_task,
     delete_task,
@@ -254,6 +259,27 @@ async def _resolve_visibility(current_user: dict, team_id: str, db: AsyncIOMotor
     return "own", uid, None
 
 
+async def _teams_shared_with(
+    db: AsyncIOMotorDatabase, team_ids: list[str], member_id: str
+) -> list[str]:
+    """
+    Which of `team_ids` have `member_id` as a member.
+
+    This is the authorisation check for a Team Leader browsing a person: a
+    leader may open only the people they lead, and see them only inside the
+    teams they lead them in. An empty result means "not one of yours".
+    """
+    from bson import ObjectId
+
+    oids = [ObjectId(t) for t in team_ids if t and ObjectId.is_valid(t)]
+    if not oids or not member_id:
+        return []
+    docs = await db["teams"].find(
+        {"_id": {"$in": oids}, "members.user_id": member_id}, {"_id": 1}
+    ).to_list(500)
+    return [str(d["_id"]) for d in docs]
+
+
 @router.get("")
 async def get_tasks(
     search: str = Query(default=""),
@@ -278,10 +304,32 @@ async def get_tasks(
     # Member filter — only allowed for elevated roles or team leaders.
     # A regular member is locked to their own tasks regardless of this param.
     browsing_member = False
+    member_team_ids: list[str] | None = None
     if member_id and visibility in ("all", "team", "leader_teams"):
+        if visibility in ("team", "leader_teams"):
+            # A Team Leader may browse only the people they lead. Before this
+            # check, a leader with no team_id could pass ANY user id and read
+            # that person's tasks across every team, including teams the leader
+            # has nothing to do with. Elevated roles ("all") already see
+            # everything, so they skip it.
+            scope_ids = [team_id] if visibility == "team" else (leader_team_ids or [])
+            shared = await _teams_shared_with(db, scope_ids, member_id)
+            if not shared:
+                # Answer exactly like "no tasks": an error would confirm the
+                # user exists, and this is not a question we answer.
+                return success_response(
+                    data=[],
+                    message="Tasks retrieved",
+                    meta={"total": 0, "returned": 0, "page": page, "limit": limit,
+                          "pages": 1, "has_more": False, "truncated": False},
+                )
+            if visibility == "leader_teams":
+                # No single team chosen: confine to every team they share.
+                # ("team" is already confined by the team_id filter itself.)
+                member_team_ids = shared
         visibility       = "own"   # reuse own-filter logic
         uid              = member_id
-        leader_team_ids  = None    # clear team scope
+        leader_team_ids  = None    # replaced by member_team_ids / team_id
         browsing_member  = True
 
     # "Needs my approval" has to know which teams you lead, which visibility
@@ -300,6 +348,7 @@ async def get_tasks(
         status=status,
         priority=priority,
         include_teamless=browsing_member,
+        team_ids=member_team_ids,
         date_filter=date_filter,
         date_from=date_from,
         date_to=date_to,
@@ -347,117 +396,239 @@ async def add_task(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    from app.services import workflow
-    from bson import ObjectId
+    # Every task-creation rule lives in the factory, so the batch endpoint and
+    # the repeating-task scheduler create tasks by exactly the same rules.
+    from app.services.task_factory import TaskRaiseError, raise_task
 
-    data = body.model_dump()
-    data["created_by"] = str(current_user["_id"])
-    data["actor_name"] = current_user.get("name", "")
-    data["status"] = "pending"  # new work always enters the workflow at Pending
+    try:
+        task = await raise_task(db, body.model_dump(), current_user)
+    except TaskRaiseError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+    return success_response(data=task, message="Task created", status_code=201)
 
-    # ── Required fields ───────────────────────────────────────────────────────
-    # A task is only actionable when someone owns it, in a team, by a date.
-    # Enforced here (not just in the UI) so the API can't create orphan work.
-    if not (data.get("title") or "").strip():
-        return error_response("Task name is required.", status_code=422)
-    # A team is the home board a leader reviews, so raising work for someone
-    # else still needs one. Work you take on yourself does not: requiring a team
-    # meant an employee on no team could not create a single task, and nobody
-    # could jot down their own to-do without filing it under someone's board.
-    if not (data.get("team_id") or "").strip():
-        if (data.get("assigned_to") or "").strip() != str(current_user["_id"]):
-            return error_response("Please select a team.", status_code=422)
-    if not (data.get("due_date") or "").strip():
-        return error_response("Please set a due date.", status_code=422)
 
-    # Any member of the team may raise work for a colleague, same as an admin or
-    # coordinator. The approver gate below stays stricter on purpose.
-    if not await workflow.can_assign_task(current_user, data.get("team_id"), db):
-        data["assigned_to"] = str(current_user["_id"])
-        data["assigned_to_name"] = current_user.get("name", "")
+# ── Multiple assignees + repeating tasks ─────────────────────────────────────
+# Registered BEFORE "/{task_id}" routes so "recurring" is never read as an id.
 
-    assignee = (data.get("assigned_to") or "").strip()
-    if not assignee:
-        return error_response("Please assign this task to someone.", status_code=422)
+@router.post("/batch", status_code=201)
+async def add_task_batch(
+    body: BatchCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    One task for several people — each gets their own copy — optionally
+    repeating daily / weekly / monthly. Every copy goes through
+    task_factory.raise_task, the same path as POST /projects.
 
-    # The assignee no longer has to belong to the chosen team — work is raised
-    # across team lines. They still see it: "own" visibility matches on
-    # assigned_to, not on team. The team remains the task's home board, which is
-    # what the team's leader reviews.
-    #
-    # Still verified to exist, so a bad id can't create a task nobody holds.
-    if ObjectId.is_valid(data["team_id"]):
-        team = await db["teams"].find_one({"_id": ObjectId(data["team_id"])}, {"members": 1})
-        if not team:
-            return error_response("That team no longer exists.", status_code=422)
-    if not ObjectId.is_valid(assignee) or not await db["users"].find_one(
-        {"_id": ObjectId(assignee)}, {"_id": 1}
-    ):
-        return error_response("That user no longer exists.", status_code=422)
+    The form only calls this for 2+ people or a repeat; one person with no
+    repeat still uses POST /projects, unchanged.
+    """
+    import uuid
 
-    # ── Named approver ────────────────────────────────────────────────────────
-    # Designating an approver grants approval rights, so it is a leader/admin
-    # action. A member creating their own task must never be able to name
-    # themselves approver — that would let them approve their own work.
-    approver_id = (data.get("approver_id") or "").strip()
-    if approver_id:
-        if not await workflow.can_assign_to_others(current_user, data.get("team_id"), db):
-            return error_response(
-                "Only a team leader can choose who approves a task.", status_code=403
-            )
-        if not await workflow.is_team_member(db, data["team_id"], approver_id):
-            return error_response(
-                "The approver must be a leader or member of the selected team.",
-                status_code=422,
-            )
-        data["approver_id"] = approver_id
-    else:
-        data.pop("approver_id", None)
-        data.pop("approver_name", None)
+    from app.services import recurrence as rec
+    from app.services.task_factory import TaskRaiseError, raise_task
 
-    # ── Whoever raised the work checks the result ─────────────────────────────
-    # Unless they said otherwise, the creator is named a verifier, so nothing
-    # they asked for is approved without them having seen what came back.
-    #
-    # Skipped when they could approve it themselves: a leader who raises work
-    # for their own team already signs it off at the end, and asking them to
-    # verify first only makes them sign the same task twice.
-    #
-    # Raising work for yourself needs no special case — resolve_verifiers drops
-    # the assignee when the list is expanded, because signing off your own work
-    # is the thing verification exists to prevent.
-    # `is None` rather than falsy: an empty list is somebody saying "nobody",
-    # which is a decision and not the absence of one. Treating the two alike
-    # made the default impossible to remove.
-    if data.get("verify_users") is None and data.get("verify_teams") is None:
-        creator_may_approve = await workflow.can_approve(
-            current_user,
-            {
-                "team_id": data.get("team_id"),
-                "assigned_to": assignee,
-                "approver_id": data.get("approver_id", ""),
-            },
-            db,
+    assignees, names, err = await rec.validate_assignees(db, body.assignees)
+    if err:
+        return error_response(err, status_code=422)
+
+    template = body.model_dump(exclude={"assignees", "repeat", "assigned_to", "assigned_to_name"})
+    uid = str(current_user["_id"])
+
+    # Mirrors raise_task: work for anyone but yourself needs a team. Checked up
+    # front so a mixed list can't half-succeed (you first, everyone else refused).
+    if not (template.get("team_id") or "").strip() and any(a != uid for a in assignees):
+        return error_response("Please select a team.", status_code=422)
+
+    # ── Repeating ─────────────────────────────────────────────────────────────
+    if body.repeat:
+        r = body.repeat
+        msg = rec.validate_repeat(r.frequency, r.count, r.due_offset_days)
+        if msg:
+            return error_response(msg, status_code=422)
+        if not (template.get("title") or "").strip():
+            return error_response("Task name is required.", status_code=422)
+        if not await rec.can_create_series(current_user, template.get("team_id"), db):
+            return error_response("Only a team leader can set up repeating tasks.", status_code=403)
+
+        series, result = await rec.create_series(
+            db, template, assignees, r.frequency, r.count, r.due_offset_days, current_user
         )
-        if not creator_may_approve:
-            data["verify_users"] = [str(current_user["_id"])]
+        if not result["created"]:
+            # Nobody could get even the first copy — don't leave a series behind
+            # that would fail the same way every day.
+            await db["recurring_tasks"].delete_one({"_id": series["_id"]})
+            reason = result["paused_reason"] or "Could not create the task."
+            return error_response(reason, status_code=422)
+        n = len(result["created"])
+        return success_response(
+            data={"tasks": result["created"], "errors": result["errors"],
+                  "series": rec.serialize_series(series, names)},
+            message=f"Repeating task started — {n} task{'s' if n != 1 else ''} created today",
+            status_code=201,
+        )
 
-    task = await create_task(db, data)
-
-    await _fire_notifications(
-        db, task, "created",
-        str(current_user["_id"]),
-        current_user.get("name", ""),
+    # ── Once, several people ──────────────────────────────────────────────────
+    batch_id = uuid.uuid4().hex if len(assignees) > 1 else None
+    created, errors = [], []
+    for a in assignees:
+        data = dict(template)
+        data.update({"assigned_to": a, "assigned_to_name": names.get(a, "")})
+        if batch_id:
+            data["batch_id"] = batch_id
+        try:
+            created.append(await raise_task(db, data, current_user))
+        except TaskRaiseError as exc:
+            if not created:
+                # Failed on the first person: a problem with the task itself
+                # (title, team, approver…). Nothing was created — answer exactly
+                # as a single create would.
+                return error_response(exc.message, status_code=exc.status_code)
+            errors.append({"user_id": a, "name": names.get(a, ""), "message": exc.message})
+    n = len(created)
+    return success_response(
+        data={"tasks": created, "errors": errors, "series": None},
+        message=f"{n} task{'s' if n != 1 else ''} created",
+        status_code=201,
     )
 
-    # Chat DM: notify the assignee + creator when work is assigned on creation
-    if task.get("assigned_to"):
-        from app.services import chat_notify
-        await chat_notify.dm_task_assigned(
-            db, task, str(current_user["_id"]), current_user.get("name", "")
+
+async def _assignee_names(db: AsyncIOMotorDatabase, series_docs: list[dict]) -> dict[str, str]:
+    from bson import ObjectId
+    ids = {a for s in series_docs for a in s.get("assignees", []) if ObjectId.is_valid(a)}
+    if not ids:
+        return {}
+    users = await db["users"].find(
+        {"_id": {"$in": [ObjectId(i) for i in ids]}}, {"name": 1}
+    ).to_list(len(ids))
+    return {str(u["_id"]): u.get("name", "") for u in users}
+
+
+@router.get("/recurring")
+async def list_recurring(
+    status: str = Query(default=""),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Repeating series the caller can manage: their own, their teams', or all (admins)."""
+    from app.services import recurrence as rec
+
+    uid = str(current_user["_id"])
+    if rec._is_elevated(current_user):
+        query: dict = {}
+    else:
+        led = await db["teams"].find(
+            {"members": {"$elemMatch": {"user_id": uid, "role": "leader"}}}, {"_id": 1}
+        ).to_list(500)
+        query = {"$or": [{"created_by": uid}, {"team_id": {"$in": [str(t["_id"]) for t in led]}}]}
+    if status:
+        query["status"] = status
+    docs = await db["recurring_tasks"].find(query).sort("created_at", -1).to_list(500)
+    rank = {"active": 0, "paused": 1, "completed": 2, "stopped": 3}
+    docs.sort(key=lambda d: rank.get(d.get("status"), 9))      # stable: newest first within each
+    names = await _assignee_names(db, docs)
+    return success_response(data=[rec.serialize_series(d, names) for d in docs],
+                            message="Repeating tasks retrieved")
+
+
+@router.get("/recurring/{series_id}")
+async def get_recurring(
+    series_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """One series, for those a copy involves or who manage it; managing is checked on PATCH."""
+    from bson import ObjectId
+    from app.services import recurrence as rec
+
+    if not ObjectId.is_valid(series_id):
+        return error_response("Repeating task not found.", status_code=404)
+    s = await db["recurring_tasks"].find_one({"_id": ObjectId(series_id)})
+    # Same answer as a missing id, so a stranger can't confirm a series exists.
+    if not s or not await rec.can_view_series(current_user, s, db):
+        return error_response("Repeating task not found.", status_code=404)
+    data = rec.serialize_series(s, await _assignee_names(db, [s]))
+    data["can_manage"] = await rec.can_manage_series(current_user, s, db)
+    return success_response(data=data, message="Repeating task retrieved")
+
+
+@router.patch("/recurring/{series_id}")
+async def update_recurring(
+    series_id: str,
+    body: UpdateRecurringRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Pause / resume / stop, or edit FUTURE copies. Copies already created never change."""
+    from datetime import datetime, timezone
+    from bson import ObjectId
+    from app.services import recurrence as rec
+
+    if not ObjectId.is_valid(series_id):
+        return error_response("Repeating task not found.", status_code=404)
+    s = await db["recurring_tasks"].find_one({"_id": ObjectId(series_id)})
+    if not s:
+        return error_response("Repeating task not found.", status_code=404)
+    if not await rec.can_manage_series(current_user, s, db):
+        return error_response("You can't change this repeating task.", status_code=403)
+
+    ended = s.get("status") in ("completed", "stopped")
+    updates: dict = {}
+    if body.title is not None:
+        if not body.title.strip():
+            return error_response("Task name is required.", status_code=422)
+        updates["title"] = body.title.strip()
+    if body.description is not None:
+        updates["description"] = body.description
+    if body.priority is not None:
+        if body.priority not in ("low", "medium", "high"):
+            return error_response("Priority must be low, medium or high.", status_code=422)
+        updates["priority"] = body.priority
+    if body.due_offset_days is not None:
+        msg = rec.validate_repeat(s["frequency"], None, body.due_offset_days)
+        if msg:
+            return error_response(msg, status_code=422)
+        updates["due_offset_days"] = body.due_offset_days
+    if body.assignees is not None:
+        ids, _, err = await rec.validate_assignees(db, body.assignees)
+        if err:
+            return error_response(err, status_code=422)
+        updates["assignees"] = ids
+
+    if updates:
+        if ended:
+            return error_response("This repeating task has ended and can't be edited.", status_code=409)
+        updates["updated_at"] = datetime.now(timezone.utc)
+        await db["recurring_tasks"].update_one({"_id": s["_id"]}, {"$set": updates})
+        s = await db["recurring_tasks"].find_one({"_id": s["_id"]})
+
+    if body.action == "pause":
+        if s["status"] != "active":
+            return error_response("Only an active repeating task can be paused.", status_code=409)
+        await db["recurring_tasks"].update_one(
+            {"_id": s["_id"], "status": "active"},
+            {"$set": {"status": "paused",
+                      "paused_reason": f"Paused by {current_user.get('name', 'a leader')}",
+                      "updated_at": datetime.now(timezone.utc)}},
+        )
+    elif body.action == "resume":
+        if s["status"] != "paused":
+            return error_response("Only a paused repeating task can be resumed.", status_code=409)
+        await rec.resume_series(db, s)
+    elif body.action == "stop":
+        if ended:
+            return error_response("This repeating task has already ended.", status_code=409)
+        await db["recurring_tasks"].update_one(
+            {"_id": s["_id"]},
+            {"$set": {"status": "stopped", "next_date": None,
+                      "updated_at": datetime.now(timezone.utc)}},
         )
 
-    return success_response(data=task, message="Task created", status_code=201)
+    s = await db["recurring_tasks"].find_one({"_id": s["_id"]})
+    data = rec.serialize_series(s, await _assignee_names(db, [s]))
+    data["can_manage"] = True
+    return success_response(data=data, message="Repeating task updated")
 
 
 @router.get("/leader/queue")

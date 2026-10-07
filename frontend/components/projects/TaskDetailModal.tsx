@@ -19,6 +19,7 @@ import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
 import { TaskHistoryReport } from "@/components/projects/TaskHistoryReport";
 import { TransferTaskModal } from "@/components/projects/TransferTaskModal";
 import { VerifierPicker } from "@/components/projects/VerifierPicker";
+import { RecurrenceStrip } from "@/components/projects/RecurrenceStrip";
 import { useRemoveVerifier } from "@/hooks/useVerify";
 import { FileUploader } from "@/components/shared/FileUploader";
 import { GrowTextarea } from "@/components/shared/GrowTextarea";
@@ -546,6 +547,9 @@ export function TaskDetailModal({
                     <p className="text-sm font-medium truncate">{teamName || "—"}</p>
                   </div>
                 </div>
+
+                {/* Repeating series — renders nothing on an ordinary task */}
+                <RecurrenceStrip task={task} />
 
                 {/* Routed from provenance */}
                 {(task.former_assigned_to_name || task.former_team_name) && (

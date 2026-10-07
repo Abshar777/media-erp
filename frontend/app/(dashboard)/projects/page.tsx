@@ -2,11 +2,13 @@
 
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
-import { Kanban, LayoutList, Plus, Users, UserRound } from "lucide-react";
+import { Kanban, LayoutList, Plus, Repeat, Users, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { KanbanBoard } from "@/components/projects/KanbanBoard";
 import { TaskTable } from "@/components/projects/TaskTable";
 import { AddTaskModal } from "@/components/projects/AddTaskModal";
+import { RecurringDrawer } from "@/components/projects/RecurringDrawer";
+import { useRecurringList } from "@/hooks/useRecurring";
 import { ProjectFiltersBar } from "@/components/projects/ProjectFilters";
 import { useTasksPaged, useBoardColumns } from "@/hooks/useProjects";
 import { useTeams, useTeam } from "@/hooks/useTeams";
@@ -32,6 +34,20 @@ type ViewMode = "kanban" | "table";
 export default function ProjectsPage() {
   const [view, setView]         = useState<ViewMode>("kanban");
   const [addOpen, setAddOpen]   = useState(false);
+  // Repeating drawer. Opens straight onto one series when arriving from a
+  // task's "Manage" link (?repeating=<id>). Read once, like ?team_id= below.
+  const [repeatingFocus] = useState<string | null>(() =>
+    typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("repeating") : null
+  );
+  const [recurringOpen, setRecurringOpen] = useState<boolean>(() => !!repeatingFocus);
+  function closeRecurring() {
+    setRecurringOpen(false);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("repeating")) {
+      url.searchParams.delete("repeating");
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+  }
   // Initialise team_id from the ?team_id= URL param (client-only initializer
   // avoids the useSearchParams Suspense requirement).
   const [filters, setFilters]   = useState<ProjectFilters>(() => {
@@ -52,6 +68,14 @@ export default function ProjectsPage() {
   const teams = isTeamLeader
     ? allTeams.filter(t => t.my_role === "leader")
     : allTeams;
+
+  // Who can set up / manage repeating tasks: admin roles, or anyone leading a
+  // team — the same people the server lets create and manage a series.
+  const canRepeat =
+    ["Super Admin", "Admin", "Coordinator"].includes(currentUser?.role?.role_name ?? "") ||
+    allTeams.some(t => t.my_role === "leader");
+  const { data: recurring = [] } = useRecurringList(canRepeat);
+  const activeRecurring = recurring.filter(s => s.status === "active").length;
 
   // Enriched detail (members + my_role) for the selected team
   const { data: teamDetail } = useTeam(filters.team_id || "");
@@ -101,7 +125,8 @@ export default function ProjectsPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* flex-wrap: on a narrow phone the buttons wrap instead of running off-screen. */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {/* View toggle */}
           <div className="flex rounded-lg border bg-muted/30 p-0.5 gap-0.5">
             {(["kanban", "table"] as ViewMode[]).map(v => (
@@ -120,6 +145,28 @@ export default function ProjectsPage() {
               </button>
             ))}
           </div>
+
+          {/* Repeating tasks live with the work they create — one click away,
+              without another sidebar item. */}
+          {canRepeat && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRecurringOpen(true)}
+              className="gap-1.5"
+              title="Manage repeating tasks"
+              aria-label="Repeating tasks"
+            >
+              <Repeat className="size-3.5" />
+              {/* Icon + count on phones: the label pushed "Add Task" off a 375px screen. */}
+              <span className="hidden sm:inline">Repeating</span>
+              {activeRecurring > 0 && (
+                <span className="rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold tabular-nums text-primary">
+                  {activeRecurring}
+                </span>
+              )}
+            </Button>
+          )}
 
           <Button size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
             <Plus className="size-3.5" />
@@ -271,6 +318,8 @@ export default function ProjectsPage() {
         onClose={() => setAddOpen(false)}
         defaultTeamId={filters.team_id || ""}
       />
+
+      <RecurringDrawer open={recurringOpen} onClose={closeRecurring} focusId={repeatingFocus} />
     </div>
   );
 }

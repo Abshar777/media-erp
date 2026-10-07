@@ -66,6 +66,7 @@ from app.routers import media_schedule as media_schedule_router
 from app.routers import whatsapp as whatsapp_router
 from app.routers import email_logs as email_logs_router
 from app.routers import fund_requests as fund_requests_router
+from app.routers import ad_reports as ad_reports_router
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.utils.response import success_response
 
@@ -100,10 +101,24 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=start_group_report_scheduler, daemon=True, name="group-report-scheduler").start()
     logger.info("Group daily-report scheduler started")
 
+    # Repeating tasks — creates each day's / week's / month's copies (every 60 s).
+    # Safe with several workers: copies are created idempotently and the series
+    # is advanced with compare-and-set (see services/recurrence.py).
+    from app.services.recurrence import start_recurring_scheduler
+    threading.Thread(target=start_recurring_scheduler, daemon=True, name="recurring-task-scheduler").start()
+    logger.info("Recurring-task scheduler started")
+
     # Fund requests: hand pending ones to finance, collect decisions (every 60 s)
     from app.services.fund_request_service import start_fund_request_worker
     threading.Thread(target=start_fund_request_worker, daemon=True, name="fund-request-worker").start()
     logger.info("Fund request worker started")
+
+    # Ad Reports — reminds people about missing daily numbers (every 60 s).
+    # Each reminder is claimed through a unique index first, so several workers
+    # never send it twice (see services/ad_report_service.py).
+    from app.services.ad_report_service import start_ad_report_scheduler
+    threading.Thread(target=start_ad_report_scheduler, daemon=True, name="ad-report-scheduler").start()
+    logger.info("Ad report reminder scheduler started")
     yield
     await close_db()
 
@@ -172,6 +187,7 @@ app.include_router(media_schedule_router.router)
 app.include_router(whatsapp_router.router)
 app.include_router(email_logs_router.router)
 app.include_router(fund_requests_router.router)
+app.include_router(ad_reports_router.router)
 
 # Serve uploaded files at /uploads/<filename>
 # These are publicly reachable via ngrok so Instagram can fetch images.

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart2,
+  BarChart3,
   Building2,
   Cable,
   CalendarDays,
@@ -41,6 +42,7 @@ import { useUnreadCounts } from "@/hooks/useChat";
 import { useTeams } from "@/hooks/useTeams";
 import { useLeaderQueue } from "@/hooks/useProjects";
 import { useMyVerifications } from "@/hooks/useVerify";
+import { useAdToday } from "@/hooks/useAdReports";
 import ThemeToggle from "@/components/shared/ThemeToggle";
 import InstallAppRow from "@/components/InstallAppRow";
 import {
@@ -59,6 +61,7 @@ const NAV_ITEMS = [
   { label: "Email Reports", href: "/email-reports",  icon: Mail,                                hidden: true },
   { label: "Projects",      href: "/projects",       icon: Kanban,          module: "projects" },
   { label: "Media Schedule", href: "/media-schedule", icon: CalendarClock },
+  { label: "Ad Reports",    href: "/ad-reports",     icon: BarChart3 },
   { label: "Teams",         href: "/teams",          icon: UsersRound,      module: "teams" },
   { label: "Leader Desk",   href: "/leader",         icon: ClipboardCheck },
   { label: "Verifications", href: "/verify",         icon: ShieldCheck },
@@ -199,12 +202,19 @@ function SidebarContent({
     ? (leaderData?.review?.length ?? 0) + (leaderData?.incoming?.length ?? 0) + (leaderData?.reedit?.length ?? 0)
     : 0;
 
+  // Ad Reports: for anyone who updates a report, leads a team, or is an admin.
+  // The badge counts *your* reports still waiting for numbers.
+  const { data: adToday } = useAdToday();
+  const showAdReports = !!adToday?.visible;
+  const adBadge = adToday?.my_due_count ?? 0;
+
   // Filter nav items the user can see
   const visibleNav = NAV_ITEMS.filter((item) =>
     !item.hidden &&
     (!item.module || hasPermission(item.module, "view")) &&
     (item.href !== "/leader" || showLeaderDesk) &&
-    (item.href !== "/performance" || showPerformance)
+    (item.href !== "/performance" || showPerformance) &&
+    (item.href !== "/ad-reports" || showAdReports)
   );
   const visibleBottom = BOTTOM_ITEMS.filter((item) =>
     !item.hidden &&
@@ -265,6 +275,7 @@ function SidebarContent({
               item.href === "/chat" ? totalUnread :
               item.href === "/leader" ? (leaderBadge || undefined) :
               item.href === "/verify" ? (verifyBadge || undefined) :
+              item.href === "/ad-reports" ? (adBadge || undefined) :
               undefined
             }
           />
