@@ -346,6 +346,22 @@ def object_exists(key: str) -> bool:
         return False
 
 
+def object_meta(key: str) -> dict | None:
+    """
+    What storage says the object really is: {"content_type", "size"}, or None
+    when it doesn't exist. Use this instead of trusting a client's claims — the
+    browser chose the Content-Type when it asked for the upload URL.
+    """
+    if not settings.r2_enabled or not key or ".." in key:
+        return None
+    try:
+        h = _get_r2_client().head_object(Bucket=settings.r2_bucket, Key=key)
+    except Exception:
+        return None
+    ctype = (h.get("ContentType") or "").split(";")[0].strip().lower()
+    return {"content_type": ctype, "size": int(h.get("ContentLength") or 0)}
+
+
 def delete_object(key: str) -> bool:
     """
     Permanently remove one object. Mirrors the LMS's `deleteFromR2`.

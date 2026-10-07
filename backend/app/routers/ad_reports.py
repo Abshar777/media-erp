@@ -15,7 +15,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
-from app.schemas.ad_report import CreateAdReportRequest, EntryRequest, UpdateAdReportRequest
+from app.schemas.ad_report import CreateAdReportRequest, CreativeRequest, EntryRequest, UpdateAdReportRequest
 from app.services import ad_report_service as ar
 from app.utils.response import error_response, success_response
 from app.utils.timezone import today_ist
@@ -41,8 +41,25 @@ async def _team_names(db, team_ids) -> dict[str, str]:
 async def _serialize_many(db, docs: list[dict], user: dict) -> list[dict]:
     names = await ar.names_for(db, [a for d in docs for a in d.get("assignees", [])])
     teams = await _team_names(db, [d.get("team_id") for d in docs])
+    acc_ids = {d.get("account_id") for d in docs if d.get("account_id") and ObjectId.is_valid(d["account_id"])}
+    accounts = await db[ar.REPORTS].find({"_id": {"$in": [ObjectId(a) for a in acc_ids]}}, {"name": 1}).to_list(len(acc_ids) or 1) if acc_ids else []
+    account_names = {str(a["_id"]): a.get("name", "") for a in accounts}
     today = today_ist()
-    return [await ar.serialize_report(db, d, names, teams, user, today) for d in docs]
+    return [await ar.serialize_report(db, d, names, teams, user, today, account_names) for d in docs]
+
+
+async def _check_account(db, account_id: str, team_id: str):
+    """An ad may join an account of its own team that is still open. Returns an error response or None."""
+    if not ObjectId.is_valid(account_id):
+        return error_response("Choose an account from the list.", status_code=422)
+    acc = await db[ar.REPORTS].find_one({"_id": ObjectId(account_id)})
+    if not acc or not ar.is_account(acc):
+        return error_response("Choose an account from the list.", status_code=422)
+    if acc.get("team_id") != team_id:
+        return error_response("An ad can only join an account of its own team.", status_code=422)
+    if acc.get("status") == "ended":
+        return error_response("That account has ended — choose another one.", status_code=422)
+    return None
 
 
 async def _load(db, report_id: str, user: dict) -> dict | None:
@@ -94,9 +111,31 @@ async def create_report(
         return error_response("Please select a team.", status_code=422)
     if not await workflow.can_assign_to_others(current_user, body.team_id, db):
         return error_response("Only a team leader can create ad reports.", status_code=403)
+
+    now = datetime.now(timezone.utc)
+    if body.kind == "account":
+        ref = (body.ad_account_ref or "").strip()
+        if len(ref) > 60:
+            return error_response("Keep the ad account ID under 60 characters.", status_code=422)
+        doc = {
+            "kind": "account", "name": name, "platform": "meta", "team_id": body.team_id, "assignees": [],
+            "ad_account_ref": ref, "start_date": today_ist().isoformat(), "end_date": None,
+            "extra_metrics": [], "currency": "INR", "status": "active", "pauses": [],
+            "created_by": str(current_user["_id"]), "created_by_name": current_user.get("name", ""),
+            "created_at": now, "updated_at": now,
+        }
+        res = await db[ar.REPORTS].insert_one(doc)
+        doc["_id"] = res.inserted_id
+        return success_response(data=(await _serialize_many(db, [doc], current_user))[0],
+                                message="Ad account created", status_code=201)
+
+    if body.account_id:
+        bad = await _check_account(db, body.account_id, body.team_id)
+        if bad:
+            return bad
     try:
         assignees, _ = await ar.validate_assignees(db, body.assignees)
-        start = ar.parse_day(body.start_date, "start_date")
+        start = ar.parse_day(body.start_date or "", "start_date")
         end = ar.parse_day(body.end_date, "end_date") if body.end_date else None
         ar.validate_times(body.reminder_due, body.reminder_escalate)
     except ar.AdReportError as exc:
@@ -107,8 +146,8 @@ async def create_report(
     if end and end < start:
         return error_response("The end date can't be before the start date.", status_code=422)
 
-    now = datetime.now(timezone.utc)
     doc = {
+        "kind": "ad", "account_id": body.account_id or None,
         "name": name, "platform": "meta", "team_id": body.team_id, "assignees": assignees,
         "start_date": start.isoformat(), "end_date": end.isoformat() if end else None,
         "extra_metrics": [m for m in dict.fromkeys(body.extra_metrics)],
@@ -144,7 +183,7 @@ async def today_summary(
     team = None
     if can_create:
         q = await ar.visible_query(db, current_user)
-        q = {"$and": [q, {"status": "active"}]} if q else {"status": "active"}
+        q = {"$and": [q, {"status": "active"}, ar.AD_ONLY]} if q else {"status": "active", **ar.AD_ONLY}
         managed = await db[ar.REPORTS].find(q).to_list(500)
         names = await ar.names_for(db, [a for r in managed for a in r.get("assignees", [])])
         missing_list, started = [], 0
@@ -202,6 +241,28 @@ async def update_report(
     now = datetime.now(timezone.utc)
     ended = r.get("status") == "ended"
     upd: dict = {}
+    account = ar.is_account(r)
+    if account and body.action in ("pause", "resume"):
+        return error_response("Pause the ads inside the account instead.", status_code=409)
+    if account and (body.assignees is not None or body.extra_metrics is not None or body.end_date is not None
+                    or body.reminder_due is not None or body.reminder_escalate is not None
+                    or body.account_id or body.clear_account):
+        return error_response("An account has no people, dates or numbers of its own — edit its ads.", status_code=422)
+    if not account:
+        if body.clear_account:
+            upd["account_id"] = None
+        elif body.account_id:
+            bad = await _check_account(db, body.account_id, r.get("team_id"))
+            if bad:
+                return bad
+            upd["account_id"] = body.account_id
+    if body.ad_account_ref is not None:
+        if not account:
+            return error_response("Only an account has an ad account ID.", status_code=422)
+        ref = body.ad_account_ref.strip()
+        if len(ref) > 60:
+            return error_response("Keep the ad account ID under 60 characters.", status_code=422)
+        upd["ad_account_ref"] = ref
     try:
         if body.name is not None:
             name = body.name.strip()
@@ -247,9 +308,10 @@ async def update_report(
     elif body.action == "end":
         if ended:
             return error_response("This report has already ended.", status_code=409)
-        last = max(yesterday.isoformat(), r["start_date"])
-        if not r.get("end_date") or r["end_date"] > last:
-            upd["end_date"] = last
+        if not account:
+            last = max(yesterday.isoformat(), r["start_date"])
+            if not r.get("end_date") or r["end_date"] > last:
+                upd["end_date"] = last
         upd.update(status="ended", ended_at=now)
 
     if upd:
@@ -280,10 +342,11 @@ async def report_series(
     if granularity not in ("day", "week", "month"):
         return error_response("Granularity must be day, week or month.", status_code=422)
     today = today_ist()
+    children = await ar.children_of(db, r) if ar.is_account(r) else None
     try:
         hi = ar.parse_day(to, "to") if to else today - timedelta(days=1)
         lo = ar.parse_day(from_, "from") if from_ else hi - timedelta(days=13)
-        data = await ar.series(db, r, lo, hi, granularity, today)
+        data = await ar.series(db, r, lo, hi, granularity, today, children=children)
     except ar.AdReportError as exc:
         return _err(exc)
     return success_response(data=data, message="Series retrieved")
@@ -324,6 +387,8 @@ async def save_entry(
     r = await _load(db, report_id, current_user)
     if not r:
         return error_response(NOT_FOUND, status_code=404)
+    if ar.is_account(r):
+        return error_response("Numbers are entered on the ads inside this account.", status_code=422)
     manager = await ar.can_manage(db, current_user, r)
     if r.get("status") == "ended" and not manager:
         return error_response("This report has ended — ask your team leader to correct it.", status_code=409)
@@ -396,6 +461,8 @@ async def remind_now(
         return error_response(NOT_FOUND, status_code=404)
     if not await ar.can_manage(db, current_user, r):
         return error_response("Only the team leader can send a reminder.", status_code=403)
+    if ar.is_account(r):
+        return error_response("Remind the people on the ads inside this account.", status_code=409)
     if r.get("status") != "active":
         return error_response("This report isn't active.", status_code=409)
     missing = await ar.missing_days(db, r)
@@ -418,3 +485,91 @@ async def remind_now(
     for uid in people:
         asyncio.create_task(ar.deliver(db, uid, ar.NOTIF_DUE, title, msg, meta))
     return success_response(data={"notified": len(people)}, message="Reminder sent")
+
+
+# ── Creatives — the ad itself, shown above the numbers ───────────────────────
+
+async def _creative_target(db, report_id: str, user: dict):
+    """(report, error_response). Assignees and leaders may add; ended = leaders only."""
+    r = await _load(db, report_id, user)
+    if not r:
+        return None, error_response(NOT_FOUND, status_code=404)
+    if r.get("status") == "ended" and not await ar.can_manage(db, user, r):
+        return None, error_response("This report has ended — ask your team leader.", status_code=409)
+    return r, None
+
+
+@router.post("/{report_id}/creatives", status_code=201)
+async def add_creative(
+    report_id: str,
+    body: CreativeRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    import uuid
+    r, err = await _creative_target(db, report_id, current_user)
+    if err:
+        return err
+    if len(r.get("creatives", [])) >= ar.MAX_CREATIVES:
+        return error_response(f"A report can hold up to {ar.MAX_CREATIVES} creatives — remove one first.", status_code=422)
+    try:
+        item = await asyncio.to_thread(ar.validate_creative, body.model_dump())   # HEAD to R2 is blocking
+    except ar.AdReportError as exc:
+        return _err(exc)
+    item.update(id=uuid.uuid4().hex, uploaded_by=str(current_user["_id"]),
+                uploaded_by_name=current_user.get("name", ""), uploaded_at=datetime.now(timezone.utc))
+    # The size check lives in the filter, so two simultaneous uploads can't overshoot the cap.
+    res = await db[ar.REPORTS].update_one(
+        {"_id": r["_id"], f"creatives.{ar.MAX_CREATIVES - 1}": {"$exists": False}},
+        {"$push": {"creatives": item}, "$set": {"updated_at": datetime.now(timezone.utc)}},
+    )
+    if not res.modified_count:
+        return error_response(f"A report can hold up to {ar.MAX_CREATIVES} creatives — remove one first.", status_code=422)
+    r = await db[ar.REPORTS].find_one({"_id": r["_id"]})
+    return success_response(data=ar.serialize_creatives(r), message="Creative added", status_code=201)
+
+
+@router.post("/{report_id}/creatives/{creative_id}/cover")
+async def set_cover(
+    report_id: str,
+    creative_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    r, err = await _creative_target(db, report_id, current_user)
+    if err:
+        return err
+    items = r.get("creatives", [])
+    pick = next((c for c in items if c.get("id") == creative_id), None)
+    if not pick:
+        return error_response("Creative not found.", status_code=404)
+    ordered = [pick] + [c for c in items if c is not pick]
+    # Compare-and-set on the list we read, so a creative added meanwhile isn't dropped.
+    res = await db[ar.REPORTS].update_one({"_id": r["_id"], "creatives": items},
+                                          {"$set": {"creatives": ordered, "updated_at": datetime.now(timezone.utc)}})
+    if not res.matched_count:
+        return error_response("The creatives just changed — refresh and try again.", status_code=409)
+    r = await db[ar.REPORTS].find_one({"_id": r["_id"]})
+    return success_response(data=ar.serialize_creatives(r), message="Cover updated")
+
+
+@router.delete("/{report_id}/creatives/{creative_id}")
+async def remove_creative(
+    report_id: str,
+    creative_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Detaches the file (house rule: stored objects are never deleted from the shared bucket)."""
+    r, err = await _creative_target(db, report_id, current_user)
+    if err:
+        return err
+    pick = next((c for c in r.get("creatives", []) if c.get("id") == creative_id), None)
+    if not pick:
+        return error_response("Creative not found.", status_code=404)
+    if pick.get("uploaded_by") != str(current_user["_id"]) and not await ar.can_manage(db, current_user, r):
+        return error_response("Only the person who added it or the team leader can remove it.", status_code=403)
+    await db[ar.REPORTS].update_one({"_id": r["_id"]}, {"$pull": {"creatives": {"id": creative_id}},
+                                                        "$set": {"updated_at": datetime.now(timezone.utc)}})
+    r = await db[ar.REPORTS].find_one({"_id": r["_id"]})
+    return success_response(data=ar.serialize_creatives(r), message="Creative removed")

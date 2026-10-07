@@ -413,3 +413,210 @@ def test_notification_email_escapes_user_text():
     h = _notif_email_html('Add numbers: <a href="https://evil.example">Verify</a>', "Q&A <img src=x onerror=alert(1)>")
     assert "<a href" not in h and "<img" not in h
     assert "&lt;a href=" in h and "Q&amp;A" in h
+
+
+async def test_ratios_use_only_days_that_recorded_both_parts(world):
+    # Impressions/clicks switched on mid-campaign: earlier spend must not be divided by later impressions.
+    w = world
+    rid = await rid_of(w, start_date="2026-10-01")
+    await put(w, rid, "2026-10-01", leads=10, spend="10000")
+    await put(w, rid, "2026-10-02", leads=10, spend="10000")
+    await w["call"]("PATCH", f"{B}/{rid}", "lead", json={"extra_metrics": ["impressions", "clicks"]})
+    await put(w, rid, "2026-10-03", leads=5, spend="500", impressions=10000, clicks=200)
+    t = (await w["call"]("GET", f"{B}/{rid}/series?from=2026-10-01&to=2026-10-03", "lead")).json()["data"]["totals"]
+    assert round(t["cpm"] / 100, 2) == 50.0, "₹500 over 10,000 impressions — not ₹20,500"
+    assert t["ctr"] == 2.0 and round(t["cpc"] / 100, 2) == 2.5
+    assert round(t["cpl"] / 100, 2) == round(20500 / 25, 2), "cost per lead still covers every day"
+
+
+async def test_reach_and_clicks_cannot_exceed_impressions(world):
+    w = world
+    rid = await rid_of(w, extra_metrics=["impressions", "reach", "clicks"])
+    bad = await put(w, rid, "2026-10-13", impressions=77, reach=50, clicks=86)
+    assert bad.status_code == 422 and "Link clicks" in bad.json()["message"]
+    bad = await put(w, rid, "2026-10-13", impressions=77, reach=90, clicks=10)
+    assert bad.status_code == 422 and "Reach" in bad.json()["message"]
+    assert (await put(w, rid, "2026-10-13", impressions=77, reach=77, clicks=10)).status_code == 201
+
+
+TYPES_BY_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".mp4": "video/mp4", ".pdf": "application/pdf",
+                ".html": "text/html", ".svg": "image/svg+xml"}
+
+
+def fake_meta(key):
+    ext = "." + key.rsplit(".", 1)[-1] if "." in key else ""
+    return {"content_type": TYPES_BY_EXT.get(ext, "application/octet-stream"), "size": 4321}
+
+
+@pytest.fixture
+def r2_ok(monkeypatch):
+    """Pretend every upload landed (type from the key's extension), so no test talks to R2."""
+    import app.utils.storage as storage
+    monkeypatch.setattr(storage, "object_meta", fake_meta)
+
+
+def creative(name="ad.jpg", ctype="image/jpeg", key=None):
+    return {"key": key or f"{ar.creative_prefix()}1757339000123-a1b2c3d4e5f6a7b8-{name}",
+            "filename": name, "size": 1234, "content_type": ctype}
+
+
+async def test_creatives_add_cover_and_remove(world, r2_ok):
+    w = world
+    rid = await rid_of(w)
+    C = f"{B}/{rid}/creatives"
+    a = await w["call"]("POST", C, "lead", json=creative("square.jpg"))
+    assert a.status_code == 201 and a.json()["data"][0]["filename"] == "square.jpg"
+    b = await w["call"]("POST", C, "asha", json=creative("reel.mp4", "video/mp4"))
+    assert b.status_code == 201, "the assignee can add the ad too"
+    ids = [x["id"] for x in b.json()["data"]]
+    one = (await w["call"]("GET", f"{B}/{rid}", "asha")).json()["data"]
+    assert [c["filename"] for c in one["creatives"]] == ["square.jpg", "reel.mp4"], "first one is the cover"
+    cov = await w["call"]("POST", f"{C}/{ids[1]}/cover", "asha")
+    assert [c["filename"] for c in cov.json()["data"]] == ["reel.mp4", "square.jpg"]
+    deny = await w["call"]("DELETE", f"{C}/{ids[0]}", "asha")
+    assert deny.status_code == 403, "an assignee can't remove the leader's upload"
+    assert (await w["call"]("DELETE", f"{C}/{ids[1]}", "asha")).status_code == 200, "but can remove their own"
+    left = await w["call"]("DELETE", f"{C}/{ids[0]}", "lead")
+    assert left.status_code == 200 and left.json()["data"] == []
+
+
+async def test_creative_rules(world, r2_ok, monkeypatch):
+    w = world
+    rid = await rid_of(w)
+    C = f"{B}/{rid}/creatives"
+    foreign = await w["call"]("POST", C, "lead", json=creative(key="lms/private/certificate.pdf", ctype="application/pdf"))
+    assert foreign.status_code == 422, "keys outside this app's ad-creatives folder are refused (shared bucket)"
+    sneaky = await w["call"]("POST", C, "lead", json=creative(key=f"{ar.creative_prefix()}../../lms/x.jpg"))
+    assert sneaky.status_code == 422
+    assert (await w["call"]("POST", C, "lead", json=creative("page.html", "text/html"))).status_code == 422
+    for who in ("lead2", "out", "mira"):
+        assert (await w["call"]("POST", C, who, json=creative())).status_code == 404
+    import app.utils.storage as storage
+    monkeypatch.setattr(storage, "object_meta", lambda key: None)
+    gone = await w["call"]("POST", C, "lead", json=creative())
+    assert gone.status_code == 422 and "didn't finish" in gone.json()["message"]
+    monkeypatch.setattr(storage, "object_meta", fake_meta)
+    for i in range(ar.MAX_CREATIVES):
+        assert (await w["call"]("POST", C, "lead", json=creative(f"v{i}.jpg"))).status_code == 201
+    assert (await w["call"]("POST", C, "lead", json=creative("one-too-many.jpg"))).status_code == 422
+    await w["call"]("PATCH", f"{B}/{rid}", "lead", json={"action": "end"})
+    first = (await w["call"]("GET", f"{B}/{rid}", "lead")).json()["data"]["creatives"][0]["id"]
+    assert (await w["call"]("DELETE", f"{C}/{first}", "asha")).status_code == 409, "ended: leaders only"
+
+
+async def test_creative_type_and_size_come_from_storage(world, r2_ok):
+    w = world
+    rid = await rid_of(w)
+    C = f"{B}/{rid}/creatives"
+    claimed = await w["call"]("POST", C, "lead", json=creative("innocent.html", "image/png"))
+    assert claimed.status_code == 422, "an HTML page claimed as image/png is refused (storage says text/html)"
+    svg = await w["call"]("POST", C, "lead", json=creative("logo.svg", "image/svg+xml"))
+    assert svg.status_code == 422, "SVG can carry script"
+    ok = await w["call"]("POST", C, "lead", json={**creative("brief.pdf", "image/png"), "size": 999999999})
+    assert ok.status_code == 201
+    item = ok.json()["data"][-1]
+    assert item["content_type"] == "application/pdf" and item["size"] == 4321, "storage's type and size win"
+
+
+# ── Ad accounts (ads underneath) ─────────────────────────────────────────────
+
+async def make_account(w, who="lead", **kw):
+    body = {"kind": "account", "name": "Delta Institutions — Meta", "team_id": w["t1"],
+            "ad_account_ref": "act_1234567890", **kw}
+    return await w["call"]("POST", B, who, json=body)
+
+
+async def test_accounts_create_rules(world):
+    w = world
+    r = await make_account(w)
+    assert r.status_code == 201
+    d = r.json()["data"]
+    assert d["kind"] == "account" and d["ad_account_ref"] == "act_1234567890"
+    assert d["account"]["ads"] == 0 and d["assignees"] == []
+    assert (await make_account(w, "asha")).status_code == 403, "employees can't create accounts"
+    assert (await make_account(w, "lead2")).status_code == 403, "nor another team's leader"
+    assert (await make_account(w, ad_account_ref="x" * 61)).status_code == 422
+    plain = (await make(w)).json()["data"]
+    assert plain["kind"] == "ad" and plain["account_id"] is None, "an ad without an account (default)"
+
+
+async def test_ads_join_only_an_open_account_of_their_team(world):
+    w = world
+    acc = (await make_account(w)).json()["data"]["id"]
+    ok = await make(w, account_id=acc)
+    assert ok.status_code == 201 and ok.json()["data"]["account_name"] == "Delta Institutions — Meta"
+    other_team = (await make_account(w, "sa", team_id=w["t2"], name="Other team acct")).json()["data"]["id"]
+    assert (await make(w, account_id=other_team)).status_code == 422, "same team only"
+    ad_id = ok.json()["data"]["id"]
+    assert (await make(w, account_id=ad_id)).status_code == 422, "an ad isn't an account"
+    assert (await make(w, account_id="nope")).status_code == 422
+    await w["call"]("PATCH", f"{B}/{acc}", "lead", json={"action": "end"})
+    assert (await make(w, account_id=acc)).status_code == 422, "ended account"
+
+
+async def test_account_rolls_up_its_ads(world):
+    w, s = world, world["s"]
+    acc = (await make_account(w)).json()["data"]["id"]
+    a = (await make(w, name="Lead form", account_id=acc, start_date="2026-10-10")).json()["data"]["id"]
+    b = (await make(w, name="Traffic", account_id=acc, start_date="2026-10-10", assignees=[s["mira"]],
+                    extra_metrics=["impressions", "clicks"])).json()["data"]["id"]
+    await make(w, name="Elsewhere", start_date="2026-10-10")          # not in the account
+    await put(w, a, "2026-10-10", leads=10, spend="1000")
+    await put(w, a, "2026-10-11", leads=5, spend="500")
+    await put(w, b, "2026-10-10", who="mira", leads=2, spend="400", impressions=4000, clicks=40)
+    r = await w["call"]("GET", f"{B}/{acc}/series?from=2026-10-10&to=2026-10-13", "lead")
+    d = r.json()["data"]
+    assert d["totals"]["leads"] == 17 and d["totals"]["spend"] == 190000, "sum of both ads only"
+    assert d["metrics"] == ["leads", "spend", "impressions", "clicks"], "union of the ads' metrics"
+    assert round(d["totals"]["cpm"] / 100, 2) == 100.0, "₹400 over 4,000 impressions — only the day that had them"
+    assert round(d["totals"]["cpl"] / 100, 2) == round(1900 / 17, 2)
+    days = {p["key"]: p for p in d["points"]}
+    assert days["2026-10-10"]["values"]["leads"] == 12
+    assert days["2026-10-11"]["missing"] == ["2026-10-11"], "Traffic owes 11 Oct → the day is incomplete"
+    assert days["2026-10-12"]["values"] is None and days["2026-10-12"]["missing"] == ["2026-10-12"]
+    br = {x["name"]: x for x in d["breakdown"]}
+    assert set(br) == {"Lead form", "Traffic"}
+    assert br["Lead form"]["totals"]["leads"] == 15 and br["Traffic"]["totals"]["spend"] == 40000
+    assert br["Traffic"]["owners"] == ["Mira"]
+    one = (await w["call"]("GET", f"{B}/{acc}", "lead")).json()["data"]
+    assert one["account"]["ads"] == 2 and one["day_status"] == "missing" and one["start_date"] == "2026-10-10"
+
+
+async def test_accounts_have_no_numbers_or_reminders_of_their_own(world):
+    w, db = world, world["db"]
+    acc = (await make_account(w)).json()["data"]["id"]
+    r = await w["call"]("PUT", f"{B}/{acc}/entries/2026-10-13", "lead", json={"leads": 1, "spend": "1"})
+    assert r.status_code == 422 and "ads inside" in r.json()["message"]
+    assert (await w["call"]("POST", f"{B}/{acc}/remind", "lead")).status_code == 409
+    assert (await w["call"]("PATCH", f"{B}/{acc}", "lead", json={"action": "pause"})).status_code == 409
+    assert (await w["call"]("PATCH", f"{B}/{acc}", "lead", json={"assignees": [w["s"]["asha"]]})).status_code == 422
+    assert await ar.run_reminders(db, at(WED, 18), frozenset()) == 0, "nothing is owed by an account"
+    today = (await w["call"]("GET", f"{B}/today", "lead")).json()["data"]
+    assert today["team"]["active"] == 0, "accounts don't count in 'N of M up to date'"
+    upd = await w["call"]("PATCH", f"{B}/{acc}", "lead", json={"name": "Renamed acct", "ad_account_ref": "act_99"})
+    assert upd.status_code == 200 and upd.json()["data"]["ad_account_ref"] == "act_99"
+
+
+async def test_moving_an_ad_between_accounts(world):
+    w = world
+    acc1 = (await make_account(w, name="A1")).json()["data"]["id"]
+    acc2 = (await make_account(w, name="A2")).json()["data"]["id"]
+    ad = (await make(w)).json()["data"]["id"]
+    assert (await w["call"]("PATCH", f"{B}/{ad}", "lead", json={"account_id": acc1})).json()["data"]["account_name"] == "A1"
+    assert (await w["call"]("PATCH", f"{B}/{ad}", "lead", json={"account_id": acc2})).json()["data"]["account_name"] == "A2"
+    assert (await w["call"]("PATCH", f"{B}/{ad}", "asha", json={"account_id": acc1})).status_code == 403
+    out = await w["call"]("PATCH", f"{B}/{ad}", "lead", json={"clear_account": True})
+    assert out.json()["data"]["account_id"] is None
+    assert (await w["call"]("PATCH", f"{B}/{ad}", "lead", json={"ad_account_ref": "act_1"})).status_code == 422
+
+
+async def test_ad_owner_sees_the_account_name_not_its_totals(world):
+    w = world
+    acc = (await make_account(w)).json()["data"]["id"]
+    ad = (await make(w, account_id=acc)).json()["data"]["id"]
+    mine = (await w["call"]("GET", f"{B}/{ad}", "asha")).json()["data"]
+    assert mine["account_name"] == "Delta Institutions — Meta"
+    assert (await w["call"]("GET", f"{B}/{acc}", "asha")).status_code == 404
+    assert (await w["call"]("GET", f"{B}/{acc}/series", "asha")).status_code == 404
+    lst = (await w["call"]("GET", B, "asha")).json()["data"]
+    assert [x["kind"] for x in lst] == ["ad"]

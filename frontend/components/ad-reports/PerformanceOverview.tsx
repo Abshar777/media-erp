@@ -17,7 +17,7 @@ import {
   METRIC_META, addDaysISO, changePct, compactIN, dayLabel, dayLabelW, formatMetric, monthLabel, tilesFor,
   type TileMetric,
 } from "@/lib/adReports";
-import type { AdGranularity, AdReport, AdSeriesPoint } from "@/types/adReport";
+import type { AdGranularity, AdReport, AdSeries, AdSeriesPoint } from "@/types/adReport";
 
 const LINE = "#14b8a6";
 type RangeKey = "7" | "14" | "30" | "month" | "life" | "custom";
@@ -84,7 +84,12 @@ function ChartTooltip({ active, payload, metric }: { active?: boolean; payload?:
   );
 }
 
-export function PerformanceOverview({ report, today }: { report: AdReport; today: string }) {
+export function PerformanceOverview({ report, today, renderBelow }: {
+  report: AdReport;
+  today: string;
+  /** Extra content for the same range (e.g. an account's per-ad table), under the chart. */
+  renderBelow?: (series: AdSeries) => React.ReactNode;
+}) {
   const [granularity, setGranularity] = useState<AdGranularity>("day");
   const [rangeKey, setRangeKey] = useState<RangeKey>("14");
   const [custom, setCustom] = useState(() => ({ from: addDaysISO(today, -14), to: addDaysISO(today, -1) }));
@@ -230,6 +235,7 @@ export function PerformanceOverview({ report, today }: { report: AdReport; today
           )}
         </div>
       </div>
+      {data && renderBelow?.(data)}
     </section>
   );
 }

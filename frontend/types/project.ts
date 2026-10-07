@@ -174,6 +174,10 @@ export interface RepeatSpec {
   /** Copies in total, today's included. null = until stopped. */
   count: number | null;
   due_offset_days: number;
+  /** Weekly: Monday 0 … Sunday 6. Omitted = the day it's created. */
+  weekday?: number | null;
+  /** Monthly: 1–31 (shorter months use their last day). Omitted = today's date. */
+  month_day?: number | null;
 }
 
 /** POST /projects/batch — one task for several people, optionally repeating. */
@@ -199,6 +203,8 @@ export interface RecurringSeries {
   assignees: { id: string; name: string }[];
   frequency: RepeatFrequency;
   anchor_date: string;
+  month_day?: number | null;
+  weekday?: number | null;
   next_date: string | null;
   occurrences_total: number | null;
   occurrences_done: number;

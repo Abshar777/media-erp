@@ -1,3 +1,44 @@
+# plan.md — Ad accounts, with their ads underneath (Ad Reports, part 2)
+
+> **Status: IMPLEMENTED & VERIFIED (2026-10-07)** — see the history files. Not yet committed.
+
+## What
+Meta's own structure: **an ad account holds many ads**. Ad Reports gets the same two levels.
+
+| Need | Build |
+|---|---|
+| Choose "Ad" or "Account" when creating | A **What are you tracking?** switch at the top of *New report* |
+| An ad can belong to an account (default: none) | An **Account** picker on ads: *None* + the accounts of the selected team |
+| The board shows accounts with their ads underneath | The left rail becomes a tree: account row → its ads indented; "Ads without an account" below |
+| An account shows all its ads, connected | The account page = the **sum of its ads** (same Performance overview) + an **Ads in this account** table for the same range |
+
+## Key decisions
+1. **An account's numbers are its ads added up — never typed.** No double entry, no second set of reminders, and the totals can't disagree with the ads. Ratios (CPL/CTR/CPM/CPC) use the same "only days that recorded both parts" rule, now across ads.
+2. **Same team only.** An ad can join an account of its own team. Otherwise a leader could read another team's spend through an account's totals.
+3. **Who sees an account:** its team's leaders and the admin roles (the people who manage ads). An ad's owner still sees which account their ad is in (the name), not the account's totals.
+4. **Accounts have no daily entry, people, reminder times or metrics of their own.** Their metrics are the union of their ads' metrics; their "since" date is their earliest ad's start. *End* archives an account; its ads keep running.
+5. **Existing reports become "ads with no account".** Nothing to migrate: a missing `kind` means `ad`.
+6. **Moving an ad** between accounts (or to none) is an *Edit* on the ad — leaders only.
+
+## Data / API
+- `ad_reports.kind` = `"ad"` (default) | `"account"`; ads get `account_id` (optional); accounts get `ad_account_ref` (optional text such as `act_1234567890`, so it matches what people see in Ads Manager).
+- `POST /ad-reports` with `kind: "account"` (name, team, optional ad-account ID) or an ad with an optional `account_id`.
+- `PATCH /ad-reports/{id}` — ads: `account_id` / `clear_account`; accounts: name, ad-account ID, End.
+- `GET /ad-reports/{id}/series` on an account → the roll-up + `breakdown` (one row per ad: totals for the range, status, cover).
+- Accounts are skipped by the reminder scheduler, "today" counts and the sidebar badge; entering numbers or "Remind" on an account is refused with a clear message.
+
+## UI
+- **New report:** a two-option segmented switch, *Ad / campaign* and *Ad account*, each with a one-line explanation. Ad → today's form plus an **Account** select (*None* first). Account → name, team, platform, ad-account ID, and a note: "Numbers come from the ads you add to it."
+- **Rail (tree):** account row = building icon, name, "3 ads · 1 missing", a chevron to fold; its ad cards indented with a guide line; then **Ads without an account**. Phones: the report dropdown groups ads under their account.
+- **Account page:** hero (account icon or cover, "Ad account" tag, name, Team · Ad account ID · Ads · Since, actions **+ Add ad**, Edit, End) → Performance overview of the sum → **Ads in this account** (thumbnail, name, status, owner, leads, spent, per lead, share of spend) for the chosen range; click a row to open the ad.
+- **Ad page:** a small "in *Account name*" chip in the hero (clickable for leaders).
+
+## Proving nothing breaks
+Existing ad reports behave exactly as before (no `kind` = ad). New tests cover: create rules, same-team rule, roll-up maths (sum + paired ratios across ads), missing-day aggregation, breakdown, accounts excluded from reminders/today, entries/remind refused on accounts, visibility. Full suite, type check, production build, browser QA.
+
+---
+---
+
 # plan.md — Ad Reports (Meta "Performance overview", filled in daily by the team)
 
 > **Status: IMPLEMENTED & VERIFIED (2026-10-07)** — approved with D1–D7 as recommended. Details in `backend/servicesHistory.md` and `frontend/componentsHistory.md`. Not yet committed.

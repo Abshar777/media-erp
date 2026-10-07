@@ -57,6 +57,11 @@ MAX_RANGE_DAYS = 731
 MANUAL_REMIND_GAP = timedelta(hours=1)
 POLL_SECONDS = 60
 NOTIF_DUE, NOTIF_OVERDUE = "ad_report_due", "ad_report_overdue"
+CREATIVE_FOLDER = "ad-creatives"
+MAX_CREATIVES = 12
+CREATIVE_TYPES = ("image/", "video/", "application/pdf")
+# SVG is XML that can carry script; ads don't use it, so it isn't accepted.
+BLOCKED_CREATIVE_TYPES = ("image/svg+xml",)
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -127,6 +132,24 @@ def metrics_of(report: dict) -> list[str]:
     return list(BASE_METRICS) + [m for m in report.get("extra_metrics", []) if m in EXTRA_METRICS]
 
 
+def is_account(report: dict) -> bool:
+    """An ad account: its numbers are the sum of the ads inside it. Missing `kind` = an ad."""
+    return report.get("kind") == "account"
+
+
+AD_ONLY = {"kind": {"$ne": "account"}}
+
+
+async def children_of(db, account: dict) -> list[dict]:
+    """The ads inside an account (accounts never nest)."""
+    return await db[REPORTS].find({"account_id": str(account["_id"]), **AD_ONLY}).sort("created_at", 1).to_list(500)
+
+
+def union_metrics(children: list[dict]) -> list[str]:
+    extras = {m for c in children for m in c.get("extra_metrics", []) if m in EXTRA_METRICS}
+    return list(BASE_METRICS) + [m for m in EXTRA_METRICS if m in extras]
+
+
 # ── Which days are owed ───────────────────────────────────────────────────────
 
 def _paused_on(report: dict, d: date) -> bool:
@@ -140,6 +163,8 @@ def _paused_on(report: dict, d: date) -> bool:
 
 def expected_days(report: dict, until: date) -> list[date]:
     """Days that should have numbers, from the start up to `until` (inclusive)."""
+    if is_account(report):
+        return []                      # nothing is typed for an account
     start = date.fromisoformat(report["start_date"])
     end = date.fromisoformat(report["end_date"]) if report.get("end_date") else None
     last = min(until, end) if end else until
@@ -169,6 +194,11 @@ async def missing_days(db, report: dict, today: date | None = None) -> list[str]
 def _hhmm(s: str) -> time:
     h, m = s.split(":")
     return time(int(h), int(m))
+
+
+def now_on(today: date) -> datetime:
+    """The current IST time of day on `today` — keeps the status chip on the same day as the rest."""
+    return datetime.combine(today, datetime.now(IST).time(), tzinfo=IST)
 
 
 def day_status(report: dict, missing: list[str], now: datetime | None = None) -> str:
@@ -279,6 +309,59 @@ def validate_entry(report: dict, body: dict) -> dict:
         if v > MAX_COUNT:
             raise AdReportError(f"{label} looks too large — please check it.")
         out[m] = int(v)
+    if "impressions" in out:
+        if out.get("reach", 0) > out["impressions"]:
+            raise AdReportError("Reach can't be more than impressions — check the two numbers.")
+        if out.get("clicks", 0) > out["impressions"]:
+            raise AdReportError("Link clicks can't be more than impressions — check the two numbers.")
+    return out
+
+
+# ── Creatives (the ad itself, shown above the numbers) ───────────────────────
+
+def creative_prefix() -> str:
+    from app.config import settings
+    root = (settings.r2_root_prefix or "").strip("/")
+    return f"{root}/{CREATIVE_FOLDER}/" if root else f"{CREATIVE_FOLDER}/"
+
+
+def validate_creative(att: dict) -> dict:
+    """
+    Accept only a file this app uploaded into its own ad-creatives folder.
+
+    The bucket is shared with the Delta LMS and the read path signs whatever key
+    is stored, so an arbitrary key would hand out a signed link to someone
+    else's object. The upload must also really exist (no phantom references).
+    """
+    from app.utils import storage
+    key = str(att.get("key") or "").strip()
+    name = str(att.get("filename") or "").strip()[:200] or "creative"
+    if not key.startswith(creative_prefix()) or ".." in key:
+        raise AdReportError("That file wasn't uploaded here — please upload it again.")
+    # Type and size come from STORAGE, not the request: the browser chose the
+    # Content-Type when it asked for the upload URL, so an HTML page could be
+    # uploaded as text/html and then claimed here as image/png.
+    meta = storage.object_meta(key)
+    if not meta:
+        raise AdReportError("The upload didn't finish — please try again.")
+    ctype = meta["content_type"]
+    if not ctype.startswith(CREATIVE_TYPES) or ctype in BLOCKED_CREATIVE_TYPES:
+        raise AdReportError("Upload an image (JPG, PNG, GIF or WebP), a video or a PDF.")
+    return {"key": key, "url": key, "filename": name, "content_type": ctype,
+            "size": meta["size"], "backend": "r2"}
+
+
+def serialize_creatives(r: dict) -> list[dict]:
+    from app.utils.storage import sign_attachment
+    out = []
+    for c in r.get("creatives", []):
+        s = sign_attachment(c)
+        out.append({
+            "id": c["id"], "url": s.get("url", ""), "key": c.get("key", ""),
+            "filename": c.get("filename", ""), "content_type": c.get("content_type", ""),
+            "size": c.get("size", 0), "uploaded_by": c.get("uploaded_by"),
+            "uploaded_by_name": c.get("uploaded_by_name", ""), "uploaded_at": utc_iso(c.get("uploaded_at")),
+        })
     return out
 
 
@@ -295,23 +378,50 @@ def _bucket(d: date, granularity: str) -> tuple[str, date, date]:
     return d.isoformat(), d, d
 
 
+def _pair(rows: list[dict], a: str, b: str) -> tuple[int | None, int | None]:
+    """Sums of `a` and `b` over only the days that recorded BOTH."""
+    both = [r["values"] for r in rows if a in r["values"] and b in r["values"]]
+    return (sum(v[a] for v in both), sum(v[b] for v in both)) if both else (None, None)
+
+
 def _sum(rows: list[dict], metrics: list[str]) -> dict:
+    """
+    Totals plus ratios. A ratio uses only days that recorded both of its parts:
+    when Impressions is switched on mid-campaign, weeks of spend with no
+    impressions must not be divided by a few days of impressions (that is how
+    CPM came out at ₹3,16,942 and CTR above 100%).
+    """
     t = {m: (sum(r["values"].get(m, 0) for r in rows) if rows else None) for m in metrics}
-    return {**t, **computed(t)}
+    def ratio(a: str, b: str, k: float = 1):
+        num, den = _pair(rows, a, b)
+        return round(num * k / den, 4) if num is not None and den else None
+    return {**t, "cpl": ratio("spend", "leads"), "ctr": ratio("clicks", "impressions", 100),
+            "cpm": ratio("spend", "impressions", 1000), "cpc": ratio("spend", "clicks")}
 
 
-async def series(db, report: dict, lo: date, hi: date, granularity: str, today: date | None = None) -> dict:
+async def series(db, report: dict, lo: date, hi: date, granularity: str, today: date | None = None,
+                 children: list[dict] | None = None) -> dict:
+    """
+    KPI totals and chart points for one ad — or, with `children`, for an
+    account: the ads' rows added up day by day. A day is "missing" when any ad
+    owed numbers for it and has none (for an account, an incomplete day).
+    """
     today = today or today_ist()
     if hi < lo:
         raise AdReportError("The end of the range is before its start.")
     if (hi - lo).days > MAX_RANGE_DAYS:
         raise AdReportError("Choose a range of up to two years.")
-    rid, metrics = str(report["_id"]), metrics_of(report)
+    members = children if children is not None else [report]
+    rids = [str(m["_id"]) for m in members]
+    metrics = union_metrics(members) if children is not None else metrics_of(report)
+    start = min((m["start_date"] for m in members), default=report.get("start_date") or lo.isoformat())
 
     async def rows_between(a: date, b: date) -> list[dict]:
+        if not rids:
+            return []
         return await db[ENTRIES].find(
-            {"report_id": rid, "date": {"$gte": a.isoformat(), "$lte": b.isoformat()}}
-        ).sort("date", 1).to_list(5000)
+            {"report_id": {"$in": rids}, "date": {"$gte": a.isoformat(), "$lte": b.isoformat()}}
+        ).sort("date", 1).to_list(20000)
 
     rows = await rows_between(lo, hi)
     span = (hi - lo).days + 1
@@ -319,41 +429,73 @@ async def series(db, report: dict, lo: date, hi: date, granularity: str, today: 
     # Compare only against a previous period the report fully covered — a
     # period that began before the start date would show "+319%" off two days.
     prev_rows = (await rows_between(prev_lo, lo - timedelta(days=1))
-                 if prev_lo.isoformat() >= report["start_date"] else [])
-    by_day = {r["date"]: r for r in rows}
-    owed = {d.isoformat() for d in expected_days(report, today - timedelta(days=1))}
+                 if prev_lo.isoformat() >= start else [])
+    by_day: dict[str, list[dict]] = {}
+    for r in rows:
+        by_day.setdefault(r["date"], []).append(r)
+    yesterday = today - timedelta(days=1)
+    owed: dict[str, set[str]] = {}
+    for m in members:
+        for d in expected_days(m, yesterday):
+            owed.setdefault(d.isoformat(), set()).add(str(m["_id"]))
 
     points: dict[str, dict] = {}
     for d in days_between(lo, hi):
         key, b_lo, b_hi = _bucket(d, granularity)
         p = points.setdefault(key, {"key": key, "from": max(b_lo, lo).isoformat(),
-                                    "to": min(b_hi, hi).isoformat(), "_rows": [],
+                                    "to": min(b_hi, hi).isoformat(), "_rows": [], "_days": set(),
                                     "missing": [], "edited": [], "off": []})
         iso = d.isoformat()
-        if iso in by_day:
-            r = by_day[iso]
-            p["_rows"].append(r)
-            if r.get("edits"):
+        day_rows = by_day.get(iso, [])
+        if day_rows:
+            p["_rows"].extend(day_rows)
+            p["_days"].add(iso)
+            if any(r.get("edits") for r in day_rows):
                 p["edited"].append(iso)
-            if r.get("campaign_off"):
+            if any(r.get("campaign_off") for r in day_rows):
                 p["off"].append(iso)
-        elif iso in owed:
+        if owed.get(iso, set()) - {r["report_id"] for r in day_rows}:
             p["missing"].append(iso)
     out_points = []
     for p in points.values():
         reported = p.pop("_rows")
-        out_points.append({**p, "reported_days": len(reported),
+        days = p.pop("_days")
+        out_points.append({**p, "reported_days": len(days),
                            "values": _sum(reported, metrics) if reported else None})
 
-    return {
+    out = {
         "range": {"from": lo.isoformat(), "to": hi.isoformat()},
         "granularity": granularity,
         "metrics": metrics,
         "totals": _sum(rows, metrics),
         "previous": _sum(prev_rows, metrics) if prev_rows else None,
-        "reported_days": len(rows),
+        "reported_days": len({r["date"] for r in rows}),
         "points": out_points,
     }
+    if children is not None:
+        out["breakdown"] = await _breakdown(db, members, rows, today)
+    return out
+
+
+async def _breakdown(db, children: list[dict], rows: list[dict], today: date) -> list[dict]:
+    """One line per ad in an account, for the same range as the totals."""
+    names = await names_for(db, [a for c in children for a in c.get("assignees", [])])
+    by_ad: dict[str, list[dict]] = {}
+    for r in rows:
+        by_ad.setdefault(r["report_id"], []).append(r)
+    out = []
+    for c in children:
+        cid = str(c["_id"])
+        missing = await missing_days(db, c, today)
+        cover = serialize_creatives(c)[:1]
+        out.append({
+            "id": cid, "name": c.get("name", ""), "status": c.get("status", "active"),
+            "day_status": day_status(c, missing, now_on(today)), "missing": missing,
+            "owners": [names.get(a, "") for a in c.get("assignees", [])],
+            "totals": _sum(by_ad.get(cid, []), metrics_of(c)),
+            "cover": cover[0] if cover else None,
+        })
+    return out
 
 
 # ── Serialisation ─────────────────────────────────────────────────────────────
@@ -382,9 +524,21 @@ def serialize_entry(e: dict, names: dict[str, str] | None = None) -> dict:
 
 
 async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[str, str],
-                           user: dict | None = None, today: date | None = None) -> dict:
+                           user: dict | None = None, today: date | None = None,
+                           account_names: dict[str, str] | None = None) -> dict:
     today = today or today_ist()
     missing = await missing_days(db, r, today)
+    acct = None
+    if is_account(r):
+        kids = await children_of(db, r)
+        statuses = [day_status(k, await missing_days(db, k, today), now_on(today)) for k in kids]
+        rollup = ("ended" if r.get("status") == "ended" else
+                  "missing" if "missing" in statuses else "due" if "due" in statuses else
+                  "updated" if "updated" in statuses else "not_started")
+        acct = {"ads": len(kids), "active_ads": sum(1 for k in kids if k.get("status") == "active"),
+                "missing_ads": statuses.count("missing"), "rollup_status": rollup,
+                "metrics": union_metrics(kids),
+                "start": min((k["start_date"] for k in kids), default=r.get("start_date"))}
     spark_lo = today - timedelta(days=14)
     spark_rows = await db[ENTRIES].find(
         {"report_id": str(r["_id"]), "date": {"$gte": spark_lo.isoformat(), "$lt": today.isoformat()}},
@@ -398,15 +552,21 @@ async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[
         "team_id": r.get("team_id"),
         "team_name": team_names.get(r.get("team_id"), ""),
         "assignees": [{"id": a, "name": names.get(a, "")} for a in r.get("assignees", [])],
-        "start_date": r.get("start_date"),
+        "start_date": (acct["start"] if acct else r.get("start_date")),
         "end_date": r.get("end_date"),
-        "metrics": metrics_of(r),
+        "metrics": acct["metrics"] if acct else metrics_of(r),
         "extra_metrics": r.get("extra_metrics", []),
+        "kind": "account" if acct else "ad",
+        "account_id": r.get("account_id"),
+        "account_name": (account_names or {}).get(r.get("account_id") or "", ""),
+        "ad_account_ref": r.get("ad_account_ref") or "",
+        "account": acct,
         "currency": r.get("currency", "INR"),
         "reminder_due": r.get("reminder_due", "12:00"),
         "reminder_escalate": r.get("reminder_escalate", "17:00"),
         "status": r.get("status", "active"),
-        "day_status": day_status(r, missing),
+        "day_status": acct["rollup_status"] if acct else day_status(r, missing, now_on(today)),
+        "creatives": serialize_creatives(r),       # first one is the cover
         "missing": missing,
         "sparkline": [have.get(d.isoformat()) for d in days_between(spark_lo, today - timedelta(days=1))],
         "created_by": r.get("created_by"),
@@ -511,7 +671,7 @@ async def run_reminders(db, now: datetime | None = None, holidays: frozenset[dat
     if not is_working_day(today, holidays):
         return 0
     sent = 0
-    for r in await db[REPORTS].find({"status": "active"}).to_list(2000):
+    for r in await db[REPORTS].find({"status": "active", **AD_ONLY}).to_list(2000):
         try:
             stages = [s for s, t in ((1, r.get("reminder_due", "12:00")),
                                      (2, r.get("reminder_escalate", "17:00"))) if now.time() >= _hhmm(t)]
@@ -536,7 +696,7 @@ async def auto_end(db, today: date) -> int:
     """Reports past their end date with every day filled in become 'ended'."""
     n = 0
     for r in await db[REPORTS].find(
-        {"status": "active", "end_date": {"$ne": None, "$lt": today.isoformat()}}
+        {"status": "active", "end_date": {"$ne": None, "$lt": today.isoformat()}, **AD_ONLY}
     ).to_list(1000):
         if not await missing_days(db, r, today):
             res = await db[REPORTS].update_one(
@@ -552,6 +712,7 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db[REPORTS].create_index([("status", 1)])
     await db[REPORTS].create_index([("assignees", 1)])
     await db[REPORTS].create_index([("team_id", 1)])
+    await db[REPORTS].create_index([("account_id", 1)])
     await db[ENTRIES].create_index([("report_id", 1), ("date", 1)], unique=True, name="unique_ad_report_day")
     await db[REMINDERS].create_index([("report_id", 1), ("on_date", 1), ("stage", 1)],
                                      unique=True, name="unique_ad_report_reminder")

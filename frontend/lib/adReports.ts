@@ -34,7 +34,7 @@ export const METRIC_META: Record<TileMetric, { label: string; hint: string; mone
   leads:       { label: "Leads (Form)",  hint: "Leads collected through instant forms, as shown in Ads Manager." },
   spend:       { label: "Amount spent",  hint: "Total spent on this campaign, as shown in Ads Manager.", money: true, lowerIsBetter: true },
   impressions: { label: "Impressions",   hint: "Times the ads were on screen." },
-  reach:       { label: "Reach",         hint: "People who saw the ads at least once." },
+  reach:       { label: "Reach",         hint: "Daily reach added up. Meta's own total counts each person once, so it will be lower." },
   clicks:      { label: "Link clicks",   hint: "Clicks on links in the ads." },
   cpl:         { label: "Per lead (form)", hint: "Amount spent ÷ leads — calculated, never typed.", money: true, lowerIsBetter: true },
   ctr:         { label: "CTR",           hint: "Link clicks ÷ impressions — calculated.", pct: true },

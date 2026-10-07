@@ -7,11 +7,16 @@ Extra = Literal["impressions", "reach", "clicks"]
 
 
 class CreateAdReportRequest(BaseModel):
+    # "ad": numbers are entered daily. "account": a Meta ad account whose
+    # numbers are the sum of the ads inside it (nothing is typed for it).
+    kind: Literal["ad", "account"] = "ad"
     name: str
     team_id: str
-    # Owner first, then an optional backup. Both can enter, both are reminded.
-    assignees: list[str]
-    start_date: str                       # IST calendar day, YYYY-MM-DD
+    # Ads: owner first, then an optional backup. Both can enter, both are reminded.
+    assignees: list[str] = []
+    start_date: str = ""                  # IST calendar day, YYYY-MM-DD (ads)
+    account_id: Optional[str] = None      # ads: the account it belongs to (same team), or none
+    ad_account_ref: Optional[str] = None  # accounts: e.g. "act_1234567890" as shown in Ads Manager
     end_date: Optional[str] = None        # None = until someone ends it
     # Leads + Amount spent are always tracked; these are optional extras.
     extra_metrics: list[Extra] = []
@@ -22,6 +27,9 @@ class CreateAdReportRequest(BaseModel):
 class UpdateAdReportRequest(BaseModel):
     action: Optional[Literal["pause", "resume", "end"]] = None
     name: Optional[str] = None
+    account_id: Optional[str] = None      # ads: move into this account
+    clear_account: bool = False           # ads: take it out of its account
+    ad_account_ref: Optional[str] = None  # accounts
     assignees: Optional[list[str]] = None
     end_date: Optional[str] = None
     clear_end_date: bool = False
@@ -39,3 +47,13 @@ class EntryRequest(BaseModel):
     clicks: Optional[int] = None
     campaign_off: bool = False
     note: str = ""
+
+
+class CreativeRequest(BaseModel):
+    """A file the browser has already uploaded straight to R2 (lib/directUpload)."""
+    key: str
+    filename: str = ""
+    size: int = 0
+    content_type: str = ""
+    url: str = ""
+    backend: str = "r2"

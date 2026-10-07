@@ -4,9 +4,11 @@
  * Used only to PREVIEW what will happen — the server creates the copies. Kept
  * deliberately identical in its rules so the live summary in the Add Task form
  * shows exactly the dates the scheduler will use:
- *   • dates are IST calendar days, anchored on today (IST)
- *   • weekly = same weekday; monthly = same day of month, clamped to the last
- *     day of shorter months, and always computed from the anchor (no drift)
+ *   • dates are IST calendar days, anchored on the first day (today, or the
+ *     chosen weekday / day of the month)
+ *   • weekly = same weekday; monthly = the chosen day of month, clamped to the
+ *     last day of shorter months, always computed from the anchor (no drift)
+ *   • weekdays use the SERVER's numbering: Monday 0 … Sunday 6
  */
 import type { RepeatFrequency } from "@/types/project";
 
@@ -26,17 +28,46 @@ function daysInMonth(year: number, monthIndex: number): number {
   return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
 }
 
-/** Date of occurrence `index` (0 = the anchor itself). Mirrors occurrence_date(). */
-export function occurrenceDate(frequency: RepeatFrequency, anchorISO: string, index: number): string {
+/** `iso` moved by `months`, landing on `day` or the month's last day. Mirrors add_months(). */
+function addMonths(iso: string, months: number, day: number): string {
+  const a = parse(iso);
+  const total = a.getUTCMonth() + months;
+  const year = a.getUTCFullYear() + Math.floor(total / 12);
+  const month = ((total % 12) + 12) % 12;
+  return toISO(new Date(Date.UTC(year, month, Math.min(day, daysInMonth(year, month)))));
+}
+
+/**
+ * Date of occurrence `index` (0 = the anchor itself). Mirrors occurrence_date().
+ * `monthDay` is the chosen day for monthly series (the anchor may be clamped).
+ */
+export function occurrenceDate(frequency: RepeatFrequency, anchorISO: string, index: number, monthDay?: number | null): string {
   const a = parse(anchorISO);
   if (frequency === "daily") return toISO(new Date(a.getTime() + index * DAY_MS));
   if (frequency === "weekly") return toISO(new Date(a.getTime() + index * 7 * DAY_MS));
-  const total = a.getUTCMonth() + index;
-  const year = a.getUTCFullYear() + Math.floor(total / 12);
-  const month = ((total % 12) + 12) % 12;
-  const day = Math.min(a.getUTCDate(), daysInMonth(year, month));
-  return toISO(new Date(Date.UTC(year, month, day)));
+  return addMonths(anchorISO, index, monthDay || a.getUTCDate());
 }
+
+/** Server weekday (Mon 0 … Sun 6) of a date. */
+export function serverWeekday(iso: string): number {
+  return (parse(iso).getUTCDay() + 6) % 7;
+}
+
+/** The series' first day: today, or the next chosen weekday / day of month. Mirrors first_date(). */
+export function firstDate(frequency: RepeatFrequency, todayISO: string, weekday?: number | null, monthDay?: number | null): string {
+  if (frequency === "weekly" && weekday != null) {
+    return addDays(todayISO, (weekday - serverWeekday(todayISO) + 7) % 7);
+  }
+  if (frequency === "monthly" && monthDay) {
+    const thisMonth = addMonths(todayISO, 0, monthDay);
+    return thisMonth >= todayISO ? thisMonth : addMonths(todayISO, 1, monthDay);
+  }
+  return todayISO;
+}
+
+/** Monday-first labels, indexed by server weekday. */
+export const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+export const WEEKDAY_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export function addDays(iso: string, days: number): string {
   return toISO(new Date(parse(iso).getTime() + days * DAY_MS));
@@ -51,16 +82,16 @@ export function ordinal(n: number): string {
 }
 
 /** "Every day" · "Every Friday" · "Every month on the 10th". */
-export function describePattern(frequency: RepeatFrequency, anchorISO: string): string {
+export function describePattern(frequency: RepeatFrequency, anchorISO: string, monthDay?: number | null): string {
   const a = parse(anchorISO);
   if (frequency === "daily") return "Every day";
   if (frequency === "weekly") return `Every ${WEEKDAYS[a.getUTCDay()]}`;
-  return `Every month on the ${ordinal(a.getUTCDate())}`;
+  return `Every month on the ${ordinal(monthDay || a.getUTCDate())}`;
 }
 
 /** Monthly on the 29th–31st needs a word about shorter months. */
-export function needsMonthEndNote(frequency: RepeatFrequency, anchorISO: string): boolean {
-  return frequency === "monthly" && parse(anchorISO).getUTCDate() > 28;
+export function needsMonthEndNote(frequency: RepeatFrequency, anchorISO: string, monthDay?: number | null): boolean {
+  return frequency === "monthly" && (monthDay || parse(anchorISO).getUTCDate()) > 28;
 }
 
 /** "10 Oct" — short, unambiguous, for the summary line. */

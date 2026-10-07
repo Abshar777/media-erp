@@ -444,7 +444,7 @@ async def add_task_batch(
     # ── Repeating ─────────────────────────────────────────────────────────────
     if body.repeat:
         r = body.repeat
-        msg = rec.validate_repeat(r.frequency, r.count, r.due_offset_days)
+        msg = rec.validate_repeat(r.frequency, r.count, r.due_offset_days, r.weekday, r.month_day)
         if msg:
             return error_response(msg, status_code=422)
         if not (template.get("title") or "").strip():
@@ -452,9 +452,30 @@ async def add_task_batch(
         if not await rec.can_create_series(current_user, template.get("team_id"), db):
             return error_response("Only a team leader can set up repeating tasks.", status_code=403)
 
+        today = rec.today_ist()
+        starts = rec.first_date(r.frequency, today, r.weekday, r.month_day)
+        if starts > today:
+            # Nothing is created today, so check now what the first copy would
+            # trip over later (raise_task's approver rule) rather than letting the
+            # series pause itself on its first day.
+            approver = (template.get("approver_id") or "").strip()
+            if approver:
+                from app.services import workflow
+                if not await workflow.can_assign_to_others(current_user, template.get("team_id"), db):
+                    return error_response("Only a team leader can choose who approves a task.", status_code=403)
+                if not await workflow.is_team_member(db, template.get("team_id"), approver):
+                    return error_response("The approver must be a leader or member of the selected team.", status_code=422)
+
         series, result = await rec.create_series(
-            db, template, assignees, r.frequency, r.count, r.due_offset_days, current_user
+            db, template, assignees, r.frequency, r.count, r.due_offset_days, current_user,
+            weekday=r.weekday, month_day=r.month_day,
         )
+        if not result["created"] and starts > today:
+            return success_response(
+                data={"tasks": [], "errors": [], "series": rec.serialize_series(series, names)},
+                message=f"Repeating task set — the first task is created on {starts.strftime('%a')} {starts.day} {starts.strftime('%b')}",
+                status_code=201,
+            )
         if not result["created"]:
             # Nobody could get even the first copy — don't leave a series behind
             # that would fail the same way every day.

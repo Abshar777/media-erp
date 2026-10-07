@@ -1,5 +1,5 @@
 from typing import Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 
 
 class Attachment(BaseModel):
@@ -39,6 +39,10 @@ class RepeatSpec(BaseModel):
     count: Optional[int] = None
     # Each copy is due this many days after its own date (0 = same day).
     due_offset_days: int = 0
+    # Weekly: which day (Monday 0 … Sunday 6). Monthly: which date (1–31; shorter
+    # months use their last day). Omitted = the day the task is created.
+    weekday: Optional[StrictInt] = None       # strict: JSON true must not become Tuesday (1)
+    month_day: Optional[StrictInt] = None
 
 
 class BatchCreateRequest(CreateTaskRequest):

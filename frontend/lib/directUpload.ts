@@ -48,6 +48,34 @@ async function presign(files: File[], prefix = "attachments"): Promise<PresignRe
   return data.data;
 }
 
+/** Errors worth trying again: R2 answers 503 "ServiceUnavailable" now and then, and networks blip. */
+class RetryableUploadError extends Error {}
+
+/**
+ * PUT with up to 4 attempts (0.8 s, 2 s, 4.5 s apart) on 5xx / 408 / 429 /
+ * network errors. Safe: re-sending the same bytes to the same pre-signed URL
+ * simply overwrites one object. Other errors (403 expired URL, 400) fail at once.
+ */
+async function putWithRetry(
+  presigned: PresignResult,
+  file: File,
+  onProgress?: (pct: number) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const waits = [800, 2000, 4500];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await putWithProgress(presigned, file, onProgress, signal);
+    } catch (err) {
+      if (!(err instanceof RetryableUploadError) || attempt >= waits.length || signal?.aborted) {
+        throw err instanceof RetryableUploadError ? new Error(err.message) : err;
+      }
+      onProgress?.(0);
+      await new Promise((r) => setTimeout(r, waits[attempt]));
+    }
+  }
+}
+
 /** PUT a single file to a pre-signed URL, reporting 0–100 progress. */
 function putWithProgress(
   presigned: PresignResult,
@@ -66,11 +94,13 @@ function putWithProgress(
         onProgress(Math.round((e.loaded / e.total) * 100));
       }
     };
-    xhr.onload = () =>
-      xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`Upload failed (HTTP ${xhr.status})`));
-    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve();
+      const msg = `Upload failed (HTTP ${xhr.status})`;
+      const retry = xhr.status >= 500 || xhr.status === 408 || xhr.status === 429;
+      reject(retry ? new RetryableUploadError(msg) : new Error(msg));
+    };
+    xhr.onerror = () => reject(new RetryableUploadError("Network error during upload"));
     xhr.onabort = () => reject(new DOMException("Aborted", "AbortError"));
     if (signal) {
       if (signal.aborted) return xhr.abort();
@@ -107,7 +137,7 @@ export async function uploadFilesDirect(
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     const p = presigned[i];
-    await putWithProgress(p, file, (pct) => opts.onProgress?.(i, pct), opts.signal);
+    await putWithRetry(p, file, (pct) => opts.onProgress?.(i, pct), opts.signal);
     out.push({
       url: p.public_url,
       key: p.key,

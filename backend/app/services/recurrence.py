@@ -77,24 +77,42 @@ def add_months(d: date, months: int, anchor_day: int) -> date:
     return date(year, month, min(anchor_day, calendar.monthrange(year, month)[1]))
 
 
-def occurrence_date(frequency: str, anchor: date, index: int) -> date:
+def occurrence_date(frequency: str, anchor: date, index: int, month_day: int | None = None) -> date:
     """
     Date of occurrence `index` (0 = the anchor itself).
 
     Always computed from the anchor, never from the previous occurrence. That is
     what keeps a series set on the 31st landing on the 31st whenever a month
     has one — stepping month-to-month would decay 31 → 30 → 28 → 28 → … forever.
+
+    `month_day` is the day the leader chose (monthly). It matters when the
+    anchor itself was clamped: the 31st chosen in February anchors on the 28th,
+    and without it every later month would land on the 28th too.
     """
     if frequency == "daily":
         return anchor + timedelta(days=index)
     if frequency == "weekly":
         return anchor + timedelta(weeks=index)
     if frequency == "monthly":
-        return add_months(anchor, index, anchor.day)
+        return add_months(anchor, index, month_day or anchor.day)
     raise ValueError(f"unknown frequency: {frequency!r}")
 
 
-def first_index_on_or_after(frequency: str, anchor: date, start: int, target: date) -> int:
+def first_date(frequency: str, today: date, weekday: int | None = None, month_day: int | None = None) -> date:
+    """
+    The series' first day: today, or the next chosen weekday / day of the month.
+    `weekday` uses Python's numbering (Monday 0 … Sunday 6).
+    """
+    if frequency == "weekly" and weekday is not None:
+        return today + timedelta(days=(weekday - today.weekday()) % 7)
+    if frequency == "monthly" and month_day:
+        this_month = add_months(today, 0, month_day)
+        return this_month if this_month >= today else add_months(today, 1, month_day)
+    return today
+
+
+def first_index_on_or_after(frequency: str, anchor: date, start: int, target: date,
+                            month_day: int | None = None) -> int:
     """Smallest index >= `start` whose date is on or after `target` (used on resume)."""
     days = (target - anchor).days
     if frequency == "daily":
@@ -102,7 +120,7 @@ def first_index_on_or_after(frequency: str, anchor: date, start: int, target: da
     if frequency == "weekly":
         return max(start, -(-days // 7))          # ceiling division
     i = start
-    while occurrence_date(frequency, anchor, i) < target:
+    while occurrence_date(frequency, anchor, i, month_day) < target:
         i += 1
     return i
 
@@ -198,9 +216,13 @@ async def validate_assignees(db: AsyncIOMotorDatabase, assignees) -> tuple[list[
     return ids, {a: users[a].get("name", "") for a in ids}, ""
 
 
-def validate_repeat(frequency: str, count, due_offset_days) -> str:
+def validate_repeat(frequency: str, count, due_offset_days, weekday=None, month_day=None) -> str:
     if frequency not in FREQUENCIES:
         return "Choose daily, weekly or monthly."
+    if weekday is not None and (frequency != "weekly" or isinstance(weekday, bool) or not 0 <= weekday <= 6):
+        return "Choose a day of the week for a weekly task."
+    if month_day is not None and (frequency != "monthly" or isinstance(month_day, bool) or not 1 <= month_day <= 31):
+        return "Choose a date between 1 and 31 for a monthly task."
     if count is not None:
         if not isinstance(count, int) or count < 1:
             return "Repeat at least once."
@@ -295,7 +317,7 @@ async def advance_series(db: AsyncIOMotorDatabase, series_id: ObjectId,
             "occurrences_done": done,
             "next_index": nxt,
             "next_date": None if finished else occurrence_date(
-                s["frequency"], date.fromisoformat(s["anchor_date"]), nxt).isoformat(),
+                s["frequency"], date.fromisoformat(s["anchor_date"]), nxt, s.get("month_day")).isoformat(),
             "status": "completed" if finished else "active",
             "last_run_at": now,
             "updated_at": now,
@@ -324,17 +346,24 @@ async def _pause(db, series: dict, reason: str) -> None:
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 async def create_series(db: AsyncIOMotorDatabase, template: dict, assignees: list[str],
-                        frequency: str, count, due_offset_days: int, creator: dict) -> tuple[dict, dict]:
-    """Insert a series anchored on today (IST) and create its first copy now."""
+                        frequency: str, count, due_offset_days: int, creator: dict,
+                        weekday: int | None = None, month_day: int | None = None) -> tuple[dict, dict]:
+    """
+    Insert a series anchored on its first day — today, or the chosen weekday /
+    day of the month — and create today's copy now when the first day is today.
+    """
     today = today_ist()
+    anchor = first_date(frequency, today, weekday, month_day)
     now = datetime.now(timezone.utc)
     doc = {k: template.get(k) for k in TEMPLATE_FIELDS}
     doc.update({
         "assignees": assignees,
         "frequency": frequency,
-        "anchor_date": today.isoformat(),
+        "anchor_date": anchor.isoformat(),
+        "month_day": (month_day or anchor.day) if frequency == "monthly" else None,
+        "weekday": anchor.weekday() if frequency == "weekly" else None,
         "next_index": 0,
-        "next_date": today.isoformat(),
+        "next_date": anchor.isoformat(),
         "occurrences_total": count,
         "occurrences_done": 0,
         "due_offset_days": due_offset_days or 0,
@@ -359,11 +388,12 @@ async def resume_series(db: AsyncIOMotorDatabase, series: dict) -> dict:
     are caught up, because nobody chose to skip them.)
     """
     anchor = date.fromisoformat(series["anchor_date"])
-    idx = first_index_on_or_after(series["frequency"], anchor, series["next_index"], today_ist())
+    md = series.get("month_day")
+    idx = first_index_on_or_after(series["frequency"], anchor, series["next_index"], today_ist(), md)
     await db["recurring_tasks"].update_one(
         {"_id": series["_id"], "status": "paused"},
         {"$set": {"status": "active", "paused_reason": "", "next_index": idx,
-                  "next_date": occurrence_date(series["frequency"], anchor, idx).isoformat(),
+                  "next_date": occurrence_date(series["frequency"], anchor, idx, md).isoformat(),
                   "updated_at": datetime.now(timezone.utc)}},
     )
     await advance_series(db, series["_id"])          # today's copy now, if today is a day
@@ -395,6 +425,8 @@ def serialize_series(s: dict, names: dict[str, str]) -> dict:
         "assignees": [{"id": a, "name": names.get(a, "")} for a in s.get("assignees", [])],
         "frequency": s.get("frequency"),
         "anchor_date": s.get("anchor_date"),
+        "month_day": s.get("month_day"),
+        "weekday": s.get("weekday"),
         "next_date": s.get("next_date"),
         "occurrences_total": s.get("occurrences_total"),
         "occurrences_done": s.get("occurrences_done", 0),

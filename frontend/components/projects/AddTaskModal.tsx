@@ -251,6 +251,8 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
               frequency: repeat.frequency as Exclude<RepeatValue["frequency"], "once">,
               count: repeat.untilStopped ? null : repeat.count,
               due_offset_days: repeat.dueOffset,
+              ...(repeat.frequency === "weekly" && repeat.weekday != null ? { weekday: repeat.weekday } : {}),
+              ...(repeat.frequency === "monthly" && repeat.monthDay != null ? { month_day: repeat.monthDay } : {}),
             }
           : null,
       });

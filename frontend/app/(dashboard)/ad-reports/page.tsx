@@ -16,7 +16,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
-  BarChart3, BellRing, CalendarRange, Flag, Loader2, Pause, PencilLine, Play, Plus, Settings2, Users,
+  BarChart3, BellRing, Building2, CalendarRange, ChevronRight, Flag, Loader2, Pause, PencilLine, Play, Plus, Settings2, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { istTodayKey } from "@/lib/datetime";
@@ -27,6 +27,9 @@ import { EntryModal } from "@/components/ad-reports/EntryModal";
 import { ReportFormModal } from "@/components/ad-reports/ReportFormModal";
 import { StatusChip } from "@/components/ad-reports/StatusChip";
 import { Sparkline } from "@/components/ad-reports/Sparkline";
+import { CreativeShowcase, CreativeThumb } from "@/components/ad-reports/CreativeShowcase";
+import { AccountView } from "@/components/ad-reports/AccountView";
+import { useAuthStore } from "@/stores/authStore";
 import type { AdReport } from "@/types/adReport";
 
 function readParams() {
@@ -56,9 +59,14 @@ function ReportCard({ r, active, onClick }: { r: AdReport; active: boolean; onCl
         active ? "border-primary/50 bg-primary/5 ring-1 ring-primary/20" : "bg-card hover:bg-muted/50",
       )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <p className="line-clamp-2 text-sm font-semibold leading-snug">{r.name}</p>
-        <StatusChip status={r.day_status} className="shrink-0" />
+      <div className="flex items-start gap-3">
+        <CreativeThumb creative={r.creatives?.[0]} className="size-12" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <p className="line-clamp-2 text-sm font-semibold leading-snug">{r.name}</p>
+            <StatusChip status={r.day_status} className="shrink-0" />
+          </div>
+        </div>
       </div>
       <div className="mt-2 flex items-end justify-between gap-2">
         <div className="min-w-0 text-xs text-muted-foreground">
@@ -71,6 +79,71 @@ function ReportCard({ r, active, onClick }: { r: AdReport; active: boolean; onCl
         <p className="mt-1.5 truncate text-[11px] text-red-600 dark:text-red-400">Missing {missingPhrase(r.missing)}</p>
       )}
     </button>
+  );
+}
+
+// ── Rail tree: accounts → their ads; then ads without an account ─────────────
+
+function AccountRow({ a, active, open, onClick, onToggle }: {
+  a: AdReport; active: boolean; open: boolean; onClick: () => void; onToggle: () => void;
+}) {
+  const info = a.account;
+  return (
+    <div className={cn("flex items-center gap-1 rounded-xl border transition",
+      active ? "border-primary/50 bg-primary/5 ring-1 ring-primary/20" : "bg-card hover:bg-muted/50")}>
+      <button type="button" onClick={onToggle} aria-label={open ? `Fold ${a.name}` : `Show ads in ${a.name}`} aria-expanded={open}
+        className="ml-1 rounded-md p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground">
+        <ChevronRight className={cn("size-4 transition-transform", open && "rotate-90")} />
+      </button>
+      <button type="button" onClick={onClick} aria-current={active ? "true" : undefined}
+        className="flex min-w-0 flex-1 items-center gap-2.5 py-2.5 pr-3 text-left">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 text-white">
+          <Building2 className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold">{a.name}</span>
+          <span className="block truncate text-[11px] text-muted-foreground">
+            {info ? `${info.ads} ad${info.ads === 1 ? "" : "s"}` : "—"}
+            {info && info.missing_ads > 0 && <span className="text-red-600 dark:text-red-400"> · {info.missing_ads} missing</span>}
+            {a.status === "ended" && " · ended"}
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function ReportRail({ reports, selectedId, onChoose }: { reports: AdReport[]; selectedId: string | null; onChoose: (id: string) => void }) {
+  const [folded, setFolded] = useState<Set<string>>(() => new Set());
+  const accounts = reports.filter((r) => r.kind === "account").sort((x, y) => x.name.localeCompare(y.name));
+  const ids = new Set(accounts.map((a) => a.id));
+  const ads = reports.filter((r) => r.kind !== "account");
+  const loose = ads.filter((r) => !r.account_id || !ids.has(r.account_id));
+  const toggle = (id: string) => setFolded((f) => { const n = new Set(f); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  return (
+    <aside className="hidden max-h-[calc(100vh-12rem)] space-y-2 overflow-y-auto pr-1 xl:block" aria-label="Reports">
+      {accounts.map((a) => {
+        const kids = ads.filter((r) => r.account_id === a.id);
+        const open = !folded.has(a.id);
+        return (
+          <div key={a.id} className="space-y-2">
+            <AccountRow a={a} active={a.id === selectedId} open={open} onClick={() => onChoose(a.id)} onToggle={() => toggle(a.id)} />
+            {open && kids.length > 0 && (
+              <div className="ml-4 space-y-2 border-l-2 border-blue-500/20 pl-3">
+                {kids.map((r) => <ReportCard key={r.id} r={r} active={r.id === selectedId} onClick={() => onChoose(r.id)} />)}
+              </div>
+            )}
+            {open && kids.length === 0 && (
+              <p className="ml-4 border-l-2 border-blue-500/20 py-1 pl-3 text-[11px] text-muted-foreground">No ads yet</p>
+            )}
+          </div>
+        );
+      })}
+      {accounts.length > 0 && loose.length > 0 && (
+        <p className="px-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Ads without an account</p>
+      )}
+      {loose.map((r) => <ReportCard key={r.id} r={r} active={r.id === selectedId} onClick={() => onChoose(r.id)} />)}
+    </aside>
   );
 }
 
@@ -191,64 +264,99 @@ function dayAgo(today: string, n: number) {
 
 // ── Report header + actions ──────────────────────────────────────────────────
 
-function ReportHeader({ r, onEntry, onEdit }: { r: AdReport; onEntry: () => void; onEdit: () => void }) {
+function ReportHero({ r, meId, onEntry, onEdit, onOpenAccount }: {
+  r: AdReport; meId: string; onEntry: () => void; onEdit: () => void; onOpenAccount?: () => void;
+}) {
   const update = useUpdateAdReport();
   const remind = useRemindAdReport();
   const [confirmEnd, setConfirmEnd] = useState(false);
   useEffect(() => setConfirmEnd(false), [r.id]);
   const canUpdate = r.can_enter && (r.status !== "ended" || r.can_manage);
-  const btn = "inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition hover:bg-muted disabled:opacity-50";
+  const btn = "inline-flex h-9 items-center gap-1.5 rounded-lg border bg-background px-3 text-sm font-medium transition hover:bg-muted disabled:opacity-50";
+  const facts: { label: string; value: React.ReactNode }[] = [
+    { label: "Team", value: r.team_name || "—" },
+    { label: "Updated by", value: r.assignees.map((a, i) => `${a.name}${i ? " (backup)" : ""}`).join(", ") || "—" },
+    { label: "Runs", value: <>{dayLabel(r.start_date)} → {r.end_date ? dayLabel(r.end_date) : "until ended"}</> },
+    { label: "Reminders", value: `${r.reminder_due} · ${r.reminder_escalate} IST` },
+  ];
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold leading-tight">{r.name}</h2>
-          <StatusChip status={r.day_status} />
+    <section className="rounded-2xl border bg-card p-4 delta-shadow sm:p-5">
+      <div className="flex flex-col gap-5 sm:flex-row">
+        <CreativeShowcase key={r.id} report={r} meId={meId} className="w-full shrink-0 sm:w-[210px] lg:w-[230px]" />
+
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-md bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-400">Meta</span>
+              <StatusChip status={r.day_status} />
+              {r.account_name && (onOpenAccount ? (
+                <button type="button" onClick={onOpenAccount}
+                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:border-blue-500/40 hover:text-foreground">
+                  <Building2 className="size-3" /> in {r.account_name}
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  <Building2 className="size-3" /> in {r.account_name}
+                </span>
+              ))}
+            </div>
+            <h2 className="mt-1.5 text-xl font-semibold leading-tight tracking-tight sm:text-2xl">{r.name}</h2>
+          </div>
+
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm lg:grid-cols-4">
+            {facts.map((f) => (
+              <div key={f.label} className="min-w-0">
+                <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{f.label}</dt>
+                <dd className="mt-0.5 break-words font-medium leading-snug">{f.value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {r.status === "active" && r.missing.length > 0 && (
+            <p className="flex items-center gap-2 rounded-lg border border-red-500/25 bg-red-500/5 px-3 py-2 text-xs text-red-700 dark:text-red-400">
+              <CalendarRange className="size-3.5 shrink-0" />
+              No numbers yet for {missingPhrase(r.missing)}
+            </p>
+          )}
+
+          <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+            {canUpdate && (
+              <button type="button" onClick={onEntry}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90">
+                <PencilLine className="size-4" /> Update numbers
+                {r.missing.length > 0 && r.status === "active" && (
+                  <span className="rounded-full bg-primary-foreground/20 px-1.5 text-[11px] tabular-nums">{r.missing.length}</span>
+                )}
+              </button>
+            )}
+            {r.can_manage && r.status === "active" && r.missing.length > 0 && (
+              <button type="button" className={btn} disabled={remind.isPending} onClick={() => remind.mutate(r.id)}>
+                <BellRing className="size-4" /> Remind
+              </button>
+            )}
+            {r.can_manage && r.status !== "ended" && (
+              <>
+                <button type="button" className={btn} onClick={onEdit}><Settings2 className="size-4" /> Edit</button>
+                <button type="button" className={btn} disabled={update.isPending}
+                  onClick={() => update.mutate({ id: r.id, action: r.status === "paused" ? "resume" : "pause" })}>
+                  {r.status === "paused" ? <><Play className="size-4" /> Resume</> : <><Pause className="size-4" /> Pause</>}
+                </button>
+                {confirmEnd ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs">
+                    End for good?
+                    <button type="button" className="rounded-md px-2 py-1 font-medium hover:bg-muted" onClick={() => setConfirmEnd(false)}>Cancel</button>
+                    <button type="button" className="rounded-md border border-red-500/40 px-2 py-1 font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                      onClick={() => update.mutate({ id: r.id, action: "end" })}>End report</button>
+                  </span>
+                ) : (
+                  <button type="button" className={btn} onClick={() => setConfirmEnd(true)}><Flag className="size-4" /> End</button>
+                )}
+              </>
+            )}
+          </div>
         </div>
-        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-          <span>{r.team_name}</span>
-          <span>Updated by {r.assignees.map((a, i) => `${a.name}${i ? " (backup)" : ""}`).join(", ")}</span>
-          <span className="inline-flex items-center gap-1"><CalendarRange className="size-3" />
-            {dayLabel(r.start_date)} → {r.end_date ? dayLabel(r.end_date) : "until ended"}</span>
-          <span>Reminders {r.reminder_due} · {r.reminder_escalate}</span>
-        </p>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {r.can_manage && r.status === "active" && r.missing.length > 0 && (
-          <button type="button" className={btn} disabled={remind.isPending} onClick={() => remind.mutate(r.id)}>
-            <BellRing className="size-4" /> Remind
-          </button>
-        )}
-        {r.can_manage && r.status !== "ended" && (
-          <>
-            <button type="button" className={btn} onClick={onEdit}><Settings2 className="size-4" /> Edit</button>
-            <button type="button" className={btn} disabled={update.isPending}
-              onClick={() => update.mutate({ id: r.id, action: r.status === "paused" ? "resume" : "pause" })}>
-              {r.status === "paused" ? <><Play className="size-4" /> Resume</> : <><Pause className="size-4" /> Pause</>}
-            </button>
-            {confirmEnd ? (
-              <span className="inline-flex items-center gap-1.5 text-xs">
-                End for good?
-                <button type="button" className="rounded-md px-2 py-1 font-medium hover:bg-muted" onClick={() => setConfirmEnd(false)}>Cancel</button>
-                <button type="button" className="rounded-md border border-red-500/40 px-2 py-1 font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
-                  onClick={() => update.mutate({ id: r.id, action: "end" })}>End report</button>
-              </span>
-            ) : (
-              <button type="button" className={btn} onClick={() => setConfirmEnd(true)}><Flag className="size-4" /> End</button>
-            )}
-          </>
-        )}
-        {canUpdate && (
-          <button type="button" onClick={onEntry}
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90">
-            <PencilLine className="size-4" /> Update numbers
-            {r.missing.length > 0 && r.status === "active" && (
-              <span className="rounded-full bg-primary-foreground/20 px-1.5 text-[11px] tabular-nums">{r.missing.length}</span>
-            )}
-          </button>
-        )}
-      </div>
-    </div>
+    </section>
   );
 }
 
@@ -270,6 +378,7 @@ function AdReportsInner() {
   const [entryOpen, setEntryOpen] = useState(initial.entry);
   const [entryDay, setEntryDay] = useState<string | null>(null);
   const [form, setForm] = useState<"new" | "edit" | null>(null);
+  const [formPreset, setFormPreset] = useState<{ kind: "ad" | "account"; accountId: string | null }>({ kind: "ad", accountId: null });
   const [scope, setScope] = useState<"all" | "mine">("all");
 
   // A notification link (or Back/Forward) changed the URL while we're mounted.
@@ -280,6 +389,7 @@ function AdReportsInner() {
     if (paramEntry) { setEntryDay(null); setEntryOpen(true); }
   }, [paramReport, paramEntry]);
 
+  const meId = useAuthStore((st) => st.user?.id ?? "");
   const { data: todayInfo } = useAdToday();
   const canCreate = !!todayInfo?.can_create;
   const { data: reports = [], isLoading, isFetching } = useAdReports(scope);
@@ -328,7 +438,7 @@ function AdReportsInner() {
             </div>
           )}
           {canCreate && (
-            <button type="button" onClick={() => setForm("new")}
+            <button type="button" onClick={() => { setFormPreset({ kind: "ad", accountId: null }); setForm("new"); }}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">
               <Plus className="size-4" /> New report
             </button>
@@ -365,22 +475,46 @@ function AdReportsInner() {
           <div className="xl:hidden">
             <select aria-label="Choose a report" value={selected?.id ?? ""} onChange={(e) => choose(e.target.value)}
               className="h-10 w-full rounded-lg border bg-background px-3 text-sm">
-              {reports.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}{r.day_status === "missing" ? " — missing" : r.day_status === "due" ? " — due" : ""}
-                </option>
-              ))}
+              {(() => {
+                const tag = (r: AdReport) => (r.day_status === "missing" ? " — missing" : r.day_status === "due" ? " — due" : "");
+                const accs = reports.filter((r) => r.kind === "account").sort((x, y) => x.name.localeCompare(y.name));
+                const ids = new Set(accs.map((a) => a.id));
+                const ads = reports.filter((r) => r.kind !== "account");
+                const loose = ads.filter((r) => !r.account_id || !ids.has(r.account_id));
+                if (!accs.length) return ads.map((r) => <option key={r.id} value={r.id}>{r.name}{tag(r)}</option>);
+                return (
+                  <>
+                    {accs.map((a) => (
+                      <optgroup key={a.id} label={a.name}>
+                        <option value={a.id}>▣ {a.name} — all ads{tag(a)}</option>
+                        {ads.filter((r) => r.account_id === a.id).map((r) => <option key={r.id} value={r.id}>{"\u00a0\u00a0"}{r.name}{tag(r)}</option>)}
+                      </optgroup>
+                    ))}
+                    {loose.length > 0 && (
+                      <optgroup label="Ads without an account">
+                        {loose.map((r) => <option key={r.id} value={r.id}>{r.name}{tag(r)}</option>)}
+                      </optgroup>
+                    )}
+                  </>
+                );
+              })()}
             </select>
           </div>
-          <aside className="hidden max-h-[calc(100vh-12rem)] space-y-2 overflow-y-auto pr-1 xl:block" aria-label="Reports">
-            {reports.map((r) => (
-              <ReportCard key={r.id} r={r} active={r.id === selected?.id} onClick={() => choose(r.id)} />
-            ))}
-          </aside>
+          <ReportRail reports={reports} selectedId={selected?.id ?? null} onChoose={choose} />
 
-          {selected && (
+          {selected && selected.kind === "account" && (
+            <AccountView
+              account={selected}
+              today={today}
+              onOpenAd={choose}
+              onAddAd={() => { setFormPreset({ kind: "ad", accountId: selected.id }); setForm("new"); }}
+              onEdit={() => setForm("edit")}
+            />
+          )}
+          {selected && selected.kind !== "account" && (
             <div className="min-w-0 space-y-5">
-              <ReportHeader r={selected} onEntry={() => { setEntryDay(null); setEntryOpen(true); }} onEdit={() => setForm("edit")} />
+              <ReportHero r={selected} meId={meId} onEntry={() => { setEntryDay(null); setEntryOpen(true); }} onEdit={() => setForm("edit")}
+                onOpenAccount={selected.account_id && reports.some((x) => x.id === selected.account_id) ? () => choose(selected.account_id!) : undefined} />
               <PerformanceOverview key={selected.id} report={selected} today={today} />
               <History report={selected} today={today} onEdit={(d) => { setEntryDay(d); setEntryOpen(true); }} />
             </div>
@@ -388,7 +522,7 @@ function AdReportsInner() {
         </div>
       )}
 
-      {selected && (
+      {selected && selected.kind !== "account" && (
         <EntryModal report={selected} open={entryOpen && !!selected.can_enter} onClose={closeEntry} today={today} initialDate={entryDay} />
       )}
       <ReportFormModal
@@ -397,6 +531,9 @@ function AdReportsInner() {
         today={today}
         report={form === "edit" ? selected : null}
         onCreated={(id) => choose(id)}
+        all={reports}
+        defaultKind={formPreset.kind}
+        defaultAccountId={formPreset.accountId}
       />
     </div>
   );

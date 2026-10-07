@@ -537,3 +537,107 @@ async def test_reading_one_series_is_limited_to_the_people_it_involves(world):
     # Taken off future copies, Asha still holds today's — she can still read the series.
     await w["call"]("PATCH", f"/api/v1/projects/recurring/{sid}", "lead", json={"assignees": [s["mira"]]})
     assert (await get("asha")).status_code == 200
+
+
+# ── Chosen weekday / day of the month ────────────────────────────────────────
+
+def test_first_date_for_a_chosen_day():
+    fri = date(2026, 10, 9)                                   # a Friday
+    assert rec.first_date("weekly", fri, weekday=4) == fri, "today is that day"
+    assert rec.first_date("weekly", fri, weekday=0) == date(2026, 10, 12), "next Monday"
+    assert rec.first_date("weekly", fri, weekday=3) == date(2026, 10, 15), "Thursday has passed this week"
+    assert rec.first_date("monthly", fri, month_day=9) == fri
+    assert rec.first_date("monthly", fri, month_day=20) == date(2026, 10, 20)
+    assert rec.first_date("monthly", fri, month_day=1) == date(2026, 11, 1), "the 1st has passed"
+    assert rec.first_date("monthly", date(2027, 2, 10), month_day=31) == date(2027, 2, 28), "clamped to Feb"
+    assert rec.first_date("daily", fri, weekday=2) == fri, "daily ignores a chosen day"
+
+
+def test_month_day_survives_a_clamped_anchor():
+    # Chosen 31st, started in February: the anchor is 28 Feb, later months must go back to the 31st.
+    feb28 = date(2027, 2, 28)
+    got = [rec.occurrence_date("monthly", feb28, i, 31) for i in range(4)]
+    assert got == [date(2027, 2, 28), date(2027, 3, 31), date(2027, 4, 30), date(2027, 5, 31)]
+
+
+async def test_weekly_on_a_chosen_day_starts_then(world):
+    w = world                                                 # clock: Friday 9 Oct
+    r = await start(w, frequency="weekly", count=3, weekday=0, assignees=[w["s"]["asha"]])
+    assert r.status_code == 201
+    body_ = r.json()
+    assert body_["data"]["tasks"] == [] and "Mon 12 Oct" in body_["message"], "nothing today; says when"
+    sid = body_["data"]["series"]["id"]
+    assert body_["data"]["series"]["next_date"] == "2026-10-12"
+    for d in range(10, 31):
+        w["clock"].today = date(2026, 10, d)
+        await rec.run_due(w["db"])
+    dates = [c["recurrence"]["date"] for c in await copies(w, sid)]
+    assert dates == ["2026-10-12", "2026-10-19", "2026-10-26"]
+    assert all(date.fromisoformat(x).weekday() == 0 for x in dates)
+
+
+async def test_monthly_on_a_chosen_date(world):
+    w = world
+    r = await start(w, frequency="monthly", count=4, month_day=31, assignees=[w["s"]["asha"]])
+    sid = r.json()["data"]["series"]["id"]
+    assert r.json()["data"]["series"]["month_day"] == 31
+    d = date(2026, 10, 10)
+    while d <= date(2027, 2, 1):
+        w["clock"].today = d
+        await rec.run_due(w["db"])
+        d += timedelta(days=1)
+    dates = [c["recurrence"]["date"] for c in await copies(w, sid)]
+    assert dates == ["2026-10-31", "2026-11-30", "2026-12-31", "2027-01-31"]
+
+
+async def test_chosen_day_today_creates_the_first_copy_now(world):
+    w = world
+    r = await start(w, frequency="weekly", count=2, weekday=4, assignees=[w["s"]["asha"]])   # Friday = today
+    assert r.status_code == 201 and len(r.json()["data"]["tasks"]) == 1
+
+
+async def test_chosen_day_validation(world):
+    w = world
+    assert (await start(w, frequency="weekly", weekday=7)).status_code == 422
+    assert (await start(w, frequency="weekly", weekday=-1)).status_code == 422
+    assert (await start(w, frequency="daily", weekday=1)).status_code == 422, "weekday is weekly only"
+    assert (await start(w, frequency="monthly", month_day=32)).status_code == 422
+    assert (await start(w, frequency="monthly", month_day=0)).status_code == 422
+    assert (await start(w, frequency="weekly", month_day=5)).status_code == 422, "month_day is monthly only"
+    assert (await start(w, frequency="weekly", weekday=True)).status_code == 422, "JSON true isn't Tuesday"
+    assert (await start(w, frequency="weekly", weekday="3")).status_code == 422, "numbers only"
+    assert await w["db"]["recurring_tasks"].count_documents({}) == 0
+
+
+async def test_future_start_still_refuses_a_bad_approver(world):
+    w, s = world, world["s"]
+    r = await w["call"]("POST", "/api/v1/projects/batch", "lead",
+                        json=body(w, assignees=[s["asha"]], approver_id=s["lead2"],
+                                  repeat={"frequency": "weekly", "count": 3, "weekday": 0}))
+    assert r.status_code == 422 and "approver" in r.json()["message"].lower()
+    assert await w["db"]["recurring_tasks"].count_documents({}) == 0
+
+
+async def test_resume_keeps_the_chosen_month_day(world):
+    w = world
+    r = await start(w, frequency="monthly", count=None, month_day=31, assignees=[w["s"]["asha"]])
+    sid = r.json()["data"]["series"]["id"]
+    await w["call"]("PATCH", f"/api/v1/projects/recurring/{sid}", "lead", json={"action": "pause"})
+    w["clock"].today = date(2026, 11, 15)
+    res = await w["call"]("PATCH", f"/api/v1/projects/recurring/{sid}", "lead", json={"action": "resume"})
+    assert res.json()["data"]["next_date"] == "2026-11-30"
+
+
+async def test_monthly_31st_started_in_february_returns_to_the_31st(world):
+    w = world
+    w["clock"].today = date(2027, 2, 10)
+    r = await start(w, frequency="monthly", count=3, month_day=31, assignees=[w["s"]["asha"]],
+                    )
+    sid = r.json()["data"]["series"]["id"]
+    d = date(2027, 2, 10)
+    while d <= date(2027, 5, 1):
+        w["clock"].today = d
+        await rec.run_due(w["db"])
+        d += timedelta(days=1)
+    dates = [c["recurrence"]["date"] for c in await copies(w, sid)]
+    assert dates == ["2027-02-28", "2027-03-31", "2027-04-30"], dates

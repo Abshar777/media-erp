@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import type {
+  AdCreative,
   AdEntry, AdEntryPayload, AdGranularity, AdReport, AdSeries, AdToday,
   CreateAdReportPayload, UpdateAdReportPayload,
 } from "@/types/adReport";
@@ -64,7 +65,10 @@ export function useCreateAdReport() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (p: CreateAdReportPayload) => (await api.post<Env<AdReport>>("/ad-reports", p)).data.data,
-    onSuccess: () => { toast.success("Ad report created"); qc.invalidateQueries({ queryKey: KEY }); },
+    onSuccess: (r) => {
+      toast.success(r.kind === "account" ? "Ad account created" : "Ad report created");
+      qc.invalidateQueries({ queryKey: KEY });
+    },
     onError: (e) => toast.error(errMsg(e, "Could not create the report")),
   });
 }
@@ -94,6 +98,36 @@ export function useRemindAdReport() {
     mutationFn: async (id: string) => (await api.post<Env<{ notified: number }>>(`/ad-reports/${id}/remind`)).data,
     onSuccess: () => toast.success("Reminder sent"),
     onError: (e) => toast.error(errMsg(e, "Could not send the reminder")),
+  });
+}
+
+/** Register a file already uploaded to R2 (lib/directUpload) as a creative. */
+export function useAddCreative() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...file }: { id: string; key: string; filename: string; size: number; content_type: string }) =>
+      (await api.post<Env<AdCreative[]>>(`/ad-reports/${id}/creatives`, file)).data.data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useSetCover() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, creativeId }: { id: string; creativeId: string }) =>
+      (await api.post<Env<AdCreative[]>>(`/ad-reports/${id}/creatives/${creativeId}/cover`)).data.data,
+    onSuccess: () => { toast.success("Cover updated"); qc.invalidateQueries({ queryKey: KEY }); },
+    onError: (e) => toast.error(errMsg(e, "Could not change the cover")),
+  });
+}
+
+export function useRemoveCreative() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, creativeId }: { id: string; creativeId: string }) =>
+      (await api.delete<Env<AdCreative[]>>(`/ad-reports/${id}/creatives/${creativeId}`)).data.data,
+    onSuccess: () => { toast.success("Creative removed"); qc.invalidateQueries({ queryKey: KEY }); },
+    onError: (e) => toast.error(errMsg(e, "Could not remove it")),
   });
 }
 

@@ -161,7 +161,7 @@ function SeriesCard({ s, focused }: { s: RecurringSeries; focused: boolean }) {
           {s.assignees.length > 3 ? ` +${s.assignees.length - 3}` : ""}
         </span>
         <span>·</span>
-        <span>{describePattern(s.frequency, s.anchor_date)}</span>
+        <span>{describePattern(s.frequency, s.anchor_date, s.month_day)}</span>
         {s.status === "active" && <><span>·</span><span>next: <b className="font-medium text-foreground">{nextLabel(s.next_date)}</b></span></>}
       </div>
 
