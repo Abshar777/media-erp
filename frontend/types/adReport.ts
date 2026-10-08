@@ -1,5 +1,7 @@
 /** Ad Reports — Meta "Performance overview" numbers entered daily by the team. */
 
+import type { AdFlagSummary } from "@/types/adFlag";
+
 export type AdExtraMetric = "impressions" | "reach" | "clicks";
 export type AdMetric = "leads" | "spend" | AdExtraMetric;
 export type AdComputedMetric = "cpl" | "ctr" | "cpm" | "cpc";
@@ -73,6 +75,8 @@ export interface AdReport {
   updated_at: string;
   can_manage?: boolean;
   can_enter?: boolean;
+  /** Ads: an open "Ad not performing" flag, else one closed in the last 14 days. */
+  flag?: AdFlagSummary | null;
 }
 
 export interface AdEntry {

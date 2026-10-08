@@ -5,7 +5,9 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, ClipboardList, Eye, EyeOff, KeyRound, Loader2, Mail, Palette, QrCode, Shield, Sparkles, User } from "lucide-react";
+import { Bell, ClipboardList, Eye, EyeOff, KeyRound, Loader2, Mail, Palette, QrCode, Shield, Sparkles, User, Star
+} from "lucide-react";
+import { SavedTasksManager } from "@/components/projects/SavedTasksManager";
 import { Switch } from "@/components/ui/switch";
 import { useBranding, useUpdateBranding, useResetBranding } from "@/hooks/useWhitelabel";
 import { useEmailSettings, useUpdateEmailSettings, useTestEmail } from "@/hooks/useEmailSettings";
@@ -39,7 +41,7 @@ const passwordSchema = z
 
 type ProfileForm   = z.infer<typeof profileSchema>;
 type PasswordForm  = z.infer<typeof passwordSchema>;
-type Tab = "profile" | "password" | "plan" | "branding" | "security" | "audit" | "email" | "notifications";
+type Tab = "profile" | "password" | "plan" | "branding" | "security" | "audit" | "email" | "notifications" | "saved-tasks";
 
 // ── Notification-prefs helpers ────────────────────────────────────────────────
 type NotifCategory = "employee" | "leader" | "elevated";
@@ -54,6 +56,7 @@ const NOTIF_DEFS: Record<NotifCategory, NotifDef[]> = {
     { key: "task_reedit",       label: "Sent for Revision",   desc: "When your task is returned for revision" },
     { key: "due_date_reminder", label: "Due Date Reminder",   desc: "When a task is due the next day" },
     { key: "ad_report_due",     label: "Ad Report Reminder",  desc: "When a day's ad numbers are still missing" },
+    { key: "ad_flag_update",    label: "Ad Recreate Update",  desc: "When an ad you flagged is picked up, recreated or declined" },
   ],
   leader: [
     { key: "team_task_assigned", label: "New Team Task",     desc: "When new work is assigned to your team" },
@@ -63,6 +66,7 @@ const NOTIF_DEFS: Record<NotifCategory, NotifDef[]> = {
     { key: "task_started",       label: "Task Started",      desc: "When a team member begins working on a task" },
     { key: "task_break",         label: "Task Paused",       desc: "When a team member takes a break on a task" },
     { key: "ad_report_overdue",  label: "Ad Numbers Missing", desc: "When a member still hasn't entered a day's ad numbers" },
+    { key: "ad_flagged",         label: "Ad Not Performing", desc: "When an ad is sent to you to recreate" },
   ],
   elevated: [
     { key: "team_task_assigned", label: "Task Assigned",     desc: "When any task is assigned to a team" },
@@ -833,13 +837,14 @@ function EmailTab() {
   );
 }
 
-const TABS: { id: Tab; label: string; icon: React.ElementType; superAdminOnly?: boolean }[] = [
+const TABS: { id: Tab; label: string; icon: React.ElementType; superAdminOnly?: boolean; elevatedOnly?: boolean }[] = [
   { id: "profile",       label: "Profile",       icon: User },
   { id: "password",      label: "Password",      icon: KeyRound },
   { id: "plan",          label: "Plan",          icon: Sparkles },
   { id: "branding",      label: "Branding",      icon: Palette },
   { id: "security",      label: "Security",      icon: Shield },
   { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "saved-tasks",   label: "Saved tasks",   icon: Star, elevatedOnly: true },
   { id: "audit",         label: "Audit Logs",    icon: ClipboardList },
   { id: "email",         label: "Email SMTP",    icon: Mail, superAdminOnly: true },
 ];
@@ -848,7 +853,8 @@ export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("profile");
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = !!(user?.role?.is_system_role && user?.role?.role_name === "Super Admin");
-  const visibleTabs = TABS.filter((t) => !t.superAdminOnly || isSuperAdmin);
+  const isElevated = ["Super Admin", "Admin", "Coordinator"].includes(user?.role?.role_name ?? "");
+  const visibleTabs = TABS.filter((t) => (!t.superAdminOnly || isSuperAdmin) && (!t.elevatedOnly || isElevated));
 
   return (
     <div className="space-y-5">
@@ -888,6 +894,7 @@ export default function SettingsPage() {
             {tab === "audit"         && <AuditTab />}
             {tab === "notifications" && <NotificationsTab />}
             {tab === "email"         && <EmailTab />}
+            {tab === "saved-tasks"   && <SavedTasksManager teamId={null} />}
           </motion.div>
         </AnimatePresence>
       </div>

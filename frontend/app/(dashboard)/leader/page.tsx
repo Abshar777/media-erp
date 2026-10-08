@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { Suspense, useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { AnimatePresence } from "framer-motion";
 import {
   ClipboardCheck, CheckCircle2, RotateCcw, Inbox, UserPlus,
   Search,
   Loader2, Calendar, Crown, ChevronDown, Paperclip,
-  MessageSquare, Eye, AlertTriangle,
+  MessageSquare, Eye, AlertTriangle, TrendingDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +17,21 @@ import {
   type LeaderQueueFilters,
 } from "@/hooks/useProjects";
 import { TaskDetailModal } from "@/components/projects/TaskDetailModal";
+import { AdFlagCard } from "@/components/leader/AdFlagCard";
+import { useAdFlagInbox } from "@/hooks/useAdFlags";
+import type { AdFlagScope } from "@/types/adFlag";
+
+const AD_SCOPE_LABEL: Record<AdFlagScope, string> = { to_me: "Sent to me", sent: "Sent by me", all: "All" };
+const AD_SCOPE_HINT: Record<AdFlagScope, string> = {
+  to_me: "Marketing flagged these ads as not performing. Watch the ad, check the numbers, then recreate it.",
+  sent: "Ads you marked as not performing — and which leader has each one now.",
+  all: "Every ad marked as not performing, across all teams.",
+};
+const AD_SCOPE_EMPTY: Record<AdFlagScope, string> = {
+  to_me: "When marketing marks an ad as not performing and sends it to you, it shows up here.",
+  sent: "Ads you mark as not performing (on an ad's report) show up here, with who has them.",
+  all: "No ad has been marked as not performing in the last 14 days.",
+};
 import { ApproveRouteModal, ReeditModal } from "@/components/projects/ReviewActionModals";
 import { useAuthStore } from "@/stores/authStore";
 import type { Task } from "@/types/project";
@@ -24,7 +40,22 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fmtDateOnly } from "@/lib/datetime";
 
-type Tab = "review" | "assign" | "reedit";
+type Tab = "review" | "assign" | "reedit" | "ads";
+const TABS: Tab[] = ["review", "assign", "reedit", "ads"];
+
+/**
+ * ?tab=ads&flag=<id> — where an "Ad not performing" notification lands.
+ * Read through useSearchParams (in its own Suspense boundary, so the page stays
+ * static): on an in-app navigation the page renders before window.location
+ * changes, so reading it once on mount would see the previous page's URL.
+ */
+function DeskUrl({ onChange }: { onChange: (tab: Tab | null, flag: string) => void }) {
+  const q = useSearchParams();
+  const t = q.get("tab") as Tab | null;
+  const flag = q.get("flag") ?? "";
+  useEffect(() => { onChange(t && TABS.includes(t) ? t : null, flag); }, [t, flag, onChange]);
+  return null;
+}
 
 // ── Review card ───────────────────────────────────────────────────────────────
 
@@ -382,6 +413,32 @@ export default function LeaderPage() {
     qFilters.assigned || qFilters.scope
   );
   const [tab, setTab] = useState<Tab>("review");
+  const [flagParam, setFlagParam] = useState("");
+  const onDeskUrl = useMemo(() => (t: Tab | null, flag: string) => {
+    if (t) setTab(t);
+    setFlagParam(flag);
+  }, []);
+  // Three views: sent to me / sent by me / all (admin roles). The desk opens on
+  // the one that has something — a sender or an admin usually has nothing
+  // "sent to me", and an empty tab looked like the ad never arrived.
+  const [adScope, setAdScope] = useState<AdFlagScope>("to_me");
+  const [adScopeSettled, setAdScopeSettled] = useState(false);
+  const { data: adFlags, isFetching: adsFetching } = useAdFlagInbox(adScope);
+  useEffect(() => {
+    if (adScopeSettled || !adFlags) return;
+    setAdScopeSettled(true);
+    if ((adFlags.recent.to_me ?? 0) > 0) return;
+    const next = (["sent", "all"] as AdFlagScope[]).find((sc) => adFlags.scopes.includes(sc) && (adFlags.recent[sc] ?? 0) > 0);
+    if (next) setAdScope(next);
+  }, [adFlags, adScopeSettled]);
+  const pickAdScope = (sc: AdFlagScope) => { setAdScopeSettled(true); setAdScope(sc); };
+  const adsActive = adFlags?.scope === adScope ? adFlags.active : [];
+  const adsClosed = adFlags?.scope === adScope ? adFlags.closed : [];
+  // Bring the flag a notification pointed at into view once it has loaded.
+  useEffect(() => {
+    if (!flagParam || !adFlags || tab !== "ads") return;
+    document.getElementById(`flag-${flagParam}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [flagParam, adFlags, tab]);
   const [reeditTask, setReeditTask] = useState<Task | null>(null);
   const [approveTask, setApproveTask] = useState<Task | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState("");
@@ -402,6 +459,8 @@ export default function LeaderPage() {
 
   const incoming = data?.incoming ?? [];
   const reeditList = data?.reedit ?? [];
+
+  const urlWatcher = <Suspense fallback={null}><DeskUrl onChange={onDeskUrl} /></Suspense>;
 
   if (isLoading) {
     return (
@@ -427,10 +486,13 @@ export default function LeaderPage() {
     { id: "review", icon: <ClipboardCheck className="size-4" />, label: "Pending Reviews", count: review.length },
     { id: "assign", icon: <Inbox className="size-4" />, label: "Assign Work",     count: incoming.length },
     { id: "reedit", icon: <RotateCcw className="size-4" />, label: "Reedit",       count: reeditList.length, danger: true },
+    // The badge counts what's waiting on *you*.
+    { id: "ads",    icon: <TrendingDown className="size-4" />, label: "Ads to redo", count: adFlags?.counts.to_me ?? 0, danger: true },
   ];
 
   return (
     <div className="flex flex-col gap-5 pb-6">
+      {urlWatcher}
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
           <ClipboardCheck className="size-6 text-primary" /> Leader Desk
@@ -465,8 +527,10 @@ export default function LeaderPage() {
         ))}
       </div>
 
-      {/* Filters — applied server-side across all three desks, so a search or
-          date range means the same thing whichever tab you are on. */}
+      {/* Filters — applied server-side across the three task desks, so a search
+          or date range means the same thing whichever of them you are on.
+          (Ads to redo is a short list of its own; the filters don't apply.) */}
+      {tab !== "ads" && (
       <div className="flex flex-col gap-3 rounded-xl border bg-card p-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[200px] flex-1">
@@ -566,6 +630,7 @@ export default function LeaderPage() {
           ))}
         </div>
       </div>
+      )}
 
       {/* Team filter (review tab) */}
       {tab === "review" && teamsList.length > 1 && (
@@ -656,6 +721,61 @@ export default function LeaderPage() {
             </div>
           </>
         )
+      )}
+
+      {/* Ads to redo — ads marked as not performing: sent to me / by me / all */}
+      {tab === "ads" && (
+        <>
+          {adFlags && adFlags.scopes.length > 1 && (
+            <div className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-lg border bg-muted/40 p-1" role="group" aria-label="Which ads">
+              {adFlags.scopes.map((sc) => {
+                const n = adFlags.counts[sc] ?? 0;
+                return (
+                  <button key={sc} type="button" aria-pressed={adScope === sc} onClick={() => pickAdScope(sc)}
+                    className={cn("flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+                      adScope === sc ? "bg-card text-foreground shadow-sm border" : "text-muted-foreground hover:text-foreground")}>
+                    {AD_SCOPE_LABEL[sc]}
+                    {n > 0 && <span className="rounded-full bg-red-500/15 px-1.5 text-[10px] font-bold text-red-600 dark:text-red-400">{n}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {!adFlags || (adsFetching && adFlags.scope !== adScope) ? (
+            <div className="flex justify-center py-16"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>
+          ) : adsActive.length === 0 && adsClosed.length === 0 ? (
+            <Empty icon={<TrendingDown className="size-10" />} title="No ads to redo" sub={AD_SCOPE_EMPTY[adScope]} />
+          ) : (
+            <>
+              {adsActive.length > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/5 border border-red-400/20 text-xs text-red-600 dark:text-red-400">
+                  <TrendingDown className="size-3.5 shrink-0" />
+                  {AD_SCOPE_HINT[adScope]}
+                </div>
+              )}
+              {adsActive.length > 0 ? (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {adsActive.map((f) => <AdFlagCard key={f.id} flag={f} highlight={f.id === flagParam} />)}
+                </div>
+              ) : (
+                <p className="rounded-xl border bg-card px-4 py-6 text-center text-sm text-muted-foreground">Nothing open — all caught up.</p>
+              )}
+              {adsClosed.length > 0 && (
+                <details className="group rounded-xl border bg-card"
+                  {...(adsClosed.some((f) => f.id === flagParam) ? { open: true } : {})}>
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium">
+                    <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+                    Recently closed <span className="text-xs font-normal text-muted-foreground">({adsClosed.length}, last 14 days)</span>
+                  </summary>
+                  <div className="grid grid-cols-1 gap-4 border-t p-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {adsClosed.map((f) => <AdFlagCard key={f.id} flag={f} highlight={f.id === flagParam} />)}
+                  </div>
+                </details>
+              )}
+            </>
+          )}
+        </>
       )}
 
       <AnimatePresence>

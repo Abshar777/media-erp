@@ -86,7 +86,11 @@ def test_tampered_jwt_signature_raises():
     """Changing one char in the token signature must raise JWTError."""
     token = create_access_token(USER_ID)
     parts = token.split(".")
-    parts[2] = parts[2][:-1] + ("A" if parts[2][-1] != "A" else "B")
+    # Flip a character in the MIDDLE of the signature. The last base64url
+    # character of a 32-byte HMAC carries 2 padding bits that decoders ignore,
+    # so changing it sometimes leaves the signature valid (a random failure).
+    mid = len(parts[2]) // 2
+    parts[2] = parts[2][:mid] + ("A" if parts[2][mid] != "A" else "B") + parts[2][mid + 1:]
     bad_token = ".".join(parts)
     with pytest.raises(JWTError):
         decode_access_token(bad_token)

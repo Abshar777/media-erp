@@ -23,6 +23,7 @@ const ALERT_TYPES = new Set<string>([
   "fund_request",     // finance approved or rejected your request
   "ad_report_due",    // today's ad numbers are missing
   "ad_report_overdue",
+  "ad_flagged",       // an ad was sent to you to recreate
 ]);
 
 const PREF_KEY = "notify:desktop";

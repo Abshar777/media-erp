@@ -1,6 +1,164 @@
+# plan.md — "Ad not performing": send a weak ad to the media team leader to recreate
+
+> **Status: DONE (2026-10-08)** — implemented and verified: backend suite 164 passed (3 new flag tests, 6 mutants all caught) / the same 8 old failures; existing Ad Reports tests all pass; type check clean (2 old login errors); production build passes. Browser QA with QA accounts only: Lena flagged "delta" → Kofi (bell + strip + rail chip), withdrew it; Kofi's flag on "QA Content — Webinar leads" → Lena's Leader Desk (card with media + numbers, lightbox with all 12 creatives), Start recreating → Mark recreated with a note; sender + the ad's assignee notified at each step; notification link opens the right tab and highlights the card; phone layout.
+> Found while testing: money in narrow card tiles was cut off (→ row layout); the notification link didn't switch Leader Desk's tab on in-app navigation (→ useSearchParams watcher).
+> **Bug report (2026-10-08) — "I click the button, it doesn't arrive in Ads to redo".** Investigated: the flag WAS created and delivered (Super Admin → Basil Mohammed, Design Team; Basil's inbox had it) — but Ads to redo listed only flags sent *to the viewer*, so the sender/admin saw an empty tab and withdrew it. Fixed: views **Sent to me · Sent by me · All (admin roles)**, opening on the view that has something; cards show "With <leader> · <team>" and a confirmed Withdraw for the sender; the send toast says "it's in their Leader Desk → Ads to redo"; leaders whose name is shared by another account show their email (3 "Basil Mohammed" accounts exist); Withdraw asks first. Also fixed: a service worker left by a production build on localhost:3000 kept serving old `/_next/` files to `next dev` (stale code) — dev now unregisters it and clears its cache; and a pre-existing flaky JWT test (tampered the ignorable last base64 char).
+
+## The flow (3 steps, no extra screens)
+1. **Marketing flags it.** On an ad's report, the people on the ad (its assignees) or their team leader press the red **Ad not performing** button, pick *who should recreate it* (a team leader, e.g. the media team's), tick a reason or two, add a note if they like → **Send**.
+2. **The media leader gets it in Leader Desk.** A bell notification (and push; email if they opted in) opens **Leader Desk → Ads to redo**: one card per ad with **the ad itself** (all its creatives, playable/zoomable), **the report** (last 7 days vs the 7 before: leads, amount spent, cost per lead, + 14-day leads trend), the reasons, the note, who sent it and when.
+3. **The leader acts:** **Start recreating** → **Mark recreated** (optional note), or **Decline** (with a reason). Whoever flagged it is notified at each step, and the ad's page shows where it stands.
+
+## Why it's built this way
+- **The flag carries the media and the numbers.** A media leader usually isn't on the marketing team, so they can't open that team's ad report — and they shouldn't need to. The flag stores a **frozen snapshot of the numbers at the moment it was sent** (what "not performing" meant then) and shows the ad's **current creatives** (signed links, never public). No report permissions are widened.
+- **One open flag per ad** (database-enforced) — no duplicate requests; the button turns into a status line while it's open.
+- **Who may flag:** the ad's assignees, its team's leaders and admin roles (exactly who can already work on the report). Not on account rows — flag the ad inside.
+- **Who receives:** any active team leader except yourself, grouped by team. The picker pre-selects the leader this ad was last sent to, else the one you last used — usually zero clicks.
+- **Who may act:** the chosen leader (admin roles too). The sender may **Withdraw** while it's still open.
+- **Reuses** the existing notification delivery (bell + push + opted-in email), creative signing, and the report's own 7-day-vs-previous calculation, so the numbers match the Performance overview exactly.
+- New collection `ad_flags`; new endpoints only (`/ad-reports/{id}/flag-draft`, `/ad-reports/{id}/flags`, `/ad-flags…`). The report list gains one additive field (`flag`) for the status line.
+
+## Where the button goes (UI)
+- **In the ad's action row, on the far right, set apart from the management buttons:** `[Update numbers] [Remind] [Edit] [Pause] [End] ········· [⚠ Ad not performing]`. Left = keep the report running; right = escalate the ad. The gap tells you they're different kinds of action.
+- **Red, but not shouting:** red outline + soft red fill + red text with a trending-down icon — unmistakably the "problem" button, without competing with the blue primary "Update numbers". Phones: it wraps to its own full line.
+- **Once sent**, the button is replaced by a red status strip under the facts (same style as "No numbers yet"): *"Not performing — sent to Mira (QA Design Team) · 8 Oct · Waiting / Being recreated"* with **Withdraw** for the sender. After it's recreated/declined the strip says so for 14 days, and the button is back.
+- **The dialog:** the ad's cover + last-7-days numbers at the top (so you see what you're sending), **Send to** (leaders grouped by team), reason chips (*High cost per lead · Too few leads · Low clicks · Ad looks tired · Wrong audience · Other*), optional note, **Send to Mira**. A reason or a note is required — the media team needs to know what to fix.
+- **Leader Desk:** a new tab **Ads to redo** with a red count, next to Reedit (same family: work coming back). Rail cards in Ad Reports get a small red "Not performing" chip while a flag is open.
+
+## Proving nothing breaks
+- Additive only: new collection, new endpoints, a new Leader Desk tab, one extra field in the report list. Existing Ad Reports, Leader Desk tabs and notifications are untouched.
+- New tests (throwaway DB): who may flag / receive / act, one-open-flag rule, snapshot numbers = the report's own calculation, notifications to the right people, withdraw/decline rules; mutation-checked. Full backend suite must stay at 161 passed / the same 8 old failures. Then type check, production build and browser QA (flag → Leader Desk → recreate → status back on the ad).
+
+---
+---
+
+# plan.md — Download the Overview as a PDF (same filters, same numbers)
+
+> **Update (2026-10-08):** "All tasks" now follows the team's task-report layout on landscape pages — # · Task · Assignee · Assigned · Due · Started · Ended · Completed · Time took · Late by (red; "so far" while open; "On time" when done in time). Late by = working hours past the due day (11:00–20:30 IST, Mon–Sat, company holidays off), matching the report's own numbers exactly.
+
+> **Status: DONE (2026-10-08)** — implemented and verified. Backend suite 161 passed (4 new PDF tests, mutation-checked) / the same 8 old failures; type check clean (2 old login errors); production build passes; live check on the dev database: the numbers printed in the PDF = the database = the screen for 18/18 scope × range combinations; browser QA (button placement, loading/disabled, phone width, real download path, PDF opened and inspected).
+> Found while testing on real data: a 5,000-character task title made reportlab fail the whole export (row taller than a page) — fixed by clipping long text + `splitInRow`, with a regression test.
+> Note: the team section lists the teams the report's tasks belong to (including "No team (personal)"), which is the complete picture for a report; the on-screen team cards show the teams you're in.
+
+## What
+A **Download PDF** button on the Overview. Whatever the Overview is showing — your own overview or one person's, any date range — the PDF is that exact view on paper: "Sara · 1 Oct – 8 Oct" in, "Sara · 1 Oct – 8 Oct" out.
+
+## How the numbers stay correct (one query, not two)
+- The PDF is built **on the server from the very same code path** as the Overview's task list. The scope/visibility logic in `GET /projects` (who may see whom, the member filter, the date filter) is moved into one shared helper; both the list and the PDF call it. So the PDF can never show more, less, or different tasks than the screen.
+- The summary is computed with the **same formulas the Overview uses** (total · in progress = started+break · pending review · approved · overdue = due before today IST and not approved · avg completion over approved tasks with time). A test asserts the PDF's numbers equal what the list endpoint returns for the same filters.
+- **Permissions:** identical to the Overview — a Team Leader can only export people they lead, an Employee only their own work; a refused member exports an empty report, exactly like the screen.
+- Uses **reportlab**, already installed and already used for the chat/campaign PDFs. **Nothing new to install.**
+
+## What's in the PDF (A4, one clean report)
+1. **Header** — "Overview report", whose (your name / "Sara Ali · Design team"), the period in words ("Tasks created 1 Oct – 8 Oct 2026" or "All time"), generated time (IST) and by whom.
+2. **Summary tiles** — Total · In progress · Pending review · Approved · Overdue · Avg completion.
+3. **Task pipeline** — count and share per status.
+4. **Teams** — per team: tasks, active, done, % complete (same as the team cards).
+5. **Upcoming deadlines** — due in the next 7 days, not approved.
+6. **All tasks** — title, assignee, team, status, priority, created, due, time spent; newest first; the header row repeats on every page; page numbers in the footer.
+- Empty period → the report still downloads and says "No tasks were created in this period".
+- Characters the PDF font can't draw (emoji) are dropped rather than printed as boxes; today's data is plain text.
+
+## Where the button goes (UI)
+- **At the end of the header's filter row: [📅 range ▾] [👤 member ▾] [⬇ PDF]** — the two filters choose *what* you see, the last button acts on *that result*, so it reads left-to-right as "pick, then take it with you". It sits on the same row (no new toolbar, KPI cards stay above the fold).
+- **Styled as a quiet secondary button** (outline, same height and radius as the two pickers) so it never competes with the filters; label **"PDF"** with a download icon, tooltip "Download this overview as a PDF".
+- **While preparing:** spinner + "Preparing…", button disabled; success toast "Overview PDF downloaded"; a clear error toast if it fails. Disabled while the Overview itself is still loading.
+- **File name says what's inside:** `overview_sara-ali_2026-10-01_to_2026-10-08.pdf`, `overview_mine_this-month.pdf`, `overview_mine_all-time.pdf`.
+- **Phone:** joins the stacked filters as a full-width button; tablet: wraps with the filters (same wrapping rule as now).
+
+## Proving nothing breaks
+- The shared helper is a pure move of the existing code; `GET /projects` returns byte-for-byte the same responses. Guarded by the existing tests (member scope, date range, projects) — the full suite must stay at 157 passed / the same 8 old failures.
+- The new endpoint is additive (`GET /api/v1/projects/overview/pdf`); the Overview page only gains a button.
+- New tests: PDF numbers = list numbers for leader/member/date combos, permission refusal, empty period, filename; mutation-checked. Then type check, production build, and browser QA (download, open the PDF, compare with the screen).
+
+---
+---
+
+# plan.md — Overview date filter (works with the member filter)
+
+> **Status: DONE (2026-10-08)** — implemented and verified: type check clean (only the 2 pre-existing login errors), production build passes, range helpers unit-checked (month/year/leap edges), browser QA as a Team Leader (presets, custom 1–8 Oct, member + dates together, shared link restore, Clear dates keeps the member, empty state, To-before-From blocked, bad URL falls back to All time, Escape, mobile 375px).
+> QA round 2 (2026-10-08): fixed 5 issues — impossible date in a link crashed the page; unparseable date showed all-time numbers under a date heading; future To accepted; sidebar "Overview" left the page filtered while the URL was clean; header squeezed / panel off-screen at tablet widths. Added `backend/tests/test_overview_date_range.py` (IST edges, member + dates, search, presets; mutation-checked).
+> Files: `frontend/lib/overviewRange.ts` (new), `frontend/components/dashboard/DateRangeFilter.tsx` (new), `frontend/app/(dashboard)/dashboard/page.tsx`.
+
+## What
+A date-range filter on the Overview, so "Sara, 1 Oct – 8 Oct" is two clicks: pick Sara in the member picker, pick the dates.
+
+## How it counts (one rule, the same as Projects)
+- The Overview shows **tasks created in the chosen period** and where they stand now — exactly what the Projects page's date filter already does (`date_filter` / `date_from` / `date_to`, IST calendar days, server-side). One rule everywhere, so a number on the Overview always matches the list behind it.
+- Every card, the pipeline, Recent Activity, Upcoming Deadlines and the team cards re-count from that set. The member filter and the date filter simply combine.
+- **No backend change** — the API already supports it. Nothing else on the page changes when no date is chosen ("All time" = today's behaviour, byte for byte the same request).
+
+## Where it goes (UI)
+- **In the header's right corner, beside "My overview"** — the two filters that change the whole page sit together, above everything they affect, and the KPI cards stay above the fold. Order: **[📅 All time ▾] [👤 My overview ▾]**. On phones both stack full-width under the greeting.
+- **The button** reads the current range ("All time", "This month", "1 Oct – 8 Oct"); it turns primary-tinted when a range is on, exactly like the member picker does when someone is chosen.
+- **The popover:** quick presets in one column — *All time, Today, Yesterday, Last 7 days, This week, This month, Last month, This year* — and a **Custom range** row (From / To date fields + Apply; To can't be before From, nothing after today).
+- **The subtitle says it in words**, so numbers are never misread: "Viewing **Sara**'s overview · tasks created **1 Oct – 8 Oct** · Clear dates".
+- Empty period → "No tasks were created between 1 Oct and 8 Oct" + "Clear dates".
+- **URL:** `?from=2026-10-01&to=2026-10-08` (or `?range=this_month`) alongside `?member=` — refresh-, share- and Back-safe, the same pattern as the member filter.
+
+## Also fixed
+The Overview's own "today" (for due-soon / upcoming deadlines) used UTC, so between 00:00 and 05:30 IST it was a day behind. It uses the IST day now.
+
+## Proving nothing breaks
+No backend change. With no dates chosen the page sends the same request as before. Check: type check, production build, browser — presets, custom range, member + dates together, URL refresh/Back, empty state, phone width, and the existing member filter unchanged.
+
+---
+---
+
+# plan.md — Saved tasks: task-name suggestions while typing
+
+> **Status: IMPLEMENTED & VERIFIED (2026-10-08)** — approved with D1–D4 as recommended, plus "it must never be a headache". Not yet committed.
+> Prepared 2026-10-08. Evidence: in the dev database 52% of tasks reuse a title that already exists (151 tasks, 89 distinct titles).
+
+## 1. The idea, improved
+Your idea: leaders keep a list of default task names; typing "a" in the task name suggests "apple".
+We keep that exactly, and make it stronger in three ways:
+
+| | Your idea | Plan |
+|---|---|---|
+| What is saved | A name | A **saved task**: the name, plus an *optional* description and priority. Picking it fills all three (only fields you haven't typed yet), so a routine task is one click. |
+| Where suggestions come from | The saved list only | **Saved tasks first, then "Recently used" names** worked out automatically from the team's last 90 days. Useful from day one, even before anyone saves anything. |
+| How the list grows | A settings page | Settings page **plus** one click inside Add Task: type a new name → "★ Save 'Monthly SEO report' for Video Team". A ☆ on any "recent" suggestion saves it too. |
+
+## 2. Where things live
+- **Managing saved tasks:** **Teams → (team) → Settings → "Saved tasks"**. Each team does different routine work, the Settings tab already exists and only leaders/admins see it. Table with name, description, priority, "used 12× in 90 days", edit / delete, and an "Add saved task" row.
+- **Company-wide saved tasks** (e.g. "Weekly report" for every team): **Settings → "Saved tasks"** tab, admin roles only. Suggested in every team.
+- **Using them:** the **Task name** field in **Add Task** (the same form for one-off, multi-person and repeating tasks).
+
+## 3. How the suggestions behave (standard combobox, like Google / Gmail search)
+- Click into Task name → a dropdown shows the team's top saved tasks straight away (one click, no typing).
+- Type → it filters instantly. "a" matches names where **any word starts with a** ("**A**pple", "Monthly **a**d report"); best matches first (whole name starts with it → a word starts with it → contains it); the matched letters are bold.
+- Sections: **★ Saved for Video Team**, **🏢 Company**, **🕘 Recently used** (with "used 6×"). Up to 8 rows.
+- Keyboard: ↑ ↓ to move, Enter or Tab to pick, Esc to close. Mouse/touch: tap a row.
+- It never forces a choice: you can always type any new name.
+- Picking a saved task fills the name, and the description/priority **only if those are still empty**; a small "Filled from saved task · Undo" line appears.
+- Changing the team switches to that team's suggestions.
+
+## 4. Rules
+- **Who sees suggestions:** anyone creating a task. Saved tasks: the selected team's (if you're in that team or lead it, or you're an admin) + company-wide. "Recently used": names from **teams you belong to** and your own tasks only — never another team's task titles.
+- **Who manages:** the team's leaders and admin roles (team list); admin roles (company list). Employees just use them.
+- No duplicates per team (case-insensitive), names up to 120 characters, up to 200 saved tasks per team.
+- **Nothing about existing tasks changes.** Saved tasks are only suggestions; creating a task works exactly as today.
+
+## 5. Build
+- **Backend:** new collection `task_presets` `{team_id | null (company), title, description, priority, created_by, created_at, updated_at}` with a unique index on (team, lower-case title). Endpoints: `GET /task-presets/suggest?team_id&q` (saved + company + recent, ranked, permission-filtered), `GET/POST/PATCH/DELETE /task-presets` (management). "Used N×" and "recent" come from counting existing tasks — task creation itself is not touched.
+- **Frontend:** a reusable `TaskNameCombobox` (ARIA combobox) replacing the plain Task name input in Add Task; "Saved tasks" panel in Team Settings; admin "Saved tasks" tab in Settings; inline ★ save.
+- **Tests:** permissions (who sees / manages), no cross-team leakage in "recent", duplicate rule, ranking ("a" → word-prefix matches first), limits; browser QA incl. keyboard, phone width, light/dark; full regression suite.
+
+## 6. Decisions to confirm (recommended first)
+| # | Question | Recommended |
+|---|---|---|
+| D1 | Save only a name, or name + optional description & priority? | **Name + optional description & priority** |
+| D2 | Also suggest "Recently used" names automatically? | **Yes** (team's last 90 days, your teams only) |
+| D3 | Per team, company-wide, or both? | **Both** — team lists by leaders, one company list by admins |
+| D4 | Allow "★ Save for team" right inside Add Task? | **Yes**, for leaders/admins |
+
+---
+---
+
 # plan.md — Ad accounts, with their ads underneath (Ad Reports, part 2)
 
-> **Status: IMPLEMENTED & VERIFIED (2026-10-07)** — see the history files. Not yet committed.
+> **Status: IMPLEMENTED & VERIFIED (2026-10-07)** — committed in f08502b.
 
 ## What
 Meta's own structure: **an ad account holds many ads**. Ad Reports gets the same two levels.

@@ -44,8 +44,28 @@ export default function PWARegister() {
   useEffect(() => {
     const swEnabled =
       process.env.NODE_ENV === "production" || process.env.NEXT_PUBLIC_ENABLE_SW === "1";
-    if (!swEnabled) return;
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    if (!swEnabled) {
+      // A worker installed by a production build on this same origin (e.g.
+      // localhost:3000) outlives it and keeps serving its cached /_next/ files —
+      // and dev file names never change, so `next dev` would run the previous
+      // code. Remove it and its cache, then reload once onto the live bundle.
+      void (async () => {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        const ours = regs.filter((r) => (r.active ?? r.waiting ?? r.installing)?.scriptURL.endsWith("/sw.js"));
+        if (!ours.length) return;
+        await Promise.all(ours.map((r) => r.unregister()));
+        if ("caches" in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.filter((k) => k.startsWith("mediaerp-")).map((k) => caches.delete(k)));
+        }
+        if (navigator.serviceWorker.controller && !sessionStorage.getItem("sw-cleared")) {
+          sessionStorage.setItem("sw-cleared", "1");
+          window.location.reload();
+        }
+      })().catch(() => { /* best effort — never block the app */ });
+      return;
+    }
 
     const onLoad = () => {
       navigator.serviceWorker.register("/sw.js").catch((err) => {

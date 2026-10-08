@@ -136,6 +136,12 @@ async def create_indexes() -> None:
     # ad reports — one row per report per day, and the exactly-once reminder ledger
     from app.services.ad_report_service import ensure_indexes as _ensure_ad_report_indexes
     await _ensure_ad_report_indexes(db)
+    # "Ad not performing" flags — one active flag per ad
+    from app.services.ad_flag_service import ensure_indexes as _ensure_ad_flag_indexes
+    await _ensure_ad_flag_indexes(db)
+    # saved tasks — one name per team (case-insensitive)
+    from app.services.task_preset_service import ensure_indexes as _ensure_preset_indexes
+    await _ensure_preset_indexes(db)
     # fund_requests — asks to finance for money out of Marketing's allocation
     await db["fund_requests"].create_index([("requested_by.id", ASCENDING), ("created_at", DESCENDING)])
     await db["fund_requests"].create_index([("status", ASCENDING), ("next_attempt_at", ASCENDING)])

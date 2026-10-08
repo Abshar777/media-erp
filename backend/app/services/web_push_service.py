@@ -20,7 +20,7 @@ COLLECTION = "push_subscriptions"
 # Only interrupt someone for these. Mirrors ALERT_TYPES in the frontend's
 # lib/browserNotifications.ts — keep the two in step.
 ALERT_TYPES = {"mention", "task_assigned", "pending_review", "task_reedit", "fund_request",
-               "ad_report_due", "ad_report_overdue"}
+               "ad_report_due", "ad_report_overdue", "ad_flagged"}
 
 
 async def save_subscription(db, user_id: str, subscription: dict) -> None:

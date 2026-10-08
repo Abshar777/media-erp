@@ -14,6 +14,7 @@ _ALL_TYPES = [
     "task_transferred", "mention",
     "verify_requested", "verify_rejected", "verify_passed", "verify_removed",
     "ad_report_due", "ad_report_overdue",
+    "ad_flagged", "ad_flag_update",
 ]
 
 

@@ -10,6 +10,8 @@ import { useAllTeams, useTeam, useTeams, useAssignableUsers } from "@/hooks/useT
 import { VerifierPicker } from "@/components/projects/VerifierPicker";
 import { UserPicker } from "@/components/teams/UserPicker";
 import { RepeatField, REPEAT_DEFAULT, type RepeatValue } from "@/components/projects/RepeatField";
+import { TaskNameCombobox } from "@/components/projects/TaskNameCombobox";
+import type { Suggestion } from "@/lib/taskPresets";
 import { istTodayKey } from "@/lib/datetime";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import { useAuthStore } from "@/stores/authStore";
@@ -31,6 +33,8 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   const [title, setTitle]           = useState("");
   const [description, setDesc]      = useState("");
   const [priority, setPriority]     = useState<TaskPriority>("medium");
+  // What a saved task just filled in (and what was there before), for "Undo".
+  const [filled, setFilled] = useState<null | { fields: string[]; prev: { description: string; priority: TaskPriority; teamId: string } }>(null);
   const [teamId, setTeamId]         = useState(defaultTeamId);
   // Several people may be picked; each gets their own copy (see POST /projects/batch).
   const [assignees, setAssignees]   = useState<string[]>([]);
@@ -162,7 +166,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   }, [teamId, teamDetail]);
 
   function reset() {
-    setTitle(""); setDesc(""); setPriority("medium");
+    setTitle(""); setDesc(""); setPriority("medium"); setFilled(null);
     setTeamId(defaultTeamId);
     setAssignees([]); setPickerMode("first"); setRepeat(REPEAT_DEFAULT);
     setApproverId(""); setDueDate(""); setAttachments([]);
@@ -290,6 +294,30 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
     close();
   }
 
+  /**
+   * A suggestion fills the name — and the description, priority and team only
+   * when they're still empty/untouched, so it never overwrites what was typed.
+   */
+  function pickSuggestion(sug: Suggestion) {
+    setTitle(sug.title);
+    const prev = { description, priority, teamId };
+    const fields: string[] = [];
+    if (sug.description && !description.trim()) { setDesc(sug.description); fields.push("description"); }
+    if (sug.priority && priority === "medium" && sug.priority !== "medium") { setPriority(sug.priority); fields.push("priority"); }
+    if (sug.teamId && !teamId && teams.some((t) => t.id === sug.teamId)) {
+      setTeamId(sug.teamId); setAssignees([]); setPickerMode("first"); fields.push("team");
+    }
+    setFilled(fields.length ? { fields, prev } : null);
+  }
+
+  function undoFill() {
+    if (!filled) return;
+    setDesc(filled.prev.description);
+    setPriority(filled.prev.priority);
+    if (filled.fields.includes("team")) { setTeamId(filled.prev.teamId); setAssignees([]); setPickerMode("first"); }
+    setFilled(null);
+  }
+
   return (
     <AnimatePresence>
       {open && (
@@ -331,13 +359,20 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
               {/* Title */}
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Title *</label>
-                <input
+                <TaskNameCombobox
                   autoFocus
                   value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  placeholder="Task title..."
-                  className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
+                  onChange={(v) => { setTitle(v); if (filled) setFilled(null); }}
+                  onPick={pickSuggestion}
+                  teamId={teamId}
+                  teamName={teams.find((t) => t.id === teamId)?.name}
                 />
+                {filled && (
+                  <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    Filled {filled.fields.length > 1 ? `${filled.fields.slice(0, -1).join(", ")} & ${filled.fields[filled.fields.length - 1]}` : filled.fields[0]} from the saved task ·
+                    <button type="button" className="font-medium text-primary hover:underline" onClick={undoFill}>Undo</button>
+                  </p>
+                )}
               </div>
 
               {/* Description */}

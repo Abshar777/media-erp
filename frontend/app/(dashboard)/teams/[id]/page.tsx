@@ -27,6 +27,7 @@ import { useTeamEmailPrefs, useUpdateTeamEmailPrefs } from "@/hooks/useTeamEmail
 import { TEAM_EMAIL_TYPES } from "@/lib/notifications";
 import { cn } from "@/lib/utils";
 import { fmtDateOnly } from "@/lib/datetime";
+import { SavedTasksManager } from "@/components/projects/SavedTasksManager";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -479,6 +480,7 @@ export default function TeamDetailPage() {
       {tab === "settings" && canManage && (
         <div className="space-y-6">
           <TeamSettingsPanel team={team} />
+          <SavedTasksManager teamId={teamId} teamName={team.name} />
           <TeamEmailPrefsCard teamId={teamId} />
         </div>
       )}

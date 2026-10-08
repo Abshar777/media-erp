@@ -67,6 +67,8 @@ from app.routers import whatsapp as whatsapp_router
 from app.routers import email_logs as email_logs_router
 from app.routers import fund_requests as fund_requests_router
 from app.routers import ad_reports as ad_reports_router
+from app.routers import ad_flags as ad_flags_router
+from app.routers import task_presets as task_presets_router
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.utils.response import success_response
 
@@ -188,6 +190,8 @@ app.include_router(whatsapp_router.router)
 app.include_router(email_logs_router.router)
 app.include_router(fund_requests_router.router)
 app.include_router(ad_reports_router.router)
+app.include_router(ad_flags_router.router)
+app.include_router(task_presets_router.router)
 
 # Serve uploaded files at /uploads/<filename>
 # These are publicly reachable via ngrok so Instagram can fetch images.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle, Calendar, CheckCircle2, Circle,
@@ -8,24 +8,29 @@ import {
   Layers, Loader2, PauseCircle, RotateCcw, Users, X, Zap,
 } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useTasks } from "@/hooks/useProjects";
 import { useTeams } from "@/hooks/useTeams";
 import { MemberScopePicker, type ScopeGroup, type ScopeMember } from "@/components/dashboard/MemberScopePicker";
 import { AdReportsBanner } from "@/components/ad-reports/AdReportsBanner";
+import { DateRangeFilter } from "@/components/dashboard/DateRangeFilter";
+import { OverviewPdfButton } from "@/components/dashboard/OverviewPdfButton";
 import { useAuthStore } from "@/stores/authStore";
 import { BOARD_COLUMNS, isTaskOverdue, assigneeLabel } from "@/types/project";
 import type { Task } from "@/types/project";
 import { useTaskTimer, formatSeconds } from "@/hooks/useTaskTimer";
 import { cn } from "@/lib/utils";
-import { fmtDateOnly } from "@/lib/datetime";
+import { fmtDateOnly, istTodayKey } from "@/lib/datetime";
+import {
+  addDays, parseRange, rangePhrase, rangeToFilters, readRangeParams, sameRange, urlMatchesRange, writeRangeParams,
+  type OverviewRange,
+} from "@/lib/overviewRange";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function today() { return new Date().toISOString().slice(0, 10); }
-function daysFromNow(n: number) {
-  const d = new Date(); d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
+// IST calendar days, like the rest of the app (UTC rolled the day over at 05:30 IST).
+const today = () => istTodayKey();
+const daysFromNow = (n: number) => addDays(istTodayKey(), n);
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
   pending:        <Circle        className="size-3.5 text-amber-500" />,
@@ -166,6 +171,19 @@ function writeMemberParam(id: string) {
 
 const firstNameOf = (name: string) => name.trim().split(/\s+/)[0] || name;
 
+/**
+ * Calls `onChange` whenever the address bar's query changes while the page
+ * stays mounted — the sidebar's "Overview" link (same route, so no remount),
+ * Back/Forward, or our own replaceState (Next 16 syncs that too). Kept in its
+ * own Suspense boundary so useSearchParams doesn't opt the page out of static
+ * rendering; it renders nothing.
+ */
+function UrlWatcher({ onChange }: { onChange: () => void }) {
+  const search = useSearchParams().toString();
+  useEffect(() => { onChange(); }, [search, onChange]);
+  return null;
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const user      = useAuthStore(s => s.user);
@@ -238,12 +256,42 @@ export default function DashboardPage() {
 
   const viewingMember = memberParam ? memberIndex.get(memberParam) ?? null : null;
 
+  // ── Date range (URL-backed, works with the member filter) ────────────────
+  // "Tasks created in this period" — the same rule as the Projects date filter.
+  // "All time" adds nothing, so the default request is unchanged.
+  const [range, setRange] = useState<OverviewRange>(() => readRangeParams(today()));
+  const selectRange = useCallback((r: OverviewRange) => {
+    setRange(r);
+    writeRangeParams(r);
+  }, []);
+  // Follow the address bar when it changes under us (see UrlWatcher). Reads
+  // window.location rather than the hook's value, so a burst of our own writes
+  // can never be undone by a stale intermediate one.
+  const syncFromUrl = useCallback(() => {
+    const search = window.location.search;
+    const m = new URLSearchParams(search).get(MEMBER_PARAM) ?? "";
+    setMemberParam(prev => (prev === m ? prev : m));
+    const r = parseRange(search, today());
+    setRange(prev => (sameRange(prev, r) ? prev : r));
+  }, []);
+
+  // Tidy a hand-edited link once: an invalid or clamped range is rewritten to
+  // what is actually shown, so the address bar never disagrees with the page.
+  useEffect(() => {
+    if (!urlMatchesRange(window.location.search, range)) writeRangeParams(range);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const todayKey = today();
+  const rangeOn = range.key !== "all";
+  const phrase = rangePhrase(range, todayKey);
+
   // Fetch in parallel with teams rather than waiting on them: the common case
   // (a valid id from a shared link) loads faster, and the backend refuses
   // anyone who isn't yours regardless.
-  const { data: tasks = [], isLoading: tasksLoading } = useTasks(
-    memberParam ? { member_id: memberParam } : {}
-  );
+  const { data: tasks = [], isLoading: tasksLoading } = useTasks({
+    ...(memberParam ? { member_id: memberParam } : {}),
+    ...rangeToFilters(range, todayKey),
+  });
 
   // Never show one person's numbers under another's name: while a ?member= is
   // unresolved (teams still loading, or about to be rejected), show loading.
@@ -309,6 +357,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 pb-6">
+      <Suspense fallback={null}><UrlWatcher onChange={syncFromUrl} /></Suspense>
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       {/* The scope picker sits on the greeting's row: it changes the whole page,
@@ -318,36 +367,58 @@ export default function DashboardPage() {
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: "easeOut" }}
-        className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
+        className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between"
       >
-        <div className="min-w-0">
+        {/* flex-wrap + a min width: when the filters (a long date label plus a
+            name) don't leave the greeting room, they drop to their own line
+            instead of squeezing it into a narrow column. */}
+        <div className="min-w-0 sm:min-w-[20rem] sm:flex-1">
           <h1 className="text-2xl font-semibold tracking-tight">
             {greeting}, {firstName} 👋
           </h1>
-          {viewingMember ? (
-            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-              <span>
-                Viewing <span className="font-semibold text-foreground">{viewingMember.name}</span>&apos;s overview
-              </span>
-              {memberTeams.length > 0 && (
-                <span className="flex items-center gap-1.5">
-                  <span aria-hidden>·</span>
-                  {memberTeams.map(t => (
-                    <span key={t.id} className="inline-flex items-center gap-1">
-                      <span className="size-1.5 rounded-full" style={{ background: t.color || "#6366f1" }} />
-                      {t.name}
+          {viewingMember || rangeOn ? (
+            // One row per filter (who, then when), each with its own way back.
+            <div className="mt-1 space-y-1 text-sm text-muted-foreground">
+              {viewingMember && (
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>
+                    Viewing <span className="font-semibold text-foreground">{viewingMember.name}</span>&apos;s overview
+                  </span>
+                  {memberTeams.length > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span aria-hidden>·</span>
+                      {memberTeams.map(t => (
+                        <span key={t.id} className="inline-flex items-center gap-1">
+                          <span className="size-1.5 rounded-full" style={{ background: t.color || "#6366f1" }} />
+                          {t.name}
+                        </span>
+                      ))}
                     </span>
-                  ))}
-                </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => selectMember("")}
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                  >
+                    <X className="size-3" /> Back to mine
+                  </button>
+                </p>
               )}
-              <button
-                type="button"
-                onClick={() => selectMember("")}
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
-              >
-                <X className="size-3" /> Back to mine
-              </button>
-            </p>
+              {rangeOn && (
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>
+                    Tasks created <span className="font-semibold text-foreground">{phrase}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => selectRange({ key: "all" })}
+                    className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                  >
+                    <X className="size-3" /> Clear dates
+                  </button>
+                </p>
+              )}
+            </div>
           ) : (
             <p className="mt-1 text-sm text-muted-foreground">
               Here&apos;s what&apos;s happening across your media projects today.
@@ -355,14 +426,29 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {canViewMembers && (
-          <MemberScopePicker
-            groups={memberGroups}
-            value={viewingMember ? viewingMember.id : ""}
-            onChange={selectMember}
-            className="sm:shrink-0"
+        {/* Filters, right corner: when (everyone) then who (leaders and admins),
+            then the PDF of that exact view. Full width and stacked on mobile. */}
+        <div className="flex flex-col gap-2 sm:shrink-0 sm:flex-row sm:items-start">
+          <DateRangeFilter value={range} onChange={selectRange} today={todayKey} />
+          {canViewMembers && (
+            <MemberScopePicker
+              groups={memberGroups}
+              value={viewingMember ? viewingMember.id : ""}
+              onChange={selectMember}
+            />
+          )}
+          {/* Sends exactly the filters the page used for its own request, so the
+              server builds the PDF from the same tasks. Off until the page has
+              loaded, so you never download numbers you haven't seen. */}
+          <OverviewPdfButton
+            disabled={isLoading}
+            params={{
+              ...(viewingMember ? { member_id: viewingMember.id } : {}),
+              ...rangeToFilters(range, todayKey),
+              ...(rangeOn ? { range_name: range.key } : {}),
+            }}
           />
-        )}
+        </div>
       </motion.div>
 
       {/* Only when one of *your* ad reports is waiting for numbers. */}
@@ -447,7 +533,9 @@ export default function DashboardPage() {
             <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
           ) : recentTasks.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">
-              {viewingMember ? `${firstNameOf(viewingMember.name)} has no tasks yet.` : "No tasks yet."}
+              {rangeOn
+                ? `No tasks were created ${phrase}${viewingMember ? ` for ${firstNameOf(viewingMember.name)}` : ""}.`
+                : viewingMember ? `${firstNameOf(viewingMember.name)} has no tasks yet.` : "No tasks yet."}
             </p>
           ) : (
             <div>{recentTasks.map(t => <TaskRow key={t.id} task={t} />)}</div>

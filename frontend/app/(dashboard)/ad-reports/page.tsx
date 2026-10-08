@@ -16,7 +16,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
-  BarChart3, BellRing, Building2, CalendarRange, ChevronRight, Flag, Loader2, Pause, PencilLine, Play, Plus, Settings2, Users,
+  BarChart3, BellRing, Building2, CalendarRange, ChevronRight, Flag, Loader2, Pause, PencilLine, Play, Plus, Settings2, TrendingDown, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { istTodayKey } from "@/lib/datetime";
@@ -28,6 +28,8 @@ import { ReportFormModal } from "@/components/ad-reports/ReportFormModal";
 import { StatusChip } from "@/components/ad-reports/StatusChip";
 import { Sparkline } from "@/components/ad-reports/Sparkline";
 import { CreativeShowcase, CreativeThumb } from "@/components/ad-reports/CreativeShowcase";
+import { FlagAdModal } from "@/components/ad-reports/FlagAdModal";
+import { FlagStatusStrip } from "@/components/ad-reports/FlagStatusStrip";
 import { AccountView } from "@/components/ad-reports/AccountView";
 import { useAuthStore } from "@/stores/authStore";
 import type { AdReport } from "@/types/adReport";
@@ -77,6 +79,11 @@ function ReportCard({ r, active, onClick }: { r: AdReport; active: boolean; onCl
       </div>
       {r.missing.length > 0 && r.status === "active" && (
         <p className="mt-1.5 truncate text-[11px] text-red-600 dark:text-red-400">Missing {missingPhrase(r.missing)}</p>
+      )}
+      {r.flag?.active && (
+        <p className="mt-1.5 inline-flex max-w-full items-center gap-1 truncate rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-300">
+          <TrendingDown className="size-3 shrink-0" /> Not performing · {r.flag.status_label.toLowerCase()}
+        </p>
       )}
     </button>
   );
@@ -270,7 +277,10 @@ function ReportHero({ r, meId, onEntry, onEdit, onOpenAccount }: {
   const update = useUpdateAdReport();
   const remind = useRemindAdReport();
   const [confirmEnd, setConfirmEnd] = useState(false);
-  useEffect(() => setConfirmEnd(false), [r.id]);
+  const [flagOpen, setFlagOpen] = useState(false);
+  useEffect(() => { setConfirmEnd(false); setFlagOpen(false); }, [r.id]);
+  // Escalating a weak ad: anyone who works on it, while it isn't already with someone.
+  const canFlag = r.kind === "ad" && !!r.can_enter && !r.flag?.active;
   const canUpdate = r.can_enter && (r.status !== "ended" || r.can_manage);
   const btn = "inline-flex h-9 items-center gap-1.5 rounded-lg border bg-background px-3 text-sm font-medium transition hover:bg-muted disabled:opacity-50";
   const facts: { label: string; value: React.ReactNode }[] = [
@@ -318,6 +328,7 @@ function ReportHero({ r, meId, onEntry, onEdit, onOpenAccount }: {
               No numbers yet for {missingPhrase(r.missing)}
             </p>
           )}
+          {r.flag && <FlagStatusStrip flag={r.flag} meId={meId} />}
 
           <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
             {canUpdate && (
@@ -353,7 +364,16 @@ function ReportHero({ r, meId, onEntry, onEdit, onOpenAccount }: {
                 )}
               </>
             )}
+            {/* Set apart on the right: the buttons on the left keep the report
+                running; this one escalates the ad itself. */}
+            {canFlag && (
+              <button type="button" onClick={() => setFlagOpen(true)}
+                className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-red-500/40 bg-red-500/10 px-3 text-sm font-medium text-red-700 transition hover:border-red-500/60 hover:bg-red-500/15 dark:text-red-300 sm:ml-auto sm:w-auto">
+                <TrendingDown className="size-4" /> Ad not performing
+              </button>
+            )}
           </div>
+          {canFlag && <FlagAdModal report={r} open={flagOpen} onClose={() => setFlagOpen(false)} />}
         </div>
       </div>
     </section>

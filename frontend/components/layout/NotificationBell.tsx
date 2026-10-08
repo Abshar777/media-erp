@@ -11,7 +11,7 @@ import {
   AtSign,
   Bell, CheckCheck, RefreshCw, ServerCrash, Wifi,
   ClipboardList, Play, Coffee, Eye, CheckCircle2,
-  RotateCcw, Users, Clock, Wallet, BarChart3, TriangleAlert,
+  RotateCcw, Users, Clock, Wallet, BarChart3, TriangleAlert, TrendingDown,
 } from "lucide-react";
 import { fadeVariants, listItemVariants, listVariants } from "@/lib/animations";
 import { useMarkAllRead, useMarkRead, useNotifications } from "@/hooks/useNotifications";
@@ -71,6 +71,10 @@ function typeConfig(type: string): { icon: React.ReactNode; bg: string } {
       return { icon: <BarChart3 className="size-3.5 text-teal-600" />,        bg: "bg-teal-100 dark:bg-teal-900/30" };
     case "ad_report_overdue":
       return { icon: <TriangleAlert className="size-3.5 text-red-500" />,     bg: "bg-red-100 dark:bg-red-900/30" };
+    case "ad_flagged":
+      return { icon: <TrendingDown className="size-3.5 text-red-500" />,     bg: "bg-red-100 dark:bg-red-900/30" };
+    case "ad_flag_update":
+      return { icon: <TrendingDown className="size-3.5 text-amber-600" />,   bg: "bg-amber-100 dark:bg-amber-900/30" };
     case "fund_request":
       return { icon: <Wallet className="size-3.5 text-emerald-600" />,        bg: "bg-emerald-100 dark:bg-emerald-900/30" };
     case "sync_error":
@@ -100,6 +104,12 @@ function destination(item: Notification): string | null {
   if (item.type === "ad_report_due" || item.type === "ad_report_overdue") {
     const link = (item.metadata as { link?: string })?.link;
     return link && link.startsWith("/ad-reports") ? link : "/ad-reports";
+  }
+  // "Ad not performing": the leader lands on Leader Desk → Ads to redo; the
+  // sender on the ad. Only in-app paths are followed.
+  if (item.type === "ad_flagged" || item.type === "ad_flag_update") {
+    const link = (item.metadata as { link?: string })?.link;
+    return link && (link.startsWith("/leader") || link.startsWith("/ad-reports")) ? link : "/leader?tab=ads";
   }
   if (item.type === "verify_requested") {
     const taskId = (item.metadata as { task_id?: string })?.task_id;

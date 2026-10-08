@@ -23,6 +23,8 @@ export type NotificationType =
   // ── Ad reports ────────────────────────────────────────────────────────────
   | "ad_report_due"       // a day's Meta numbers are missing (→ the assignee)
   | "ad_report_overdue"   // still missing at the escalation time (→ assignee + leader)
+  | "ad_flagged"          // an ad was sent to you to recreate (→ the chosen team leader)
+  | "ad_flag_update"      // your flagged ad was picked up, recreated or declined (→ sender + the ad's people)
   // ── Generic ───────────────────────────────────────────────────────────────
   | "info";
 

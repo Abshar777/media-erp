@@ -45,7 +45,13 @@ async def _serialize_many(db, docs: list[dict], user: dict) -> list[dict]:
     accounts = await db[ar.REPORTS].find({"_id": {"$in": [ObjectId(a) for a in acc_ids]}}, {"name": 1}).to_list(len(acc_ids) or 1) if acc_ids else []
     account_names = {str(a["_id"]): a.get("name", "") for a in accounts}
     today = today_ist()
-    return [await ar.serialize_report(db, d, names, teams, user, today, account_names) for d in docs]
+    out = [await ar.serialize_report(db, d, names, teams, user, today, account_names) for d in docs]
+    # "Ad not performing" status line: the active flag, else one closed in the last 14 days.
+    from app.services.ad_flag_service import summaries_for
+    flags = await summaries_for(db, [o["id"] for o in out if o["kind"] == "ad"])
+    for o in out:
+        o["flag"] = flags.get(o["id"])
+    return out
 
 
 async def _check_account(db, account_id: str, team_id: str):

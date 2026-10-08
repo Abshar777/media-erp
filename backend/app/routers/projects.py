@@ -12,11 +12,15 @@ Endpoints
   POST   /api/v1/projects          — create task
   PUT    /api/v1/projects/{id}     — update task / move column
   DELETE /api/v1/projects/{id}     — delete task
+  GET    /api/v1/projects/overview/pdf — the Overview (same filters) as a PDF
 """
 
+import asyncio
+import io
 import math
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.database import get_db
@@ -280,25 +284,30 @@ async def _teams_shared_with(
     return [str(d["_id"]) for d in docs]
 
 
-@router.get("")
-async def get_tasks(
-    search: str = Query(default=""),
-    status: str = Query(default=""),
-    priority: str = Query(default=""),
-    date_filter: str = Query(default=""),
-    date_from: str = Query(default=""),
-    date_to: str = Query(default=""),
-    team_id: str = Query(default=""),
-    member_id: str = Query(default=""),
-    # Quick scope: assigned_to_me | created_by_me | needs_my_approval | verify_by_me
-    scope: str = Query(default=""),
-    # Pagination (mirrors /users). limit=0 keeps the legacy "return everything
-    # up to the safety ceiling" behaviour so existing callers are unaffected.
-    page: int = Query(default=1, ge=1),
-    limit: int = Query(default=0, ge=0, le=500),
-    current_user: dict = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_db),
-):
+async def query_scoped_tasks(
+    current_user: dict,
+    db: AsyncIOMotorDatabase,
+    *,
+    search: str = "",
+    status: str = "",
+    priority: str = "",
+    date_filter: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    team_id: str = "",
+    member_id: str = "",
+    scope: str = "",
+    page: int = 1,
+    limit: int = 0,
+) -> tuple[list[dict], int]:
+    """
+    The task list a user may see, with every filter applied — the one place
+    that decides it. GET /projects and the Overview PDF both call this, so a
+    download can never show more, less or different tasks than the screen.
+
+    A refused member browse (not one of yours) returns ([], 0), which callers
+    present exactly like "no tasks" — it must not confirm the user exists.
+    """
     visibility, uid, leader_team_ids = await _resolve_visibility(current_user, team_id, db)
 
     # Member filter — only allowed for elevated roles or team leaders.
@@ -317,12 +326,7 @@ async def get_tasks(
             if not shared:
                 # Answer exactly like "no tasks": an error would confirm the
                 # user exists, and this is not a question we answer.
-                return success_response(
-                    data=[],
-                    message="Tasks retrieved",
-                    meta={"total": 0, "returned": 0, "page": page, "limit": limit,
-                          "pages": 1, "has_more": False, "truncated": False},
-                )
+                return [], 0
             if visibility == "leader_teams":
                 # No single team chosen: confine to every team they share.
                 # ("team" is already confined by the team_id filter itself.)
@@ -342,7 +346,7 @@ async def get_tasks(
         ).to_list(500)
         approver_team_ids = [str(t["_id"]) for t in led]
 
-    tasks, total = await list_tasks(
+    return await list_tasks(
         db,
         search=search,
         status=status,
@@ -360,6 +364,34 @@ async def get_tasks(
         approver_team_ids=approver_team_ids,
         page=page,
         limit=limit,
+    )
+
+
+@router.get("")
+async def get_tasks(
+    search: str = Query(default=""),
+    status: str = Query(default=""),
+    priority: str = Query(default=""),
+    date_filter: str = Query(default=""),
+    date_from: str = Query(default=""),
+    date_to: str = Query(default=""),
+    team_id: str = Query(default=""),
+    member_id: str = Query(default=""),
+    # Quick scope: assigned_to_me | created_by_me | needs_my_approval | verify_by_me
+    scope: str = Query(default=""),
+    # Pagination (mirrors /users). limit=0 keeps the legacy "return everything
+    # up to the safety ceiling" behaviour so existing callers are unaffected.
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=0, ge=0, le=500),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    tasks, total = await query_scoped_tasks(
+        current_user, db,
+        search=search, status=status, priority=priority,
+        date_filter=date_filter, date_from=date_from, date_to=date_to,
+        team_id=team_id, member_id=member_id, scope=scope,
+        page=page, limit=limit,
     )
 
     # `data` stays a plain array so existing callers keep working; pagination
@@ -386,6 +418,98 @@ async def get_tasks(
             "has_more": has_more,
             # true when the caller is NOT paging and we still had to cut the list
             "truncated": (not limit) and total > len(tasks),
+        },
+    )
+
+
+@router.get("/overview/pdf")
+async def export_overview_pdf(
+    member_id: str = Query(default=""),
+    date_filter: str = Query(default=""),
+    date_from: str = Query(default=""),
+    date_to: str = Query(default=""),
+    # Display name of the Overview preset ("last7", "last_month", …) — only
+    # labels the dates; the dates themselves always come from the filter.
+    range_name: str = Query(default=""),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Download the Overview as a PDF — the same member and date filters, the same
+    tasks (query_scoped_tasks, exactly what GET /projects returns to the
+    Overview) and the same formulas as the page.
+    """
+    from bson import ObjectId
+    from app.services.overview_report_service import build_pdf, describe_period, slug
+    from app.services.worktime import load_holidays
+    from app.services.ad_report_service import names_for as ar_names
+
+    tasks, _ = await query_scoped_tasks(
+        current_user, db,
+        member_id=member_id, date_filter=date_filter, date_from=date_from, date_to=date_to,
+    )
+
+    async def team_names_for(ids) -> dict[str, str]:
+        oids = [ObjectId(i) for i in {i for i in ids if i} if ObjectId.is_valid(i)]
+        if not oids:
+            return {}
+        docs = await db["teams"].find({"_id": {"$in": oids}}, {"name": 1}).to_list(len(oids))
+        return {str(d["_id"]): d.get("name", "") for d in docs}
+
+    viewer = current_user.get("name") or current_user.get("email") or "you"
+    visibility, uid, leader_team_ids = await _resolve_visibility(current_user, "", db)
+    heading, scope_line, who = f"{viewer}'s overview", "", "mine"
+
+    if member_id and visibility in ("all", "team", "leader_teams"):
+        # Name the person only when the viewer may browse them — the same rule
+        # query_scoped_tasks applies. A refused id gets an empty, nameless
+        # report, so a download can't confirm that a user exists.
+        allowed_teams: list[str] | None = None
+        if visibility == "all":
+            member_doc = await db["users"].find_one(
+                {"_id": ObjectId(member_id)}, {"name": 1, "email": 1}
+            ) if ObjectId.is_valid(member_id) else None
+            if member_doc:
+                mine = await db["teams"].find({"members.user_id": member_id}, {"_id": 1}).to_list(200)
+                allowed_teams = [str(t["_id"]) for t in mine]
+        else:
+            allowed_teams = await _teams_shared_with(db, leader_team_ids or [], member_id) or None
+            member_doc = await db["users"].find_one(
+                {"_id": ObjectId(member_id)}, {"name": 1, "email": 1}
+            ) if allowed_teams else None
+        if allowed_teams is not None and member_doc:
+            name = member_doc.get("name") or member_doc.get("email") or "Member"
+            names = await team_names_for(allowed_teams)
+            heading, who = f"{name}'s overview", slug(name)
+            scope_line = ("Teams: " + ", ".join(sorted(names.values()))) if names else ""
+        else:
+            heading, who = "Member overview", "member"
+    elif visibility == "all":
+        scope_line = "Everyone's tasks, all teams"
+    elif visibility == "leader_teams":
+        names = await team_names_for(leader_team_ids or [])
+        scope_line = ("Teams you lead: " + ", ".join(sorted(names.values()))) if names else ""
+    else:
+        scope_line = "Your tasks"
+
+    period_label, period_file = describe_period(date_filter, date_from, date_to, range_name)
+    team_names = await team_names_for(t.get("team_id") for t in tasks)
+
+    # reportlab is CPU-bound; keep the event loop free for everyone else.
+    pdf = await asyncio.to_thread(
+        build_pdf, tasks=tasks, heading=heading, scope_line=scope_line,
+        period_label=period_label, generated_by=viewer, team_names=team_names,
+        holidays=await load_holidays(db),     # "Late by" skips company holidays, like Performance
+        people=await ar_names(db, [t.get("assigned_to") for t in tasks if not t.get("assigned_to_name")]),
+    )
+    from app.utils.timezone import now_ist
+    filename = f"overview_{who}_{period_file}_{now_ist().strftime('%Y-%m-%d_%H%M')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
         },
     )
 
