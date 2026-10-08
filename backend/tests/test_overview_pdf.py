@@ -281,8 +281,8 @@ async def test_overview_pdf_endpoint(monkeypatch):
                 fname = re.search(r'filename="([^"]+)"', pdf_r.headers["content-disposition"]).group(1)
                 # Every download is stamped with when it was made (IST), then the stamp is
                 # dropped so the assertions below read the meaningful part.
-                assert re.search(r"_\d{4}-\d{2}-\d{2}_\d{4}\.pdf$", fname), fname
-                fname = re.sub(r"_\d{4}-\d{2}-\d{2}_\d{4}\.pdf$", ".pdf", fname)
+                assert re.search(r"_made-\d{4}-\d{2}-\d{2}-\d{4}\.pdf$", fname), fname
+                fname = re.sub(r"_made-\d{4}-\d{2}-\d{2}-\d{4}\.pdf$", ".pdf", fname)
                 return kw, fname, pdf_strings(pdf_r.content)
 
             oct1_8 = {"date_filter": "custom", "date_from": "2026-10-01", "date_to": "2026-10-08"}

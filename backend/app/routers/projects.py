@@ -503,7 +503,8 @@ async def export_overview_pdf(
         people=await ar_names(db, [t.get("assigned_to") for t in tasks if not t.get("assigned_to_name")]),
     )
     from app.utils.timezone import now_ist
-    filename = f"overview_{who}_{period_file}_{now_ist().strftime('%Y-%m-%d_%H%M')}.pdf"
+    # "made-…" so a date range and the generation time never read as one run of dates.
+    filename = f"overview_{who}_{period_file}_made-{now_ist().strftime('%Y-%m-%d-%H%M')}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf),
         media_type="application/pdf",
