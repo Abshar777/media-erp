@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { Suspense, useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { Kanban, LayoutList, Plus, Repeat, Users, UserRound } from "lucide-react";
+import { Kanban, LayoutList, Plus, Repeat, User, Users, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { KanbanBoard } from "@/components/projects/KanbanBoard";
 import { TaskTable } from "@/components/projects/TaskTable";
@@ -31,12 +32,51 @@ const EMPTY_FILTERS: ProjectFilters = {
 
 type ViewMode = "kanban" | "table";
 
+/**
+ * Whose work the board shows, for people who can see more than their own:
+ * "team" = every task of the teams you lead (admins: everyone) · "mine" = only
+ * tasks assigned to you, exactly what an employee sees. Remembered per user,
+ * and `?view=mine` opens it from a link.
+ */
+type WorkMode = "team" | "mine";
+const modeKey = (uid: string) => `projects:work-mode:${uid}`;
+
+function readWorkMode(): WorkMode {
+  if (typeof window === "undefined") return "team";
+  const q = new URLSearchParams(window.location.search);
+  const v = q.get("view");
+  if (v === "mine" || v === "team") return v;
+  // A link to one team's board ("Open Task Board") means that team's tasks.
+  if (q.get("team_id")) return "team";
+  try {
+    const uid = useAuthStore.getState().user?.id;
+    return uid && localStorage.getItem(modeKey(uid)) === "mine" ? "mine" : "team";
+  } catch {
+    return "team";
+  }
+}
+
+/**
+ * Follows the address bar while the page is mounted. An in-app link renders
+ * this page BEFORE window.location changes, so reading it once on mount missed
+ * ?team_id= from "Open Task Board" and ?repeating= from a task's "Manage" —
+ * and a link to the page you're already on doesn't remount it at all.
+ * Kept in its own Suspense boundary so useSearchParams doesn't opt the page
+ * out of static rendering.
+ */
+function UrlParams({ onChange }: { onChange: (q: URLSearchParams) => void }) {
+  const key = useSearchParams().toString();
+  useEffect(() => { onChange(new URLSearchParams(key)); }, [key, onChange]);
+  return null;
+}
+
 export default function ProjectsPage() {
   const [view, setView]         = useState<ViewMode>("kanban");
+  const [tablePage, setTablePage] = useState(1);
   const [addOpen, setAddOpen]   = useState(false);
   // Repeating drawer. Opens straight onto one series when arriving from a
   // task's "Manage" link (?repeating=<id>). Read once, like ?team_id= below.
-  const [repeatingFocus] = useState<string | null>(() =>
+  const [repeatingFocus, setRepeatingFocus] = useState<string | null>(() =>
     typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("repeating") : null
   );
   const [recurringOpen, setRecurringOpen] = useState<boolean>(() => !!repeatingFocus);
@@ -60,9 +100,11 @@ export default function ProjectsPage() {
 
   const { user: currentUser } = useAuthStore();
   const isTeamLeader = currentUser?.role?.role_name === "Team Leader";
+  const isElevated = ["Super Admin", "Admin", "Coordinator"].includes(currentUser?.role?.role_name ?? "");
+  const [workMode, setWorkMode] = useState<WorkMode>(readWorkMode);
 
   // All teams the current user can see
-  const { data: allTeams = [] } = useTeams();
+  const { data: allTeams = [], isFetched: teamsFetched } = useTeams();
   // Team Leaders only see the teams they actually lead in the Projects dropdown.
   // Other roles see all their teams.
   const teams = isTeamLeader
@@ -71,9 +113,46 @@ export default function ProjectsPage() {
 
   // Who can set up / manage repeating tasks: admin roles, or anyone leading a
   // team — the same people the server lets create and manage a series.
-  const canRepeat =
-    ["Super Admin", "Admin", "Coordinator"].includes(currentUser?.role?.role_name ?? "") ||
-    allTeams.some(t => t.my_role === "leader");
+  const canRepeat = isElevated || allTeams.some(t => t.my_role === "leader");
+
+  // The Team view / My work switch: only for people whose board shows more than
+  // their own tasks. Everyone else's page is unchanged.
+  const canSwitch = isElevated || allTeams.some(t => t.my_role === "leader");
+  // While the teams are still loading, trust a remembered "My work" (only
+  // someone who could switch ever stored it) instead of flashing Team view.
+  const mine = workMode === "mine" && (canSwitch || !teamsFetched);
+  const chooseMode = useCallback((m: WorkMode) => {
+    setWorkMode(m);
+    setTablePage(1);
+    try { if (currentUser?.id) localStorage.setItem(modeKey(currentUser.id), m); } catch { /* private mode */ }
+    const url = new URL(window.location.href);
+    if (m === "mine") url.searchParams.set("view", "mine"); else url.searchParams.delete("view");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }, [currentUser?.id]);
+
+  // Apply links into the page (see UrlParams). A team link is applied once per
+  // team id, so it never undoes your own team / view choices afterwards;
+  // an explicit ?view= wins over it.
+  const appliedTeamParam = useRef<string | null>(null);
+  const applyUrl = useCallback((q: URLSearchParams) => {
+    const tid = q.get("team_id");
+    if (tid && tid !== appliedTeamParam.current) {
+      appliedTeamParam.current = tid;
+      setFilters(f => (f.team_id === tid ? f : { ...f, team_id: tid, member_id: "" }));
+      setWorkMode("team");
+    }
+    const v = q.get("view");
+    if (v === "mine" || v === "team") setWorkMode(v);
+    const rep = q.get("repeating");
+    if (rep) { setRepeatingFocus(rep); setRecurringOpen(true); }
+  }, []);
+
+  // My work is applied ON TOP of the team filters rather than replacing them, so
+  // flipping back to Team view restores the team / member / chip you had.
+  const effective = useMemo<ProjectFilters>(
+    () => (mine ? { ...filters, team_id: "", member_id: "", scope: "assigned_to_me" } : filters),
+    [mine, filters],
+  );
   const { data: recurring = [] } = useRecurringList(canRepeat);
   const activeRecurring = recurring.filter(s => s.status === "active").length;
 
@@ -82,9 +161,8 @@ export default function ProjectsPage() {
 
   // Board pages EACH COLUMN independently (a flat page-1 slice would fill the
   // six columns unevenly). Table uses a normal flat pager.
-  const board = useBoardColumns(filters);
-  const [tablePage, setTablePage] = useState(1);
-  const table = useTasksPaged(filters, tablePage, 25);
+  const board = useBoardColumns(effective);
+  const table = useTasksPaged(effective, tablePage, 25);
   const tasks = view === "kanban" ? board.tasks : (table.data?.items ?? []);
   const isLoading = view === "kanban" ? board.isLoading : table.isLoading;
 
@@ -112,11 +190,13 @@ export default function ProjectsPage() {
 
   return (
     <div className="flex flex-col gap-5 md:h-full md:min-h-0">
+      <Suspense fallback={null}><UrlParams onChange={applyUrl} /></Suspense>
       {/* Page header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Projects</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
+            {mine && <span className="font-medium text-foreground">My work · </span>}
             {grandTotal} task{grandTotal !== 1 ? "s" : ""} total
             {" · "}
             <span className="text-blue-600 dark:text-blue-400">{totalByStatus.started} started</span>
@@ -175,89 +255,126 @@ export default function ProjectsPage() {
         </div>
       </div>
 
-      {/* Team + member scope selectors */}
-      {teams.length > 0 && (
+      {/* Whose work: the Team view / My work switch (leaders + admins), then —
+          in Team view — the team and member selectors. */}
+      {(teams.length > 0 || canSwitch) && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-muted/20 px-3 py-2.5">
-          <div className="flex items-center gap-2">
-            <Users className="size-4 text-muted-foreground" />
-            <select
-              value={filters.team_id || ""}
-              onChange={e => patchFilter({ team_id: e.target.value, member_id: "" })}
-              className="rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition min-w-[160px]"
-            >
-              <option value="">All my tasks</option>
-              {teams.map(t => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Member selector — only for leaders / admins of the selected team */}
-          {filters.team_id && canFilterByMember && (
-            <div className="flex items-center gap-2">
-              <UserRound className="size-4 text-muted-foreground" />
-              <select
-                value={filters.member_id || ""}
-                onChange={e => patchFilter({ member_id: e.target.value })}
-                className="rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition min-w-[160px]"
-              >
-                <option value="">All members</option>
-                {memberOptions.map(m => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
+          {canSwitch && (
+            <div role="group" aria-label="Whose tasks to show"
+              className="flex w-full rounded-lg border bg-background p-0.5 sm:w-auto">
+              {([
+                ["team", isElevated ? "All tasks" : "Team view", Users],
+                ["mine", "My work", User],
+              ] as const).map(([m, label, Icon]) => {
+                const on = (m === "mine") === mine;
+                return (
+                  <button key={m} type="button" aria-pressed={on} onClick={() => chooseMode(m)}
+                    className={cn(
+                      "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none",
+                      on ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                    )}>
+                    <Icon className="size-3.5" /> {label}
+                  </button>
+                );
+              })}
             </div>
           )}
 
-          {filters.team_id && (
-            <span className="text-xs text-muted-foreground ml-auto">
-              {teamDetail?.my_role === "leader"
-                ? "Viewing team tasks (you're a leader)"
-                : teamDetail?.my_role === "admin"
-                ? "Viewing team tasks (admin)"
-                : "Viewing your tasks in this team"}
+          {mine ? (
+            <span className="text-xs text-muted-foreground">
+              Only tasks assigned to you — what you&apos;d see as an employee.
             </span>
+          ) : teams.length > 0 && (
+            <>
+              <div className="flex items-center gap-2">
+                <Users className="size-4 text-muted-foreground" />
+                <select
+                  value={filters.team_id || ""}
+                  onChange={e => patchFilter({ team_id: e.target.value, member_id: "" })}
+                  className="rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition min-w-[160px]"
+                >
+                  <option value="">All my tasks</option>
+                  {teams.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Member selector — only for leaders / admins of the selected team */}
+              {filters.team_id && canFilterByMember && (
+                <div className="flex items-center gap-2">
+                  <UserRound className="size-4 text-muted-foreground" />
+                  <select
+                    value={filters.member_id || ""}
+                    onChange={e => patchFilter({ member_id: e.target.value })}
+                    className="rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition min-w-[160px]"
+                  >
+                    <option value="">All members</option>
+                    {memberOptions.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {filters.team_id && (
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {teamDetail?.my_role === "leader"
+                    ? "Viewing team tasks (you're a leader)"
+                    : teamDetail?.my_role === "admin"
+                    ? "Viewing team tasks (admin)"
+                    : "Viewing your tasks in this team"}
+                </span>
+              )}
+            </>
           )}
         </div>
       )}
 
-      {/* Quick scopes — one click to "my slice" of a board that is otherwise
-          the whole team's. Toggling a chip off returns to the full board. */}
-      <div className="flex flex-wrap items-center gap-2">
-        {TASK_SCOPES.map((s) => {
-          const active = filters.scope === s.value;
-          return (
+      {/* Quick scopes — one click to a slice of the board. Leader tools, so they
+          step aside in My work; and with the switch shown, "Assigned to me" is
+          the switch itself, so its chip is left out. */}
+      {!mine && (
+        <div className="flex flex-wrap items-center gap-2">
+          {TASK_SCOPES.filter((sc) => !(canSwitch && sc.value === "assigned_to_me")).map((sc) => {
+            const active = filters.scope === sc.value;
+            return (
+              <button
+                key={sc.value}
+                type="button"
+                onClick={() => patchFilter({ scope: active ? "" : sc.value })}
+                className={cn(
+                  "rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors",
+                  active
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-background hover:bg-muted text-muted-foreground border-border"
+                )}
+              >
+                {sc.label}
+              </button>
+            );
+          })}
+          {filters.scope && (
             <button
-              key={s.value}
               type="button"
-              onClick={() => patchFilter({ scope: active ? "" : s.value })}
-              className={cn(
-                "rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors",
-                active
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-background hover:bg-muted text-muted-foreground border-border"
-              )}
+              onClick={() => patchFilter({ scope: "" })}
+              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
             >
-              {s.label}
+              Clear
             </button>
-          );
-        })}
-        {filters.scope && (
-          <button
-            type="button"
-            onClick={() => patchFilter({ scope: "" })}
-            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
-          >
-            Clear
-          </button>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Filters bar */}
       <ProjectFiltersBar
-        filters={filters}
+        filters={effective}
         onChange={patchFilter}
-        onReset={() => setFilters(EMPTY_FILTERS)}
+        // In My work, Reset clears only what you can see — the team view you'll
+        // return to (team / member / chip) is kept.
+        onReset={() => mine
+          ? patchFilter({ search: "", status: "", priority: "", date_filter: "", date_from: "", date_to: "" })
+          : setFilters(EMPTY_FILTERS)}
       />
 
       {/* Content — fills remaining height; scrolls internally (no page scroll) */}
@@ -316,7 +433,7 @@ export default function ProjectsPage() {
       <AddTaskModal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        defaultTeamId={filters.team_id || ""}
+        defaultTeamId={effective.team_id || ""}
       />
 
       <RecurringDrawer open={recurringOpen} onClose={closeRecurring} focusId={repeatingFocus} />

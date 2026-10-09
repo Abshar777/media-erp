@@ -52,14 +52,18 @@ export function TaskNameCombobox({ value, onChange, onPick, teamId, teamName, au
   const query = value;
   const items = useMemo(() => rankSuggestions(all, query, query.trim() ? 8 : 6), [all, query]);
   const typed = value.trim();
-  const exists = all.some((s) => s.source !== "recent" && s.title.trim().toLowerCase() === typed.toLowerCase());
+  // Already saved WHERE? A name saved for one team can still be saved for
+  // another; a company name covers everyone.
+  const savedFor = (target: { id: string | null }) => all.some((s) =>
+    s.source !== "recent" && s.title.trim().toLowerCase() === typed.toLowerCase()
+    && (s.source === "company" || target.id === null || s.teamId === target.id));
   // Where a new name can be saved: the picked team (if you may), "everyone"
   // (admin roles, no team picked), or — no team picked — each team you lead.
   const targets: { id: string | null; name: string }[] = data?.can_save
     ? [{ id: teamId || null, name: teamId ? (teamName || "this team") : "everyone" }]
     : !teamId ? (data?.save_teams ?? []).map((t) => ({ id: t.id, name: t.name })) : [];
-  const nameOk = typed.length > 0 && typed.length <= 120 && !exists;
-  const saveRows = nameOk ? targets.slice(0, 3) : [];
+  const nameOk = typed.length > 0 && typed.length <= 120;
+  const saveRows = nameOk ? targets.filter((t) => !savedFor(t)).slice(0, 3) : [];
   const canSave = saveRows.length > 0;
   // The ☆ on a recent name needs one unambiguous place to save it.
   const starTarget = targets.length === 1 ? targets[0] : null;

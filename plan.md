@@ -1,3 +1,30 @@
+# plan.md — Projects: "Team view / My work" switch for leaders
+
+> **Status: DONE (2026-10-09)** — implemented and verified: type check clean, production build passes; browser as Team Leader (switch both ways; My work = assigned_to_me only, server count matches; team + member restored on return; ?view=mine; reload remembers), Employee (no switch, ?view=mine ignored, all four chips), Admin ("All tasks | My work"). Frontend-only: `frontend/app/(dashboard)/projects/page.tsx`.
+
+## The idea
+A team leader is also an employee. Projects shows all their teams' work (right for leading), but to see *their own* tasks they had to dig: team filter, then member filter — or spot the "Assigned to me" chip among four lookalikes.
+**A two-way switch at the top of the filters: `[👥 Team view] [👤 My work]`.**
+- **Team view** (today): every task of the teams you lead (admins: all teams), with the team / member selectors and the quick chips.
+- **My work**: only tasks **assigned to you** — exactly what an employee sees. The team / member / chip controls step aside (they're leader tools); search, dates, status and priority still apply.
+
+## Details
+- **Who sees it:** people whose board shows more than their own tasks — team leaders (by membership too) and admin roles. Employees see no change.
+- **Remembered** per user (the page opens the way you left it) and in the URL (`?view=mine`), so a link can open "My work".
+- **Coming back** to Team view restores the team / member / chip you had.
+- The redundant "Assigned to me" chip is hidden while the switch is shown (the switch *is* that view, done properly).
+- Header line follows the view: "My work · 12 tasks · 2 started · 9 approved".
+- **No backend change**: My work = the existing, tested `scope=assigned_to_me`.
+
+## Where it goes (UI)
+- **First thing in the filter card**, where "All my tasks" sits today — it decides *whose* work the board shows, so it leads the row; the team and member selectors follow it in Team view. A segmented control with icons, the active side primary-tinted so the current mode is obvious at a glance (distinct from the neutral Board/Table toggle in the header). In My work the row reads: `[Team view | ●My work]  Only tasks assigned to you — what you'd see as an employee.` On phones the switch takes the full width.
+
+## Proving nothing breaks
+Frontend-only; Team view sends exactly today's requests. Check: type check, production build, browser as a Team Leader (switch both ways, filters restored, URL, reload remembers), an Employee (no switch, unchanged page), an Admin (switch with "All tasks").
+
+---
+---
+
 # plan.md — "Ad not performing": send a weak ad to the media team leader to recreate
 
 > **Status: DONE (2026-10-08)** — implemented and verified: backend suite 164 passed (3 new flag tests, 6 mutants all caught) / the same 8 old failures; existing Ad Reports tests all pass; type check clean (2 old login errors); production build passes. Browser QA with QA accounts only: Lena flagged "delta" → Kofi (bell + strip + rail chip), withdrew it; Kofi's flag on "QA Content — Webinar leads" → Lena's Leader Desk (card with media + numbers, lightbox with all 12 creatives), Start recreating → Mark recreated with a note; sender + the ad's assignee notified at each step; notification link opens the right tab and highlights the card; phone layout.
