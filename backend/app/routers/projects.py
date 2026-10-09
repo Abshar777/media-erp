@@ -1021,11 +1021,23 @@ async def edit_task(
     transfer_reason  = (updates.pop("transfer_reason", "") or "").strip()
     verify_users  = updates.pop("verify_users", None)
     verify_teams  = updates.pop("verify_teams", None)
+    project_id    = updates.pop("project_id", None)
 
     try:
         oid = ObjectId(task_id)
     except InvalidId:
         return error_response("Invalid task ID", status_code=422)
+
+    # Project: "" clears it; an id is checked and its current name stored.
+    # (Empty strings rather than $unset — update_task only $sets.)
+    if project_id is not None:
+        from app.services import task_project_service as tps
+        try:
+            project = await tps.resolve(db, project_id)
+        except tps.ProjectError as exc:
+            return error_response(exc.message, status_code=exc.status_code)
+        updates["project_id"] = str(project["_id"]) if project else ""
+        updates["project_name"] = project.get("name", "") if project else ""
     current = await db["project_tasks"].find_one({"_id": oid})
     if not current:
         return error_response("Task not found", status_code=404)

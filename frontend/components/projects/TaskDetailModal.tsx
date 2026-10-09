@@ -13,6 +13,7 @@ import {
   Minimize2,
   Copy,
   Check,
+  FolderKanban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
@@ -20,6 +21,7 @@ import { TaskHistoryReport } from "@/components/projects/TaskHistoryReport";
 import { TransferTaskModal } from "@/components/projects/TransferTaskModal";
 import { VerifierPicker } from "@/components/projects/VerifierPicker";
 import { RecurrenceStrip } from "@/components/projects/RecurrenceStrip";
+import { ProjectPicker } from "@/components/projects/ProjectPicker";
 import { useRemoveVerifier } from "@/hooks/useVerify";
 import { FileUploader } from "@/components/shared/FileUploader";
 import { GrowTextarea } from "@/components/shared/GrowTextarea";
@@ -347,6 +349,7 @@ export function TaskDetailModal({
   const maySetApprover = !readOnly && canApprove({ team_id: task.team_id }) && !!task.team_id;
   const { data: taskTeam } = useTeam(maySetApprover ? (task.team_id ?? "") : "");
   const [approverId, setApproverId] = useState(task.approver_id ?? "");
+  const [projectId, setProjectId] = useState(task.project_id ?? "");
   const [transferOpen, setTransferOpen] = useState(false);
   // Any employee may hand off a task assigned to them; leaders/admins may move
   // anyone's. Mirrors workflow.can_transfer_own_task — the server is the gate.
@@ -385,6 +388,18 @@ export function TaskDetailModal({
     });
     setVerifyDirty(false);
     toast.success("Verifiers saved");
+  }
+
+  // Saved as soon as it's picked, like the approver — nothing else to confirm.
+  async function saveProject(next: string) {
+    const prev = projectId;
+    setProjectId(next);
+    try {
+      await update.mutateAsync({ id: task.id, payload: { project_id: next } });
+      toast.success(next ? "Project updated" : "Project cleared");
+    } catch {
+      setProjectId(prev);   // the server refused; don't show a state it rejected
+    }
   }
 
   async function saveApprover(next: string) {
@@ -659,6 +674,27 @@ export function TaskDetailModal({
                       placeholder="Add more context..."
                       className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
                     />
+                  </div>
+                )}
+
+                {/* Project (ad account) — optional */}
+                {readOnly ? (
+                  task.project_name ? (
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Project</p>
+                      <p className="inline-flex max-w-full items-center gap-1.5 rounded-lg border bg-muted/30 px-2.5 py-1.5 text-sm font-medium">
+                        <FolderKanban className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{task.project_name}</span>
+                      </p>
+                    </div>
+                  ) : null
+                ) : (
+                  <div className="space-y-1">
+                    <label htmlFor="task-detail-project" className="flex items-baseline justify-between text-xs font-medium text-muted-foreground">
+                      Project <span className="text-[11px] font-normal">Optional</span>
+                    </label>
+                    <ProjectPicker id="task-detail-project" value={projectId} onChange={saveProject}
+                      fallbackName={task.project_name} disabled={update.isPending} />
                   </div>
                 )}
 

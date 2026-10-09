@@ -10,6 +10,7 @@ import { useAllTeams, useTeam, useTeams, useAssignableUsers } from "@/hooks/useT
 import { VerifierPicker } from "@/components/projects/VerifierPicker";
 import { UserPicker } from "@/components/teams/UserPicker";
 import { RepeatField, REPEAT_DEFAULT, type RepeatValue } from "@/components/projects/RepeatField";
+import { ProjectPicker } from "./ProjectPicker";
 import { TaskNameCombobox } from "@/components/projects/TaskNameCombobox";
 import type { Suggestion } from "@/lib/taskPresets";
 import { istTodayKey } from "@/lib/datetime";
@@ -32,6 +33,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
 
   const [title, setTitle]           = useState("");
   const [description, setDesc]      = useState("");
+  const [projectId, setProjectId]   = useState("");
   const [priority, setPriority]     = useState<TaskPriority>("medium");
   // What a saved task just filled in (and what was there before), for "Undo".
   const [filled, setFilled] = useState<null | { fields: string[]; prev: { description: string; priority: TaskPriority; teamId: string } }>(null);
@@ -166,7 +168,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   }, [teamId, teamDetail]);
 
   function reset() {
-    setTitle(""); setDesc(""); setPriority("medium"); setFilled(null);
+    setTitle(""); setDesc(""); setProjectId(""); setPriority("medium"); setFilled(null);
     setTeamId(defaultTeamId);
     setAssignees([]); setPickerMode("first"); setRepeat(REPEAT_DEFAULT);
     setApproverId(""); setDueDate(""); setAttachments([]);
@@ -231,6 +233,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
       priority,
       status: "pending" as const,
       team_id: teamId || null,
+      project_id: projectId || null,
       attachments,
       verify_users: verifyUsers,
       verify_teams: verifyTeams,
@@ -276,6 +279,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
       assigned_to: finalAssignee,
       assigned_to_name: finalAssigneeName,
       due_date: dueDate || null,
+      project_id: projectId || null,
       attachments,
       // Sent explicitly — including as an empty list, which is how "nobody"
       // reaches the server as a decision rather than as silence it would fill
@@ -385,6 +389,14 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                   rows={3}
                   className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
                 />
+              </div>
+
+              {/* Project — which ad account the work is for. Optional. */}
+              <div className="space-y-1">
+                <label htmlFor="task-project" className="flex items-baseline justify-between text-xs font-medium text-muted-foreground">
+                  Project <span className="text-[11px] font-normal">Optional</span>
+                </label>
+                <ProjectPicker id="task-project" value={projectId} onChange={setProjectId} />
               </div>
 
               {/* Team. Required when the work is for someone else — it is the

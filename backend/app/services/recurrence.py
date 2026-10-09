@@ -65,7 +65,7 @@ POLL_SECONDS = 60
 ELEVATED_ROLES = ("Super Admin", "Admin", "Coordinator")
 
 TEMPLATE_FIELDS = ("title", "description", "priority", "team_id", "approver_id",
-                   "approver_name", "verify_users", "verify_teams", "attachments")
+                   "approver_name", "verify_users", "verify_teams", "attachments", "project_id")
 
 
 # ── Date engine ───────────────────────────────────────────────────────────────

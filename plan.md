@@ -1,3 +1,34 @@
+# plan.md — Tasks: optional "Project" picker (ad accounts)
+
+> **Status: DONE (2026-10-09)** — backend 198 passed (7 new) / the same 8 old failures; type check clean; production build passes. Browser (QA Super Admin): picker after Description, all 12 in order with group dividers + platform badges, search + Enter picks without submitting; task created with a project (stored id + name); board card shows it; detail view changes it (Snapchat) and clears it. QA test task, its notifications and chat message removed.
+
+## The idea
+Add Task gets an optional **Project** field right after Description: which ad account the work is for. A task can still be created without one.
+The 12 projects, in the order given (three groups):
+1. DELTA DIGITAL DXB (META ADS) · DELTA TRADING BLR (META ADS) · DELTA TRADING DXB (GOOGLE ADS) · DELTA TRADING IND (GOOGLE ADS) · DELTA TRADING (Snapchat) · DELTA TRADING DXB - BACKUP (META ADS)
+2. DELTA DIGITAL BLR (META ADS) · DELTA TRADING DXB (META ADS) (Formerly DRAW) · DELTA JURA (META ADS) · DELTA AI (META ADS)
+3. DELTA TRADING DXB (META ADS) - SHOHAIB · DELTA TRADING DXB (META ADS) - ABHIN
+
+## Decisions (senior-dev view)
+- **The list lives in the database** (`task_projects`, seeded with these 12 at startup, idempotently), not hard-coded in the page — so a name can be fixed or a project added without a release, and tasks keep a stable id. Each has a name, platform (Meta / Google / Snapchat), group and order.
+- **A task stores `project_id` + `project_name`** (the name as it was, so old tasks still read right if a project is renamed). Absent on tasks without a project — existing tasks are untouched.
+- **One rule, every path:** the check lives in `task_factory.raise_task`, so single tasks, "several people" and repeating tasks all accept it the same way; repeating tasks pass it to every copy. An unknown project id → 422.
+- **Editable later:** the task's detail view shows the project and (for whoever can edit the task) lets it be changed or cleared.
+- **Not in this change:** a filter by project on the board and a screen to manage the list (both easy follow-ups on the same data).
+
+## UI (designer pass)
+- **Placement:** after Description, before Team — "Project · optional".
+- **Closed:** looks like the other fields; shows "No project" in muted text, or the chosen project with a small platform badge (Meta blue, Google, Snapchat yellow) and an × to clear.
+- **Open:** an in-form list (not a native dropdown — those render white-on-white in dark mode on Windows): search box, the three groups separated by thin dividers in the given order, each row = platform badge + exact name; keyboard ↑ ↓ Enter Esc; the chosen row has a check. Typing narrows instantly.
+- **Board card:** a small one-line project label under the title, so the account is visible at a glance. **Detail view:** a "Project" row with the same picker when editable, a chip when read-only.
+
+## Proving nothing breaks
+- Backend tests (throwaway DB): seed is idempotent; list endpoint; create with / without / bad project; batch copies and repeating copies carry it; edit sets, changes and clears it; tasks without a project unchanged.
+- Existing task tests must pass unchanged. Type check, production build, browser: create with and without a project, change it in the detail view, dark mode.
+
+---
+---
+
 # plan.md — Ad Reports: delete, team-first people picking, several teams and people
 
 > **Status: DONE (2026-10-09)** — implemented and verified: backend 183 passed (8 new Ad Reports tests, 10/11 mutants caught, 1 equivalent) / the same 8 old failures; type check clean (2 old login errors); production build passes. Browser as Team Leader (QA): create with 2 teams + 4 people (picker = both teams' members only; Show everyone; ★ main team; 👑 owner), edit (remove a person + a team; last team locked; another leader's team 🔒), delete + Undo an ad, account with people → "+ Add ad" pre-fills team + people, delete account keeping its ad; phone width.

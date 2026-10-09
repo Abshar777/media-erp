@@ -499,3 +499,9 @@ end-to-end, not just "the socket reconnects."
 - **`hooks/useAdReports.ts` `useDeleteAdReport`**: removes the report(s) from the cached lists at once (no flash), refreshes everything except the gone report's series/entries (would 404), toast with **Undo** (10 s) → `POST /deleted/{batch}/restore`; restore's `onSuccess` awaits the refetch and the reselect uses `mutateAsync().then`, so it works even if the dialog unmounted.
 - **`components/ad-reports/TeamChips.tsx`** (new) for the facts row ("Teams" when >1); `lib/adReports.ts` `teamsLabel` ("Media +1", rail) and `peopleLabel` ("Asha (owner), Mira"). `ModalShell` gains `tone="danger"`. Leader Desk flag card shows "Report deleted" instead of the Report link (`AdFlag.report_deleted`).
 - **Fix (2026-10-09):** "+ Add team" is now an in-form `TeamList` (was a hidden native `<select>` whose options rendered white-on-white in dark mode); `app/globals.css` sets `color-scheme` per theme and themes `<option>` colours app-wide.
+
+### Tasks — "Project" picker (2026-10-09)
+- **`components/projects/ProjectPicker.tsx`** (new): field-style button ("No project" / platform badge + name + × to clear) → in-form list (search, the 3 groups split by dividers in the given order, Meta/Google/Snap badges, ↑ ↓ Enter Esc; Enter never submits the form). `PlatformBadge` exported. Data: `hooks/useTaskProjects.ts` (`GET /task-projects`, cached 10 min).
+- **AddTaskModal:** "Project · Optional" right after Description; sent as `project_id` on single and batch/repeating creates.
+- **TaskDetailModal:** "Project" row after Description — picker that saves on pick (reverts if refused) for editors, a chip when read-only.
+- **KanbanCard:** muted one-line project label under the title, only when the task has one.

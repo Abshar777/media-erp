@@ -124,6 +124,10 @@ export interface Task {
   recurrence?: TaskRecurrence;
   /** Shared by the copies created together for several people. */
   batch_id?: string;
+  /** Which ad account the work is for (optional) — name as it was when chosen.
+   *  Absent, or "" once cleared, when there is none. */
+  project_id?: string;
+  project_name?: string;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -151,6 +155,8 @@ export interface CreateTaskPayload {
    *  the server fills the latter with the creator (see add_task). */
   verify_users?: string[];
   verify_teams?: string[];
+  /** Optional ad account (GET /task-projects); the server looks up the name. */
+  project_id?: string | null;
 }
 
 // ── Repeating tasks + multiple assignees ──────────────────────────────────────
@@ -261,6 +267,8 @@ export interface UpdateTaskPayload {
   verify_teams?: string[];
   verify_instructions?: string;
   caption?: string;
+  /** Change the project; "" clears it. */
+  project_id?: string;
 }
 
 /** Display label for a task's assignee — prefers the denormalized name,

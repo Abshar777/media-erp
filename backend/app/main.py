@@ -69,6 +69,7 @@ from app.routers import fund_requests as fund_requests_router
 from app.routers import ad_reports as ad_reports_router
 from app.routers import ad_flags as ad_flags_router
 from app.routers import task_presets as task_presets_router
+from app.routers import task_projects as task_projects_router
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.utils.response import success_response
 
@@ -77,6 +78,13 @@ from app.utils.response import success_response
 async def lifespan(app: FastAPI):
     await connect_db()
     await create_indexes()
+    # Task projects (the optional "Project" picker): add any seeded one missing.
+    from app.database import get_db as _get_db
+    from app.services.task_project_service import ensure_seed
+    try:
+        await ensure_seed(_get_db())
+    except Exception as exc:          # never block startup on the picker list
+        logger.warning("Task projects seed skipped: %s", exc)
     # Post scheduling daemon thread
     import threading
     from app.services.schedule_service import start_scheduler
@@ -192,6 +200,7 @@ app.include_router(fund_requests_router.router)
 app.include_router(ad_reports_router.router)
 app.include_router(ad_flags_router.router)
 app.include_router(task_presets_router.router)
+app.include_router(task_projects_router.router)
 
 # Serve uploaded files at /uploads/<filename>
 # These are publicly reachable via ngrok so Instagram can fetch images.

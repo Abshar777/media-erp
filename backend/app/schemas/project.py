@@ -30,6 +30,8 @@ class CreateTaskRequest(BaseModel):
     # is added — see add_task.
     verify_users: Optional[list[str]] = None
     verify_teams: Optional[list[str]] = None
+    # Which ad account the work is for — optional (task_project_service).
+    project_id: Optional[str] = None
 
 
 class RepeatSpec(BaseModel):
@@ -104,3 +106,5 @@ class UpdateTaskRequest(BaseModel):
     # approver sees what was handed in for review, not a pile mixing the task's
     # own working files with the evidence for this round.
     submission_attachments: Optional[list[Attachment]] = None
+    # Change the task's project; "" clears it.
+    project_id: Optional[str] = None

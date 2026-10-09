@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, PauseCircle, Timer, Trash2 } from "lucide-react";
+import { FolderKanban, GripVertical, PauseCircle, Timer, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDeleteTask, useUpdateTask } from "@/hooks/useProjects";
 import { useCanApprove } from "@/hooks/useCanApprove";
@@ -165,6 +165,14 @@ export function KanbanCard({ task, overlay = false }: Props) {
           <Trash2 className="size-3" />
         </button>
       </div>
+
+      {/* Project (ad account), when the task has one — muted, one line. */}
+      {task.project_name && (
+        <p className="pl-5 mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground min-w-0" title={`Project: ${task.project_name}`}>
+          <FolderKanban className="size-3 shrink-0" />
+          <span className="truncate">{task.project_name}</span>
+        </p>
+      )}
 
       {/* ── Row 2: verification standing ──
           On its own line rather than beside the title: the title is the one

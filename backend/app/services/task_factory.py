@@ -99,6 +99,18 @@ async def raise_task(db: AsyncIOMotorDatabase, data: dict, current_user: dict) -
         data.pop("approver_id", None)
         data.pop("approver_name", None)
 
+    # ── Project (optional) — which ad account the work is for ─────────────────
+    # The name is looked up here, never taken from the request, and stored with
+    # the id so the task still reads right if the project is renamed later.
+    from app.services import task_project_service as tps
+    try:
+        project = await tps.resolve(db, data.pop("project_id", None))
+    except tps.ProjectError as exc:
+        raise TaskRaiseError(exc.message, exc.status_code)
+    data.pop("project_name", None)
+    if project:
+        data["project_id"], data["project_name"] = str(project["_id"]), project.get("name", "")
+
     # ── Whoever raised the work checks the result ─────────────────────────────
     # Unless they said otherwise, the creator is named a verifier, so nothing
     # they asked for is approved without them having seen what came back.
