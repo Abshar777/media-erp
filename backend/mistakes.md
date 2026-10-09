@@ -14,6 +14,13 @@ If a mistake is listed here, do NOT repeat it.
 
 ## Log
 
+### 2026-10-09 · Rate limiter · "View as this user" (and other /auth calls) answered 429 in production
+- **Bug:** Impersonating a team leader failed on production with 429 Too Many Requests (api-out.log), while it always worked locally.
+- **Root Cause:** Two things. (1) One Redis counter per IP per minute (`rl:{ip}:{window}`) was shared by every bucket, but each request was compared with its own bucket's limit — so after 60 ordinary API calls in a minute every `/api/v1/auth/*` call (impersonate, me, 2FA…) got 429. (2) In production every request reaches the API through the Next.js rewrite on the same server, so all users have ONE client IP (72.60.218.158): the whole company shared the 60/min auth and 300/min overall budgets. Locally there is no Redis, so the limiter is off and it never showed.
+- **Fix:** Counters per bucket (`signin` / `auth` / `sync` / `api`) and per person — `rl:{bucket}:{u:<hashed user id> | ip:<addr>}:{window}`. A request with a valid access token (signature verified) is counted against its user; login / register / refresh / password reset / SSO are always counted per IP, so a made-up token can't buy a fresh brute-force budget. `Retry-After` = seconds left in the window; one warning logged per identity per window. Tests: `tests/test_rate_limit.py` (6, in-memory Redis stand-in); the old limiter reproduces the 429 (61 ordinary calls from 20 users → impersonate 429).
+- **How to Avoid:** A rate-limit key must include everything the limit depends on (bucket + who). Behind a same-host proxy the client IP identifies the proxy, not the person — count signed-in traffic per user.
+
+
 ### 2026-10-09 · Ad Reports · Two simultaneous deletes both succeeded
 - **Bug:** Two leaders deleting the same report at the same moment both got 200 — two trash copies, two Undo toasts, a doubled "report deleted" line on its flag.
 - **Root Cause:** `delete_report` read the report, copied it to the trash, then deleted it — no claim, so both requests copied before either deleted.
