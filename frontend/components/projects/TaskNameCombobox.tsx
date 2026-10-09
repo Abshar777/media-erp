@@ -11,7 +11,9 @@
  *  • the list for a team loads once and filters in the browser, so typing
  *    never waits on the network.
  * Leaders get a one-click "★ Save for <team>" for a new name (name only — no
- * dialog), and a ☆ on recently used names.
+ * dialog), and a ☆ on recently used names. Before a team is picked (Title comes
+ * first in Add Task) a leader is offered each team they lead; admins save for
+ * everyone.
  */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -51,8 +53,16 @@ export function TaskNameCombobox({ value, onChange, onPick, teamId, teamName, au
   const items = useMemo(() => rankSuggestions(all, query, query.trim() ? 8 : 6), [all, query]);
   const typed = value.trim();
   const exists = all.some((s) => s.source !== "recent" && s.title.trim().toLowerCase() === typed.toLowerCase());
-  const canSave = !!data?.can_save && typed.length > 0 && typed.length <= 120 && !exists;
-  const saveTarget = teamId ? (teamName || "this team") : "everyone";
+  // Where a new name can be saved: the picked team (if you may), "everyone"
+  // (admin roles, no team picked), or — no team picked — each team you lead.
+  const targets: { id: string | null; name: string }[] = data?.can_save
+    ? [{ id: teamId || null, name: teamId ? (teamName || "this team") : "everyone" }]
+    : !teamId ? (data?.save_teams ?? []).map((t) => ({ id: t.id, name: t.name })) : [];
+  const nameOk = typed.length > 0 && typed.length <= 120 && !exists;
+  const saveRows = nameOk ? targets.slice(0, 3) : [];
+  const canSave = saveRows.length > 0;
+  // The ☆ on a recent name needs one unambiguous place to save it.
+  const starTarget = targets.length === 1 ? targets[0] : null;
   const showList = open && (items.length > 0 || canSave);
 
   useEffect(() => setActive(-1), [query, teamId]);
@@ -63,10 +73,10 @@ export function TaskNameCombobox({ value, onChange, onPick, teamId, teamName, au
     setActive(-1);
   };
 
-  const saveName = async (title: string) => {
+  const saveName = async (title: string, target: { id: string | null; name: string }) => {
     try {
-      await save.mutateAsync({ team_id: teamId || null, title });
-      toast.success(`Saved — “${title}” will be suggested for ${saveTarget}`);
+      await save.mutateAsync({ team_id: target.id, title });
+      toast.success(`Saved — “${title}” will be suggested for ${target.name}`);
     } catch { /* hook showed the message */ }
   };
 
@@ -140,9 +150,9 @@ export function TaskNameCombobox({ value, onChange, onPick, teamId, teamName, au
                       <span className="shrink-0 text-[10px] text-muted-foreground" title="Also fills the description / priority if they're empty">+ details</span>
                     )}
                     {s.source === "recent" && s.uses > 1 && <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">used {s.uses}×</span>}
-                    {s.source === "recent" && data?.can_save && (
-                      <button type="button" aria-label={`Save “${s.title}” for ${saveTarget}`} title={`Save for ${saveTarget}`}
-                        onClick={(e) => { e.stopPropagation(); saveName(s.title); }}
+                    {s.source === "recent" && starTarget && (
+                      <button type="button" aria-label={`Save “${s.title}” for ${starTarget.name}`} title={`Save for ${starTarget.name}`}
+                        onClick={(e) => { e.stopPropagation(); saveName(s.title, starTarget); }}
                         className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition hover:text-amber-500 group-hover:opacity-100 focus:opacity-100">
                         <Star className="size-3.5" />
                       </button>
@@ -152,13 +162,14 @@ export function TaskNameCombobox({ value, onChange, onPick, teamId, teamName, au
               })}
             </ul>
           )}
-          {canSave && (
-            <button type="button" onClick={() => saveName(typed)} disabled={save.isPending}
-              className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50">
-              <Star className="size-3.5 text-amber-500" />
-              <span className="min-w-0 truncate">Save <span className="font-medium text-foreground">“{typed}”</span> for {saveTarget}</span>
+          {saveRows.map((target, i) => (
+            <button key={target.id ?? "everyone"} type="button" onClick={() => saveName(typed, target)} disabled={save.isPending}
+              className={cn("flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50",
+                (i === 0 && items.length > 0) && "border-t")}>
+              <Star className="size-3.5 shrink-0 text-amber-500" />
+              <span className="min-w-0 truncate">Save <span className="font-medium text-foreground">“{typed}”</span> for {target.name}</span>
             </button>
-          )}
+          ))}
         </div>
       )}
     </div>

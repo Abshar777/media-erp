@@ -26,6 +26,8 @@ export interface TaskSuggestions {
   company: TaskPreset[];
   recent: { title: string; uses: number }[];
   can_save: boolean;
+  /** No team picked yet: the teams this person leads, so they can still save a name for one. */
+  save_teams?: { id: string; name: string }[];
 }
 
 const KEY = ["task-presets"] as const;

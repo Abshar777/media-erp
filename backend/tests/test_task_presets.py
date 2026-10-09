@@ -168,3 +168,26 @@ async def test_list_limit(world, monkeypatch):
     for i in range(3):
         assert (await add(w, "lead", w["t1"], f"T{i}")).status_code == 201
     assert (await add(w, "lead", w["t1"], "T3")).status_code == 422
+
+
+async def test_a_leader_can_save_before_picking_a_team(world):
+    """
+    Bug report: in Add Task the Title box comes before Team, so a team leader
+    typing a new name saw no "Save" — saving needed a picked team, and with no
+    team only admins could save (company-wide). Now the suggestions name the
+    teams the leader can save into.
+    """
+    w = world
+    sug = lambda who, team=None: w["call"]("GET", "/api/v1/task-presets/suggest", who,
+                                           params={"team_id": team} if team else {})
+    d = (await sug("lead")).json()["data"]
+    assert d["can_save"] is False and d["save_teams"] == [{"id": w["t1"], "name": "Video"}]
+    # Team picked → the usual rule; no extra rows.
+    d = (await sug("lead", w["t1"])).json()["data"]
+    assert d["can_save"] is True and d["save_teams"] == []
+    # Members and admins don't get team rows (admins save "for everyone").
+    assert (await sug("asha")).json()["data"]["save_teams"] == []
+    d = (await sug("sa")).json()["data"]
+    assert d["can_save"] is True and d["save_teams"] == []
+    # And saving into the offered team works.
+    assert (await add(w, "lead", w["t1"], "kowpwo")).status_code == 201

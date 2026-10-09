@@ -74,11 +74,21 @@ async def suggest(
         ({"title": v["title"], "uses": v["uses"]} for k, v in uses.items() if k not in taken),
         key=lambda x: -x["uses"],
     )[: tp.MAX_RECENT]
+    # No team picked yet (the Title box comes before Team in Add Task): a team
+    # leader can still save the name — for a team they lead. Admin roles save
+    # company-wide instead ("for everyone").
+    save_teams: list[dict] = []
+    if not team_id and not elevated:
+        led = await db["teams"].find(
+            {"members": {"$elemMatch": {"user_id": uid, "role": "leader"}}}, {"name": 1}
+        ).sort("name", 1).to_list(50)
+        save_teams = [{"id": str(t["_id"]), "name": t.get("name", "")} for t in led]
     return success_response(data={
         "saved": [tp.serialize(p, names, uses) for p in saved],
         "company": [tp.serialize(p, {}, uses) for p in company],
         "recent": recent,
         "can_save": await tp.can_manage(db, current_user, team_id or None) if team_id else elevated,
+        "save_teams": save_teams,
     }, message="Suggestions")
 
 
