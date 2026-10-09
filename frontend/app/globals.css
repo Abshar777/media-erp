@@ -129,6 +129,16 @@
     @apply font-sans;
   }
 
+  /* Native controls follow the theme. Without this, Windows paints a <select>'s
+     option list (and date pickers) light while the dark theme's text stays
+     light — options become near-invisible. */
+  :root { color-scheme: light; }
+  .dark { color-scheme: dark; }
+  option, optgroup {
+    background-color: var(--popover);
+    color: var(--popover-foreground);
+  }
+
   /* ── Neat, theme-aware scrollbars ──────────────────────────────────────── */
   /* Firefox */
   * {

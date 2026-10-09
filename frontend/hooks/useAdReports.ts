@@ -9,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import type {
-  AdCreative,
+  AdCreative, AdDeleteResult,
   AdEntry, AdEntryPayload, AdGranularity, AdReport, AdSeries, AdToday,
   CreateAdReportPayload, UpdateAdReportPayload,
 } from "@/types/adReport";
@@ -80,6 +80,46 @@ export function useUpdateAdReport() {
       (await api.patch<Env<AdReport>>(`/ad-reports/${id}`, p)).data,
     onSuccess: (res) => { toast.success(res.message || "Report updated"); qc.invalidateQueries({ queryKey: KEY }); },
     onError: (e) => toast.error(errMsg(e, "Could not update the report")),
+  });
+}
+
+/**
+ * Delete an ad or an account (with_ads: its ads too). The toast offers Undo,
+ * which puts everything back with the same ids. `onDeleted` runs first so the
+ * page can move off the report before the list refreshes.
+ */
+export function useDeleteAdReport() {
+  const qc = useQueryClient();
+  const restore = useMutation({
+    mutationFn: async (batch: string) =>
+      (await api.post<Env<{ report_id: string; name: string }>>(`/ad-reports/deleted/${batch}/restore`)).data.data,
+    // Awaited, so the caller's onSuccess (re-select it) runs once the list has it again —
+    // otherwise the page's "nothing selected → first report" fallback wins the race.
+    onSuccess: async (r) => { toast.success(`Restored “${r.name}”`); await qc.invalidateQueries({ queryKey: KEY }); },
+    onError: (e) => toast.error(errMsg(e, "Could not bring it back")),
+  });
+  return useMutation({
+    mutationFn: async ({ id, withAds = false }: { id: string; withAds?: boolean; onRestored?: (id: string) => void }) =>
+      (await api.delete<Env<AdDeleteResult>>(`/ad-reports/${id}`, { params: withAds ? { with_ads: true } : undefined })).data.data,
+    onSuccess: (r, vars) => {
+      // Off the list at once, so the page moves to another report without a flash.
+      qc.setQueriesData<AdReport[]>({ queryKey: [...KEY, "list"] }, (old) =>
+        old?.filter((x) => x.id !== vars.id && !(vars.withAds && x.account_id === vars.id)));
+      // Refresh everything (flags live under this key too) except the gone report's own
+      // series / entries, which would only 404 while the page moves off it.
+      qc.invalidateQueries({ queryKey: KEY, predicate: (q) => !q.queryKey.includes(vars.id) });
+      const extra = r.reports > 1 ? ` and ${r.reports - 1} ad${r.reports > 2 ? "s" : ""}` : "";
+      toast.success(`Deleted “${r.name}”${extra}`, {
+        duration: 10_000,
+        action: {
+          label: "Undo",
+          // mutateAsync, not mutate's callbacks: those are skipped when the dialog that
+          // started it has unmounted (the page may have moved to an account meanwhile).
+          onClick: () => { restore.mutateAsync(r.batch).then((x) => vars.onRestored?.(x.report_id), () => {}); },
+        },
+      });
+    },
+    onError: (e) => toast.error(errMsg(e, "Could not delete it")),
   });
 }
 

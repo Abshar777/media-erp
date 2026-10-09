@@ -172,11 +172,15 @@ export function AdFlagCard({ flag, highlight }: { flag: AdFlag; highlight?: bool
                 className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium hover:bg-muted disabled:opacity-50">
                 <XCircle className="size-3.5" /> Decline
               </button>
-              {flag.can_open_report && (
+              {flag.can_open_report ? (
                 <Link href={`/ad-reports?report=${flag.report_id}`}
                   className="ml-auto inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium text-primary hover:bg-primary/10">
                   Report <ExternalLink className="size-3" />
                 </Link>
+              ) : flag.report_deleted && (
+                <span className="ml-auto text-[11px] text-muted-foreground" title="Its creatives were kept on this request">
+                  Report deleted
+                </span>
               )}
             </div>
           )

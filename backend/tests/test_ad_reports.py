@@ -8,7 +8,7 @@ frozen so days and reminder times can be walked deliberately. Skips without Mong
 """
 import asyncio
 import secrets
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from bson import ObjectId
@@ -182,7 +182,7 @@ async def test_create_validation(world):
     w, s = world, world["s"]
     for kw, code in [
         ({"assignees": []}, 422),
-        ({"assignees": [s["asha"], s["mira"], s["lead"]]}, 422),
+        ({"assignees": [str(ObjectId()) for _ in range(7)]}, 422),   # more than 6 people
         ({"assignees": ["nope"]}, 422),
         ({"end_date": "2026-10-01"}, 422),
         ({"start_date": "10/10/2026"}, 422),
@@ -589,7 +589,8 @@ async def test_accounts_have_no_numbers_or_reminders_of_their_own(world):
     assert r.status_code == 422 and "ads inside" in r.json()["message"]
     assert (await w["call"]("POST", f"{B}/{acc}/remind", "lead")).status_code == 409
     assert (await w["call"]("PATCH", f"{B}/{acc}", "lead", json={"action": "pause"})).status_code == 409
-    assert (await w["call"]("PATCH", f"{B}/{acc}", "lead", json={"assignees": [w["s"]["asha"]]})).status_code == 422
+    # An account may have people now (they look after its ads), but no dates of its own.
+    assert (await w["call"]("PATCH", f"{B}/{acc}", "lead", json={"end_date": "2026-12-01"})).status_code == 422
     assert await ar.run_reminders(db, at(WED, 18), frozenset()) == 0, "nothing is owed by an account"
     today = (await w["call"]("GET", f"{B}/today", "lead")).json()["data"]
     assert today["team"]["active"] == 0, "accounts don't count in 'N of M up to date'"
@@ -620,3 +621,209 @@ async def test_ad_owner_sees_the_account_name_not_its_totals(world):
     assert (await w["call"]("GET", f"{B}/{acc}/series", "asha")).status_code == 404
     lst = (await w["call"]("GET", B, "asha")).json()["data"]
     assert [x["kind"] for x in lst] == ["ad"]
+
+
+# ── Several teams, more people, account people (2026-10-09) ─────────────────
+
+async def test_a_report_can_belong_to_several_teams(world):
+    w, s = world, world["s"]
+    r = await make(w, "lead", team_ids=[w["t1"], w["t2"]])
+    assert r.status_code == 403, "a leader can only choose teams they lead"
+    r = await make(w, "sa", team_ids=[w["t2"], w["t1"], w["t2"]], assignees=[s["asha"], s["mira"], s["out"]])
+    assert r.status_code == 201, r.text
+    d = r.json()["data"]
+    assert d["team_ids"] == [w["t2"], w["t1"]], "de-duplicated, main team first"
+    assert d["team_id"] == w["t2"] and d["team_name"] == "Other"
+    assert [t["name"] for t in d["teams"]] == ["Other", "Media"]
+    rid = d["id"]
+    for who in ("lead", "lead2"):          # a leader of EITHER team sees and manages it
+        mine = {x["id"]: x for x in (await w["call"]("GET", B, who)).json()["data"]}
+        assert rid in mine and mine[rid]["can_manage"], who
+        assert (await w["call"]("PATCH", f"{B}/{rid}", who, json={"name": f"Renamed by {who}"})).status_code == 200
+    for who in ("asha", "out"):            # people on it see it, but don't manage it
+        got = (await w["call"]("GET", f"{B}/{rid}", who)).json()["data"]
+        assert got["can_enter"] and not got["can_manage"], who
+    assert (await make(w, "sa", team_ids=[str(ObjectId()) for _ in range(6)])).status_code == 422
+    assert (await make(w, "sa", team_ids=[str(ObjectId())])).status_code == 422
+    assert (await make(w, "sa", team_id="", team_ids=[])).status_code == 422
+
+
+async def test_up_to_six_people_with_the_owner_first(world):
+    w, s = world, world["s"]
+    six = [s["mira"], s["asha"], s["out"], s["lead"], s["lead2"], s["sa"]]
+    d = (await make(w, assignees=six)).json()["data"]
+    assert [a["id"] for a in d["assignees"]] == six
+    rid = d["id"]
+    assert (await w["call"]("PATCH", f"{B}/{rid}", "lead", json={"assignees": six + [str(ObjectId())]})).status_code == 422
+    r = await w["call"]("PATCH", f"{B}/{rid}", "lead", json={"assignees": [s["asha"], s["mira"]]})
+    assert [a["id"] for a in r.json()["data"]["assignees"]] == [s["asha"], s["mira"]], "edit changes the people"
+    assert (await w["call"]("PATCH", f"{B}/{rid}", "lead", json={"assignees": []})).status_code == 422, \
+        "an ad always needs someone"
+    # Stage 2 reminders reach the leaders of every team on it.
+    await w["call"]("PATCH", f"{B}/{rid}", "sa", json={"team_ids": [w["t1"], w["t2"]]})
+    await ar.run_reminders(w["db"], at(WED, 18), frozenset())
+    overdue, _ = await bells(w, ar.NOTIF_OVERDUE)
+    assert s["lead"] in overdue and s["lead2"] in overdue
+
+
+async def test_changing_teams_never_locks_anyone_out(world):
+    w, s = world, world["s"]
+    rid = await rid_of(w)                                  # Media only, by its leader
+    call = w["call"]
+    assert (await call("PATCH", f"{B}/{rid}", "lead", json={"team_ids": [w["t1"], w["t2"]]})).status_code == 403, \
+        "can't add a team you don't lead"
+    assert (await call("PATCH", f"{B}/{rid}", "sa", json={"team_ids": [w["t1"], w["t2"]]})).status_code == 200
+    assert (await call("PATCH", f"{B}/{rid}", "lead", json={"team_ids": [w["t1"]]})).status_code == 403, \
+        "can't take it away from another team's leader"
+    assert (await call("PATCH", f"{B}/{rid}", "lead2", json={"team_ids": [w["t2"]]})).status_code == 403
+    r = await call("PATCH", f"{B}/{rid}", "lead2", json={"team_ids": [w["t1"]]})
+    assert r.status_code == 422 and "your own" in r.json()["message"], "removing your last team locks you out"
+    r = await call("PATCH", f"{B}/{rid}", "lead", json={"team_ids": [w["t2"], w["t1"]]})
+    assert r.status_code == 200 and r.json()["data"]["team_id"] == w["t2"], "re-ordering = changing the main team"
+    assert (await call("PATCH", f"{B}/{rid}", "sa", json={"team_ids": [w["t2"]]})).status_code == 200
+    assert (await call("GET", f"{B}/{rid}", "lead")).status_code == 404, "Media's leader no longer sees it"
+    assert (await call("GET", f"{B}/{rid}", "asha")).status_code == 200, "its people still do"
+
+
+async def test_account_people_see_and_update_its_ads_but_are_not_reminded(world):
+    w, s = world, world["s"]
+    acc = (await make_account(w, assignees=[s["mira"]])).json()["data"]
+    assert [a["id"] for a in acc["assignees"]] == [s["mira"]]
+    ad = await rid_of(w, account_id=acc["id"], assignees=[s["asha"]])
+    listed = {x["id"]: x for x in (await w["call"]("GET", B, "mira")).json()["data"]}
+    assert acc["id"] in listed and ad in listed, "the account and the ads inside it"
+    assert listed[ad]["can_enter"] and not listed[ad]["can_manage"]
+    assert (await put(w, ad, "2026-10-12", who="mira")).status_code == 201
+    assert (await w["call"]("GET", f"{B}/{ad}", "out")).status_code == 404
+    w["clock"].today = WED + timedelta(days=3)          # the account is days old now
+    today = (await w["call"]("GET", f"{B}/today", "mira")).json()["data"]
+    assert today["visible"] and today["my_due_count"] == 0, "an account has nothing to type"
+    w["clock"].today = WED
+    await ar.run_reminders(w["db"], at(WED, 18), frozenset())
+    everyone, _ = await bells(w)
+    assert s["asha"] in everyone and s["mira"] not in everyone
+    # Taking her off the account takes the ad away again.
+    await w["call"]("PATCH", f"{B}/{acc['id']}", "lead", json={"assignees": []})
+    assert (await w["call"]("GET", f"{B}/{ad}", "mira")).status_code == 404
+
+
+async def test_an_ad_joins_an_account_that_shares_a_team(world):
+    w, s = world, world["s"]
+    other = (await make_account(w, "sa", team_id=w["t2"])).json()["data"]["id"]
+    r = await make(w, account_id=other)
+    assert r.status_code == 422 and "shares" in r.json()["message"]
+    ad = await rid_of(w, who="sa", team_ids=[w["t1"], w["t2"]], account_id=other)
+    r = await w["call"]("PATCH", f"{B}/{ad}", "sa", json={"team_ids": [w["t1"]]})
+    assert r.status_code == 422 and "other teams" in r.json()["message"]
+    r = await w["call"]("PATCH", f"{B}/{ad}", "sa", json={"team_ids": [w["t1"]], "clear_account": True})
+    assert r.status_code == 200 and r.json()["data"]["account_id"] is None
+    await w["call"]("PATCH", f"{B}/{ad}", "sa", json={"team_ids": [w["t2"]], "account_id": other})
+    r = await w["call"]("PATCH", f"{B}/{other}", "sa", json={"team_ids": [w["t1"]]})
+    assert r.status_code == 422 and "1 ad in this account" in r.json()["message"]
+
+
+# ── Delete + undo ────────────────────────────────────────────────────────────
+
+async def test_delete_an_ad_and_undo_it(world):
+    from app.services import ad_flag_service as fl
+    w, s, db = world, world["s"], world["db"]
+    rid = await rid_of(w)
+    for d in ("2026-10-10", "2026-10-11"):
+        assert (await put(w, rid, d)).status_code == 201
+    creative = {"id": "c1", "key": "mediaERP/ad-creatives/x.png", "url": "mediaERP/ad-creatives/x.png",
+                "filename": "x.png", "content_type": "image/png", "size": 10, "backend": "r2"}
+    await db[ar.REPORTS].update_one({"_id": ObjectId(rid)}, {"$set": {"creatives": [creative]}})
+    now = datetime.now(timezone.utc)
+    fid = (await db[fl.FLAGS].insert_one({
+        "report_id": rid, "report_name": "Delta Admissions – Oct", "status": "open", "active": True,
+        "recipient_id": s["lead2"], "flagged_by": s["asha"], "reasons": [], "history": [],
+        "created_at": now, "updated_at": now})).inserted_id
+
+    assert (await w["call"]("DELETE", f"{B}/{rid}", "asha")).status_code == 403, "people on it can't delete it"
+    assert (await w["call"]("DELETE", f"{B}/{rid}", "lead2")).status_code == 404, "strangers get the same 404"
+    r = await w["call"]("DELETE", f"{B}/{rid}", "lead")
+    assert r.status_code == 200, r.text
+    res = r.json()["data"]
+    assert res["reports"] == 1 and res["entries"] == 2 and res["kind"] == "ad"
+    assert not await db[ar.REPORTS].find_one({"_id": ObjectId(rid)})
+    assert await db[ar.ENTRIES].count_documents({"report_id": rid}) == 0
+    assert await db[ar.DELETED_ENTRIES].count_documents({"batch": res["batch"]}) == 2
+    assert (await w["call"]("GET", f"{B}/{rid}", "lead")).status_code == 404
+
+    flag = await db[fl.FLAGS].find_one({"_id": fid})
+    assert flag["active"] and flag["status"] == "open", "the redo request stays with the media team"
+    assert flag["creatives_archived"][0]["id"] == "c1" and flag["history"][-1]["action"] == "report_deleted"
+    got = (await w["call"]("GET", f"/api/v1/ad-flags/{fid}", "lead2")).json()["data"]
+    assert got["report_deleted"] and got["creatives"][0]["id"] == "c1" and not got["can_open_report"]
+
+    assert (await w["call"]("POST", f"{B}/deleted/{res['batch']}/restore", "asha")).status_code == 403
+    r = await w["call"]("POST", f"{B}/deleted/{res['batch']}/restore", "lead")
+    assert r.status_code == 200 and r.json()["data"]["report_id"] == rid
+    back = (await w["call"]("GET", f"{B}/{rid}", "asha")).json()["data"]
+    assert back["name"] == "Delta Admissions – Oct" and back["missing"] == ["2026-10-12", "2026-10-13"]
+    assert await db[ar.DELETED_REPORTS].count_documents({}) == 0
+    assert (await w["call"]("POST", f"{B}/deleted/{res['batch']}/restore", "lead")).status_code == 404, "only once"
+
+
+async def test_delete_an_account_keeps_or_takes_its_ads(world):
+    w, s, db = world, world["s"], world["db"]
+    acc = (await make_account(w)).json()["data"]["id"]
+    ads = [await rid_of(w, account_id=acc, name=f"Ad {i}") for i in range(2)]
+    await put(w, ads[0], "2026-10-10")
+
+    res = (await w["call"]("DELETE", f"{B}/{acc}", "lead")).json()["data"]
+    assert res["reports"] == 1 and res["detached"] == 2
+    for a in ads:
+        assert (await db[ar.REPORTS].find_one({"_id": ObjectId(a)}))["account_id"] is None, "kept, standalone"
+    await w["call"]("POST", f"{B}/deleted/{res['batch']}/restore", "lead")
+    for a in ads:
+        assert (await db[ar.REPORTS].find_one({"_id": ObjectId(a)}))["account_id"] == acc, "undo re-attaches them"
+
+    res = (await w["call"]("DELETE", f"{B}/{acc}?with_ads=true", "lead")).json()["data"]
+    assert res["reports"] == 3 and res["entries"] == 1
+    assert await db[ar.REPORTS].count_documents({}) == 0
+    await w["call"]("POST", f"{B}/deleted/{res['batch']}/restore", "lead")
+    assert await db[ar.REPORTS].count_documents({"account_id": acc}) == 2
+    assert await db[ar.ENTRIES].count_documents({"report_id": ads[0]}) == 1
+
+
+async def test_delete_with_ads_needs_every_ad_and_undo_handles_a_gone_account(world):
+    w, s, db = world, world["s"], world["db"]
+    acc = (await make_account(w, "sa", team_ids=[w["t1"], w["t2"]])).json()["data"]["id"]
+    theirs = await rid_of(w, who="lead2", team_id=w["t2"], account_id=acc, assignees=[s["lead2"]])
+    mine = await rid_of(w, account_id=acc)
+    r = await w["call"]("DELETE", f"{B}/{acc}?with_ads=true", "lead")
+    assert r.status_code == 403 and "keep the ads" in r.json()["message"]
+    assert await db[ar.REPORTS].count_documents({}) == 3, "nothing was deleted"
+
+    ad_batch = (await w["call"]("DELETE", f"{B}/{mine}", "lead")).json()["data"]["batch"]
+    await w["call"]("DELETE", f"{B}/{acc}", "lead")                       # the account goes too
+    await w["call"]("POST", f"{B}/deleted/{ad_batch}/restore", "lead")
+    back = await db[ar.REPORTS].find_one({"_id": ObjectId(mine)})
+    assert back and back["account_id"] is None, "its account is gone, so it comes back standalone"
+    assert (await db[ar.REPORTS].find_one({"_id": ObjectId(theirs)}))["account_id"] is None
+
+
+async def test_two_deletes_at_once_make_one_trash_entry(world):
+    w, db = world, world["db"]
+    rid = await rid_of(w)
+    await put(w, rid, "2026-10-10")
+    a, b = await asyncio.gather(w["call"]("DELETE", f"{B}/{rid}", "lead"), w["call"]("DELETE", f"{B}/{rid}", "sa"))
+    assert sorted([a.status_code, b.status_code]) in ([200, 404], [200, 409]), (a.text, b.text)
+    assert await db[ar.DELETED_REPORTS].count_documents({}) == 1
+    assert await db[ar.DELETED_ENTRIES].count_documents({}) == 1
+
+
+async def test_a_stale_delete_claim_expires(world):
+    w, db = world, world["db"]
+    rid = await rid_of(w)
+    old = datetime.now(timezone.utc) - ar.DELETE_CLAIM_TTL - timedelta(minutes=1)
+    await db[ar.REPORTS].update_one({"_id": ObjectId(rid)}, {"$set": {"deleting": {"batch": "crashed", "at": datetime.now(timezone.utc)}}})
+    assert (await w["call"]("DELETE", f"{B}/{rid}", "lead")).status_code == 409, "a live claim blocks a second delete"
+    await db[ar.REPORTS].update_one({"_id": ObjectId(rid)}, {"$set": {"deleting.at": old}})
+    r = await w["call"]("DELETE", f"{B}/{rid}", "lead")
+    assert r.status_code == 200
+    row = await db[ar.DELETED_REPORTS].find_one({})
+    assert "deleting" not in row["report"], "the trash keeps the report as it was"
+    await w["call"]("POST", f"{B}/deleted/{r.json()['data']['batch']}/restore", "lead")
+    assert "deleting" not in await db[ar.REPORTS].find_one({"_id": ObjectId(rid)})

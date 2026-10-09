@@ -85,6 +85,17 @@ export const dayLabel = (iso: string) => DAY_FMT.format(new Date(`${iso}T00:00:0
 export const dayLabelW = (iso: string) => DAY_W_FMT.format(new Date(`${iso}T00:00:00Z`));
 export const monthLabel = (iso: string) => MONTH_FMT.format(new Date(`${iso.slice(0, 7)}-01T00:00:00Z`));
 
+/** "Media" · "Media +2" — the main team first. */
+export function teamsLabel(r: { team_name: string; teams?: { name: string }[] }): string {
+  const n = r.teams?.length ?? 0;
+  return n > 1 ? `${r.teams![0].name || r.team_name} +${n - 1}` : r.team_name;
+}
+
+/** "Asha (owner), Mira, Ravi" — owner marked only when there's more than one. */
+export function peopleLabel(people: { name: string }[]): string {
+  return people.map((a, i) => `${a.name}${i === 0 && people.length > 1 ? " (owner)" : ""}`).join(", ");
+}
+
 export function missingPhrase(missing: string[]): string {
   const shown = missing.slice(0, 3).map(dayLabel).join(", ");
   return missing.length > 3 ? `${shown} +${missing.length - 3} more` : shown;

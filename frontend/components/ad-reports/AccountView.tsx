@@ -9,13 +9,15 @@
  * and which is bringing leads. Click an ad to open it.
  */
 import { useEffect, useState } from "react";
-import { Building2, CalendarRange, Flag, Hash, Megaphone, Plus, Settings2 } from "lucide-react";
+import { Building2, CalendarRange, Flag, Hash, Megaphone, Plus, Settings2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUpdateAdReport } from "@/hooks/useAdReports";
-import { dayLabel, formatCount, formatINR } from "@/lib/adReports";
+import { dayLabel, formatCount, formatINR, peopleLabel } from "@/lib/adReports";
 import { PerformanceOverview } from "./PerformanceOverview";
 import { StatusChip } from "./StatusChip";
 import { CreativeThumb } from "./CreativeShowcase";
+import { DeleteReportDialog } from "./DeleteReportDialog";
+import { TeamChips } from "./TeamChips";
 import type { AdBreakdownRow, AdReport, AdSeries } from "@/types/adReport";
 
 interface Props {
@@ -24,14 +26,16 @@ interface Props {
   onOpenAd: (id: string) => void;
   onAddAd: () => void;
   onEdit: () => void;
+  /** Undo of a delete brought something back — open it. */
+  onRestored: (id: string) => void;
 }
 
-export function AccountView({ account, today, onOpenAd, onAddAd, onEdit }: Props) {
+export function AccountView({ account, today, onOpenAd, onAddAd, onEdit, onRestored }: Props) {
   const a = account.account;
   const empty = !a || a.ads === 0;
   return (
     <div className="min-w-0 space-y-5">
-      <AccountHero account={account} onAddAd={onAddAd} onEdit={onEdit} />
+      <AccountHero account={account} today={today} onAddAd={onAddAd} onEdit={onEdit} onRestored={onRestored} />
       {empty ? (
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed px-6 py-14 text-center">
           <span className="flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Megaphone className="size-6" /></span>
@@ -60,15 +64,19 @@ export function AccountView({ account, today, onOpenAd, onAddAd, onEdit }: Props
   );
 }
 
-function AccountHero({ account, onAddAd, onEdit }: { account: AdReport; onAddAd: () => void; onEdit: () => void }) {
+function AccountHero({ account, today, onAddAd, onEdit, onRestored }: {
+  account: AdReport; today: string; onAddAd: () => void; onEdit: () => void; onRestored: (id: string) => void;
+}) {
   const update = useUpdateAdReport();
   const [confirmEnd, setConfirmEnd] = useState(false);
-  useEffect(() => setConfirmEnd(false), [account.id]);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  useEffect(() => { setConfirmEnd(false); setDeleteOpen(false); }, [account.id]);
   const a = account.account;
   const manage = account.can_manage && account.status !== "ended";
   const btn = "inline-flex h-9 items-center gap-1.5 rounded-lg border bg-background px-3 text-sm font-medium transition hover:bg-muted disabled:opacity-50";
   const facts: { label: string; value: React.ReactNode; icon?: React.ElementType }[] = [
-    { label: "Team", value: account.team_name || "—" },
+    { label: account.teams?.length > 1 ? "Teams" : "Team", value: <TeamChips teams={account.teams} fallback={account.team_name} /> },
+    { label: "Looked after by", value: peopleLabel(account.assignees) || <span className="text-muted-foreground">Nobody yet</span> },
     { label: "Ad account ID", value: account.ad_account_ref || <span className="text-muted-foreground">Not set</span>, icon: Hash },
     { label: "Ads", value: a ? <>{a.ads} <span className="font-normal text-muted-foreground">· {a.active_ads} active{a.missing_ads ? ` · ${a.missing_ads} missing` : ""}</span></> : "—" },
     { label: "Since", value: account.start_date ? dayLabel(account.start_date) : "—", icon: CalendarRange },
@@ -90,7 +98,7 @@ function AccountHero({ account, onAddAd, onEdit }: { account: AdReport; onAddAd:
             <h2 className="mt-1.5 text-xl font-semibold leading-tight tracking-tight sm:text-2xl">{account.name}</h2>
             <p className="mt-1 text-xs text-muted-foreground">Numbers here are the ads below, added up — nothing is typed for the account itself.</p>
           </div>
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm lg:grid-cols-4">
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3 xl:grid-cols-5">
             {facts.map((f) => (
               <div key={f.label} className="min-w-0">
                 <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{f.label}</dt>
@@ -98,8 +106,9 @@ function AccountHero({ account, onAddAd, onEdit }: { account: AdReport; onAddAd:
               </div>
             ))}
           </dl>
-          {manage && (
+          {account.can_manage && (
             <div className="flex flex-wrap items-center gap-2">
+              {manage && <>
               <button type="button" onClick={onAddAd}
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90">
                 <Plus className="size-4" /> Add ad
@@ -115,6 +124,12 @@ function AccountHero({ account, onAddAd, onEdit }: { account: AdReport; onAddAd:
               ) : (
                 <button type="button" className={btn} onClick={() => setConfirmEnd(true)}><Flag className="size-4" /> End</button>
               )}
+              </>}
+              <button type="button" onClick={() => setDeleteOpen(true)} aria-label="Delete account" title="Delete account"
+                className={cn(btn, "px-2.5 text-muted-foreground hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-600 dark:hover:text-red-400")}>
+                <Trash2 className="size-4" />
+              </button>
+              <DeleteReportDialog report={account} open={deleteOpen} onClose={() => setDeleteOpen(false)} today={today} onRestored={onRestored} />
             </div>
           )}
         </div>

@@ -20,9 +20,11 @@ interface Props {
   className?: string;
   /** Rendered as the panel's <form> onSubmit when given. */
   onSubmit?: (e: React.FormEvent) => void;
+  /** "danger" tints the icon red (delete confirmations). */
+  tone?: "default" | "danger";
 }
 
-export function ModalShell({ open, onClose, title, icon, children, className, onSubmit }: Props) {
+export function ModalShell({ open, onClose, title, icon, children, className, onSubmit, tone = "default" }: Props) {
   const panelRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -82,7 +84,8 @@ export function ModalShell({ open, onClose, title, icon, children, className, on
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
-                  <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">{icon}</div>
+                  <div className={cn("flex size-7 shrink-0 items-center justify-center rounded-lg",
+                    tone === "danger" ? "bg-red-500/10 text-red-600 dark:text-red-400" : "bg-primary/10 text-primary")}>{icon}</div>
                   <h2 className="truncate text-base font-semibold">{title}</h2>
                 </div>
                 <button type="button" onClick={onClose} aria-label="Close" className="rounded-md p-1 transition-colors hover:bg-muted">

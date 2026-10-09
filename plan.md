@@ -1,3 +1,51 @@
+# plan.md — Ad Reports: delete, team-first people picking, several teams and people
+
+> **Status: DONE (2026-10-09)** — implemented and verified: backend 183 passed (8 new Ad Reports tests, 10/11 mutants caught, 1 equivalent) / the same 8 old failures; type check clean (2 old login errors); production build passes. Browser as Team Leader (QA): create with 2 teams + 4 people (picker = both teams' members only; Show everyone; ★ main team; 👑 owner), edit (remove a person + a team; last team locked; another leader's team 🔒), delete + Undo an ad, account with people → "+ Add ad" pre-fills team + people, delete account keeping its ad; phone width.
+
+## The idea, and what changes in it
+Asked for: (1) delete an ad or an ad account; (2) create both the way a task is created: **pick the team first, then people from that team**; (3) **several teams** and **several people**; (4) **change the people later** from Edit.
+All four make sense. Today the form picks one team, then anyone in the company (max 2: owner + backup), accounts have no people at all, the team can never change, and nothing can be deleted.
+
+Improvements on the idea:
+- **Delete with Undo, not a hard delete.** A deleted report (with its days of numbers) moves to a trash collection; the toast offers **Undo** for a few seconds, and an admin can still bring it back later. One wrong click must not wipe months of numbers.
+- **Deleting an account asks what happens to its ads:** keep them as standalone ads (default) or delete them too.
+- **A redo request survives the delete.** If the ad was sent to the media team ("Ad not performing"), the request stays in their Leader Desk with the creatives copied onto it, plus a history line saying the report was deleted. (Deleting the old ad is often exactly what happens after a redo request.)
+- **Accounts get people too** ("who looks after it", optional): they see the account and every ad inside it and can update those ads' numbers. Reminders still go only to each ad's own people, so nobody gets double reminders.
+- **People are picked from the chosen teams' members**, with a "Show everyone" switch for cross-team help (same idea as Add Task).
+- **Teams can change in Edit.** A leader can add or remove only teams they lead (admins: any), and must keep at least one of their own, so nobody locks themselves out or takes a report away from another team's leader.
+
+## Rules (backend)
+- `team_ids` (list, up to 5) is added to each report; `team_id` stays as the **main team** (= first in the list) so flags, notifications and older code keep working. Reports without `team_ids` behave as `[team_id]`.
+- **Who manages** (edit, delete, remind, pause, end): admin roles, or a leader of **any** of the report's teams. Leaders of all its teams see it.
+- **People:** up to 6 (the first is the owner). Ads need at least one; accounts may have none.
+- **Account people:** see the account and its ads, may enter its ads' numbers. Not reminded.
+- **An ad may join an account that shares at least one team with it** (was: the same single team).
+- **Reminder stage 2** goes to the leaders of all the report's teams.
+- **Delete** `DELETE /ad-reports/{id}` (managers only; ended reports too). Ad: the report + its entries are moved to `ad_reports_deleted` / `ad_report_entries_deleted` under one batch id. Account: `?with_ads=true` also moves its ads (you must manage each one), otherwise its ads are detached. Returns the batch id.
+- **Undo** `POST /ad-reports/deleted/{batch}/restore` (whoever deleted it, or an admin): puts everything back with the same ids, re-attaches detached ads, and clears an account link that no longer exists.
+- "Mine" on the Today strip only counts ads (an account has nothing to type).
+
+## UI (designer pass)
+**Form (New / Edit), one scroll, in the same order as Add Task:**
+1. *What are you tracking?* — unchanged cards (create only).
+2. *Name.*
+3. **Teams** — coloured chips with ×, first one tagged "main"; a "+ Add team" menu lists the teams you can add. Teams you don't lead show as locked chips (🔒, tooltip) in Edit.
+4. *Account* (ads) — lists accounts sharing a team.
+5. **People** — "Who updates it daily" (ads) / "Who looks after it — optional" (accounts). Chosen people as avatar chips, the first with an "owner" tag and a "Make owner" action on the others. Below, a search list of the **chosen teams' members** (stays open for several picks, "Done" collapses it, "+ Add people" re-opens), a "Show everyone" switch, and before a team is chosen a dashed hint: *Pick a team first*. People outside the chosen teams show "· other team" on their chip.
+6. Dates / numbers / reminders (ads) — unchanged.
+
+**Delete:** a quiet trash button at the end of the left action row on the ad hero and the account hero (managers only, also on ended reports, which have no other buttons). It opens a small confirm dialog: red icon, "Delete “name”?", a summary of what goes (e.g. "41 days of numbers · 3 creatives · seen by 4 people"), for an open redo request a line saying it stays with the media team, and for an account a two-option choice (keep its N ads / delete them too). Buttons: Cancel · **Delete** (red). After it: the page moves to the next report and the toast says *Deleted “name”* with **Undo**.
+
+**Facts row:** "Team" becomes "Teams" (chips); "Updated by" lists everyone, the owner first. The left rail shows "Main team +1".
+
+## Proving nothing breaks
+- New throwaway-DB tests: multi-team visibility and manage rules, team edits (add / remove / lock-out guard / account overlap), up to 6 people, account people seeing and entering their ads, delete + undo for an ad and an account (both choices), the redo request surviving a delete, permissions (employee / other team's leader get 403/404).
+- Existing Ad Reports and flag tests must pass unchanged (old single-team reports keep working).
+- Type check, production build, browser QA as a Team Leader and an Admin with QA accounts (create with 2 teams + 3 people, edit people/teams, delete + undo an ad, delete an account both ways), phone width.
+
+---
+---
+
 # plan.md — Projects: "Team view / My work" switch for leaders
 
 > **Status: DONE (2026-10-09)** — implemented and verified: type check clean, production build passes; browser as Team Leader (switch both ways; My work = assigned_to_me only, server count matches; team + member restored on return; ?view=mine; reload remembers), Employee (no switch, ?view=mine ignored, all four chips), Admin ("All tasks | My work"). Frontend-only: `frontend/app/(dashboard)/projects/page.tsx`.

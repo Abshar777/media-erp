@@ -14,6 +14,13 @@ If a mistake is listed here, do NOT repeat it.
 
 ## Log
 
+### 2026-10-09 · Ad Reports · Two simultaneous deletes both succeeded
+- **Bug:** Two leaders deleting the same report at the same moment both got 200 — two trash copies, two Undo toasts, a doubled "report deleted" line on its flag.
+- **Root Cause:** `delete_report` read the report, copied it to the trash, then deleted it — no claim, so both requests copied before either deleted.
+- **Fix:** Atomically claim each report first (`find_one_and_update` setting `deleting: {batch, at}` only when unclaimed or the claim is older than `DELETE_CLAIM_TTL` = 10 min, so a crashed delete frees it); the loser gets 409. The trash copy drops `deleting`. Tests: `test_two_deletes_at_once_make_one_trash_entry`, `test_a_stale_delete_claim_expires` (both fail without the claim).
+- **How to Avoid:** Any read → copy → delete sequence needs an atomic claim (or a single atomic operation) before the copy.
+
+
 ### 2026-05-05 · Feature 1.2 · pymongo version conflict
 
 **Bug:** `pip install -r requirements.txt` failed with `ResolutionImpossible`.

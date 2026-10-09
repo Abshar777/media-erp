@@ -52,7 +52,7 @@ STATUS_LABEL = {
 }
 ACTION_LABEL = {
     "flagged": "Marked not performing", "start": "Started recreating", "done": "Marked recreated",
-    "decline": "Declined", "withdraw": "Withdrawn",
+    "decline": "Declined", "withdraw": "Withdrawn", "report_deleted": "Ad report deleted",
 }
 
 
@@ -229,8 +229,10 @@ async def serialize(db, flag: dict, user: dict, report: dict | None = None) -> d
         "flagged_by": {"id": flag["flagged_by"], "name": flag.get("flagged_by_name", "")},
         "resolution_note": flag.get("resolution_note", ""),
         "snapshot": flag.get("snapshot"),
-        # The ad itself as it is now — what the media team works from.
-        "creatives": ar.serialize_creatives(report) if report else [],
+        # The ad itself as it is now — what the media team works from. If the
+        # ad report was deleted, the copy taken at that moment.
+        "creatives": ar.serialize_creatives(report if report else {"creatives": flag.get("creatives_archived", [])}),
+        "report_deleted": not report and bool(flag.get("report_deleted")),
         "history": [{"action": h["action"], "label": ACTION_LABEL.get(h["action"], h["action"]),
                      "by_name": h.get("by_name", ""), "at": utc_iso(h.get("at")), "note": h.get("note", "")}
                     for h in flag.get("history", [])],
@@ -323,6 +325,17 @@ async def act(db, user: dict, flag: dict, action: str, note: str) -> dict:
         asyncio.create_task(ar.deliver(db, p, NOTIF_FLAGGED if action == "withdraw" else NOTIF_UPDATE,
                                        title, msg, meta))
     return flag
+
+
+async def on_report_deleted(db, report: dict, user: dict) -> None:
+    """The ad report is being deleted: keep its creatives on its flags, and note it on an open request."""
+    rid, now = str(report["_id"]), datetime.now(timezone.utc)
+    await db[FLAGS].update_many({"report_id": rid}, {"$set": {
+        "creatives_archived": report.get("creatives", []), "report_deleted": True}})
+    await db[FLAGS].update_many({"report_id": rid, "active": True}, {
+        "$set": {"updated_at": now},
+        "$push": {"history": {"action": "report_deleted", "by": str(user["_id"]),
+                              "by_name": user.get("name", ""), "at": now, "note": ""}}})
 
 
 async def ensure_indexes(db) -> None:

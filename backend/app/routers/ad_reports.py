@@ -40,12 +40,13 @@ async def _team_names(db, team_ids) -> dict[str, str]:
 
 async def _serialize_many(db, docs: list[dict], user: dict) -> list[dict]:
     names = await ar.names_for(db, [a for d in docs for a in d.get("assignees", [])])
-    teams = await _team_names(db, [d.get("team_id") for d in docs])
+    teams = await _team_names(db, [t for d in docs for t in ar.teams_of(d)])
     acc_ids = {d.get("account_id") for d in docs if d.get("account_id") and ObjectId.is_valid(d["account_id"])}
-    accounts = await db[ar.REPORTS].find({"_id": {"$in": [ObjectId(a) for a in acc_ids]}}, {"name": 1}).to_list(len(acc_ids) or 1) if acc_ids else []
+    accounts = await db[ar.REPORTS].find({"_id": {"$in": [ObjectId(a) for a in acc_ids]}}, {"name": 1, "assignees": 1}).to_list(len(acc_ids) or 1) if acc_ids else []
     account_names = {str(a["_id"]): a.get("name", "") for a in accounts}
+    account_people = {str(a["_id"]): a.get("assignees", []) for a in accounts}
     today = today_ist()
-    out = [await ar.serialize_report(db, d, names, teams, user, today, account_names) for d in docs]
+    out = [await ar.serialize_report(db, d, names, teams, user, today, account_names, account_people) for d in docs]
     # "Ad not performing" status line: the active flag, else one closed in the last 14 days.
     from app.services.ad_flag_service import summaries_for
     flags = await summaries_for(db, [o["id"] for o in out if o["kind"] == "ad"])
@@ -54,15 +55,15 @@ async def _serialize_many(db, docs: list[dict], user: dict) -> list[dict]:
     return out
 
 
-async def _check_account(db, account_id: str, team_id: str):
-    """An ad may join an account of its own team that is still open. Returns an error response or None."""
+async def _check_account(db, account_id: str, team_ids: list[str]):
+    """An ad may join an open account that shares one of its teams. Returns an error response or None."""
     if not ObjectId.is_valid(account_id):
         return error_response("Choose an account from the list.", status_code=422)
     acc = await db[ar.REPORTS].find_one({"_id": ObjectId(account_id)})
     if not acc or not ar.is_account(acc):
         return error_response("Choose an account from the list.", status_code=422)
-    if acc.get("team_id") != team_id:
-        return error_response("An ad can only join an account of its own team.", status_code=422)
+    if not set(ar.teams_of(acc)) & set(team_ids):
+        return error_response("An ad can only join an account that shares one of its teams.", status_code=422)
     if acc.get("status") == "ended":
         return error_response("That account has ended — choose another one.", status_code=422)
     return None
@@ -113,18 +114,27 @@ async def create_report(
         return error_response("Give the report a name.", status_code=422)
     if len(name) > 120:
         return error_response("Keep the name under 120 characters.", status_code=422)
-    if not ObjectId.is_valid(body.team_id) or not await db["teams"].find_one({"_id": ObjectId(body.team_id)}, {"_id": 1}):
-        return error_response("Please select a team.", status_code=422)
-    if not await workflow.can_assign_to_others(current_user, body.team_id, db):
-        return error_response("Only a team leader can create ad reports.", status_code=403)
+    try:
+        team_ids = await ar.validate_teams(db, body.team_ids or [body.team_id])
+    except ar.AdReportError as exc:
+        return _err(exc)
+    for t in team_ids:
+        if not await workflow.can_assign_to_others(current_user, t, db):
+            return error_response("Only a team leader can create ad reports." if len(team_ids) == 1
+                                  else "You can only choose teams you lead.", status_code=403)
 
     now = datetime.now(timezone.utc)
     if body.kind == "account":
         ref = (body.ad_account_ref or "").strip()
         if len(ref) > 60:
             return error_response("Keep the ad account ID under 60 characters.", status_code=422)
+        try:
+            people, _ = await ar.validate_assignees(db, body.assignees, required=False)
+        except ar.AdReportError as exc:
+            return _err(exc)
         doc = {
-            "kind": "account", "name": name, "platform": "meta", "team_id": body.team_id, "assignees": [],
+            "kind": "account", "name": name, "platform": "meta",
+            "team_id": team_ids[0], "team_ids": team_ids, "assignees": people,
             "ad_account_ref": ref, "start_date": today_ist().isoformat(), "end_date": None,
             "extra_metrics": [], "currency": "INR", "status": "active", "pauses": [],
             "created_by": str(current_user["_id"]), "created_by_name": current_user.get("name", ""),
@@ -136,7 +146,7 @@ async def create_report(
                                 message="Ad account created", status_code=201)
 
     if body.account_id:
-        bad = await _check_account(db, body.account_id, body.team_id)
+        bad = await _check_account(db, body.account_id, team_ids)
         if bad:
             return bad
     try:
@@ -154,7 +164,7 @@ async def create_report(
 
     doc = {
         "kind": "ad", "account_id": body.account_id or None,
-        "name": name, "platform": "meta", "team_id": body.team_id, "assignees": assignees,
+        "name": name, "platform": "meta", "team_id": team_ids[0], "team_ids": team_ids, "assignees": assignees,
         "start_date": start.isoformat(), "end_date": end.isoformat() if end else None,
         "extra_metrics": [m for m in dict.fromkeys(body.extra_metrics)],
         "currency": "INR", "reminder_due": body.reminder_due, "reminder_escalate": body.reminder_escalate,
@@ -178,7 +188,7 @@ async def today_summary(
     today = today_ist()
     can_create = ar.is_elevated(current_user) or await _leads_any_team(db, uid)
 
-    mine = await db[ar.REPORTS].find({"assignees": uid, "status": "active"}).to_list(200)
+    mine = await db[ar.REPORTS].find({"assignees": uid, "status": "active", **ar.AD_ONLY}).to_list(200)
     my_due = []
     for r in mine:
         missing = await ar.missing_days(db, r, today)
@@ -250,18 +260,50 @@ async def update_report(
     account = ar.is_account(r)
     if account and body.action in ("pause", "resume"):
         return error_response("Pause the ads inside the account instead.", status_code=409)
-    if account and (body.assignees is not None or body.extra_metrics is not None or body.end_date is not None
+    if account and (body.extra_metrics is not None or body.end_date is not None
                     or body.reminder_due is not None or body.reminder_escalate is not None
                     or body.account_id or body.clear_account):
-        return error_response("An account has no people, dates or numbers of its own — edit its ads.", status_code=422)
+        return error_response("An account has no dates, numbers or reminders of its own — edit its ads.", status_code=422)
+
+    # Teams. A leader adds or removes only teams they lead (admins: any) and
+    # keeps at least one of their own, so nobody locks themselves out or takes
+    # a report away from another team's leader.
+    old_teams = ar.teams_of(r)
+    teams_now = old_teams
+    if body.team_ids is not None:
+        try:
+            new_teams = await ar.validate_teams(db, body.team_ids)
+        except ar.AdReportError as exc:
+            return _err(exc)
+        if new_teams != old_teams:
+            if not ar.is_elevated(current_user):
+                led = set(await ar.led_team_ids(db, str(current_user["_id"])))
+                if any(t not in led for t in set(new_teams) ^ set(old_teams)):
+                    return error_response("You can only add or remove teams you lead.", status_code=403)
+                if not set(new_teams) & led:
+                    return error_response("Keep at least one of your own teams on it.", status_code=422)
+            upd.update(team_ids=new_teams, team_id=new_teams[0])
+            teams_now = new_teams
+    if account and "team_ids" in upd:
+        off = [k for k in await ar.children_of(db, r) if not set(ar.teams_of(k)) & set(teams_now)]
+        if off:
+            return error_response(
+                f"{len(off)} ad{'s' if len(off) != 1 else ''} in this account {'aren' if len(off) != 1 else 'isn'}'t in any of "
+                "these teams — keep one of their teams, or move those ads out first.", status_code=422)
     if not account:
         if body.clear_account:
             upd["account_id"] = None
         elif body.account_id:
-            bad = await _check_account(db, body.account_id, r.get("team_id"))
+            bad = await _check_account(db, body.account_id, teams_now)
             if bad:
                 return bad
             upd["account_id"] = body.account_id
+        elif "team_ids" in upd and r.get("account_id") and ObjectId.is_valid(r["account_id"]):
+            acc = await db[ar.REPORTS].find_one({"_id": ObjectId(r["account_id"])}, {"name": 1, "team_id": 1, "team_ids": 1})
+            if acc and not set(ar.teams_of(acc)) & set(teams_now):
+                return error_response(
+                    f"It's in “{acc.get('name', 'an account')}”, which belongs to other teams — keep one of its "
+                    "teams, or take it out of the account.", status_code=422)
     if body.ad_account_ref is not None:
         if not account:
             return error_response("Only an account has an ad account ID.", status_code=422)
@@ -276,7 +318,7 @@ async def update_report(
                 return error_response("Give the report a name (under 120 characters).", status_code=422)
             upd["name"] = name
         if body.assignees is not None:
-            upd["assignees"], _ = await ar.validate_assignees(db, body.assignees)
+            upd["assignees"], _ = await ar.validate_assignees(db, body.assignees, required=not account)
         if body.extra_metrics is not None:
             upd["extra_metrics"] = list(dict.fromkeys(body.extra_metrics))
         if body.reminder_due is not None or body.reminder_escalate is not None:
@@ -331,6 +373,39 @@ async def update_report(
         r = await db[ar.REPORTS].find_one({"_id": r["_id"]})
     msg = {"pause": "Report paused", "resume": "Report resumed", "end": "Report ended"}.get(body.action or "", "Report updated")
     return success_response(data=(await _serialize_many(db, [r], current_user))[0], message=msg)
+
+
+@router.delete("/{report_id}")
+async def delete_report(
+    report_id: str,
+    with_ads: bool = Query(default=False),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Leaders of its teams and admins. Undo with POST /deleted/{batch}/restore."""
+    r = await _load(db, report_id, current_user)
+    if not r:
+        return error_response(NOT_FOUND, status_code=404)
+    if not await ar.can_manage(db, current_user, r):
+        return error_response("Only the team leader can delete this report.", status_code=403)
+    try:
+        data = await ar.delete_report(db, current_user, r, with_ads)
+    except ar.AdReportError as exc:
+        return _err(exc)
+    return success_response(data=data, message=f"Deleted “{data['name']}”")
+
+
+@router.post("/deleted/{batch}/restore")
+async def restore_report(
+    batch: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    try:
+        data = await ar.restore_batch(db, current_user, batch)
+    except ar.AdReportError as exc:
+        return _err(exc)
+    return success_response(data=data, message=f"Restored “{data['name']}”")
 
 
 @router.get("/{report_id}/series")

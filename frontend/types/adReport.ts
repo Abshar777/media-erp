@@ -43,7 +43,7 @@ export interface AdReport {
   id: string;
   /** "account" = a Meta ad account; its numbers are its ads added up. */
   kind: AdReportKind;
-  /** Ads: the account it belongs to (same team), if any. */
+  /** Ads: the account it belongs to (shares a team with it), if any. */
   account_id: string | null;
   account_name: string;
   /** Accounts: e.g. "act_1234567890". */
@@ -51,8 +51,14 @@ export interface AdReport {
   account: AdAccountSummary | null;
   name: string;
   platform: "meta";
+  /** The main team (= team_ids[0]). */
   team_id: string;
   team_name: string;
+  /** Every team on it, main team first. Leaders of any of them manage it. */
+  team_ids: string[];
+  teams: { id: string; name: string }[];
+  /** Owner first. Ads: they enter the numbers and get reminders.
+   *  Accounts (optional): they see and can update every ad inside it. */
   assignees: { id: string; name: string }[];
   start_date: string;
   end_date: string | null;
@@ -141,7 +147,8 @@ export interface AdToday {
 export interface CreateAdReportPayload {
   kind?: AdReportKind;
   name: string;
-  team_id: string;
+  /** Main team first. */
+  team_ids: string[];
   assignees?: string[];
   start_date?: string;
   account_id?: string | null;
@@ -158,12 +165,23 @@ export interface UpdateAdReportPayload {
   account_id?: string;
   clear_account?: boolean;
   ad_account_ref?: string;
+  team_ids?: string[];
   assignees?: string[];
   end_date?: string;
   clear_end_date?: boolean;
   extra_metrics?: AdExtraMetric[];
   reminder_due?: string;
   reminder_escalate?: string;
+}
+
+/** DELETE /ad-reports/{id} — undo with the batch id. */
+export interface AdDeleteResult {
+  batch: string;
+  name: string;
+  kind: AdReportKind;
+  reports: number;
+  entries: number;
+  detached: number;
 }
 
 export interface AdEntryPayload {

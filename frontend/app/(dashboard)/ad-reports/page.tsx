@@ -16,12 +16,12 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
-  BarChart3, BellRing, Building2, CalendarRange, ChevronRight, Flag, Loader2, Pause, PencilLine, Play, Plus, Settings2, TrendingDown, Users,
+  BarChart3, BellRing, Building2, CalendarRange, ChevronRight, Flag, Loader2, Pause, PencilLine, Play, Plus, Settings2, Trash2, TrendingDown, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { istTodayKey } from "@/lib/datetime";
 import { useAdEntries, useAdReports, useAdToday, useRemindAdReport, useUpdateAdReport } from "@/hooks/useAdReports";
-import { dayLabel, formatCount, formatINR, missingPhrase } from "@/lib/adReports";
+import { dayLabel, formatCount, formatINR, missingPhrase, peopleLabel, teamsLabel } from "@/lib/adReports";
 import { PerformanceOverview } from "@/components/ad-reports/PerformanceOverview";
 import { EntryModal } from "@/components/ad-reports/EntryModal";
 import { ReportFormModal } from "@/components/ad-reports/ReportFormModal";
@@ -31,6 +31,8 @@ import { CreativeShowcase, CreativeThumb } from "@/components/ad-reports/Creativ
 import { FlagAdModal } from "@/components/ad-reports/FlagAdModal";
 import { FlagStatusStrip } from "@/components/ad-reports/FlagStatusStrip";
 import { AccountView } from "@/components/ad-reports/AccountView";
+import { DeleteReportDialog } from "@/components/ad-reports/DeleteReportDialog";
+import { TeamChips } from "@/components/ad-reports/TeamChips";
 import { useAuthStore } from "@/stores/authStore";
 import type { AdReport } from "@/types/adReport";
 
@@ -73,7 +75,7 @@ function ReportCard({ r, active, onClick }: { r: AdReport; active: boolean; onCl
       <div className="mt-2 flex items-end justify-between gap-2">
         <div className="min-w-0 text-xs text-muted-foreground">
           <p className="truncate">{r.assignees.map((a) => a.name).join(" · ") || "—"}</p>
-          <p className="truncate">{r.team_name}</p>
+          <p className="truncate">{teamsLabel(r)}</p>
         </div>
         <Sparkline values={r.sparkline} className="shrink-0 text-teal-500" />
       </div>
@@ -271,21 +273,23 @@ function dayAgo(today: string, n: number) {
 
 // ── Report header + actions ──────────────────────────────────────────────────
 
-function ReportHero({ r, meId, onEntry, onEdit, onOpenAccount }: {
-  r: AdReport; meId: string; onEntry: () => void; onEdit: () => void; onOpenAccount?: () => void;
+function ReportHero({ r, meId, today, onEntry, onEdit, onOpenAccount, onRestored }: {
+  r: AdReport; meId: string; today: string; onEntry: () => void; onEdit: () => void; onOpenAccount?: () => void;
+  onRestored: (id: string) => void;
 }) {
   const update = useUpdateAdReport();
   const remind = useRemindAdReport();
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [flagOpen, setFlagOpen] = useState(false);
-  useEffect(() => { setConfirmEnd(false); setFlagOpen(false); }, [r.id]);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  useEffect(() => { setConfirmEnd(false); setFlagOpen(false); setDeleteOpen(false); }, [r.id]);
   // Escalating a weak ad: anyone who works on it, while it isn't already with someone.
   const canFlag = r.kind === "ad" && !!r.can_enter && !r.flag?.active;
   const canUpdate = r.can_enter && (r.status !== "ended" || r.can_manage);
   const btn = "inline-flex h-9 items-center gap-1.5 rounded-lg border bg-background px-3 text-sm font-medium transition hover:bg-muted disabled:opacity-50";
   const facts: { label: string; value: React.ReactNode }[] = [
-    { label: "Team", value: r.team_name || "—" },
-    { label: "Updated by", value: r.assignees.map((a, i) => `${a.name}${i ? " (backup)" : ""}`).join(", ") || "—" },
+    { label: r.teams?.length > 1 ? "Teams" : "Team", value: <TeamChips teams={r.teams} fallback={r.team_name} /> },
+    { label: "Updated by", value: peopleLabel(r.assignees) || "—" },
     { label: "Runs", value: <>{dayLabel(r.start_date)} → {r.end_date ? dayLabel(r.end_date) : "until ended"}</> },
     { label: "Reminders", value: `${r.reminder_due} · ${r.reminder_escalate} IST` },
   ];
@@ -364,6 +368,14 @@ function ReportHero({ r, meId, onEntry, onEdit, onOpenAccount }: {
                 )}
               </>
             )}
+            {/* Quiet on purpose: the destructive action is one deliberate click
+                away, behind a dialog that says what goes (and offers Undo). */}
+            {r.can_manage && (
+              <button type="button" onClick={() => setDeleteOpen(true)} aria-label="Delete report" title="Delete report"
+                className={cn(btn, "px-2.5 text-muted-foreground hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-600 dark:hover:text-red-400")}>
+                <Trash2 className="size-4" />
+              </button>
+            )}
             {/* Set apart on the right: the buttons on the left keep the report
                 running; this one escalates the ad itself. */}
             {canFlag && (
@@ -374,6 +386,9 @@ function ReportHero({ r, meId, onEntry, onEdit, onOpenAccount }: {
             )}
           </div>
           {canFlag && <FlagAdModal report={r} open={flagOpen} onClose={() => setFlagOpen(false)} />}
+          {r.can_manage && (
+            <DeleteReportDialog report={r} open={deleteOpen} onClose={() => setDeleteOpen(false)} today={today} onRestored={onRestored} />
+          )}
         </div>
       </div>
     </section>
@@ -529,11 +544,13 @@ function AdReportsInner() {
               onOpenAd={choose}
               onAddAd={() => { setFormPreset({ kind: "ad", accountId: selected.id }); setForm("new"); }}
               onEdit={() => setForm("edit")}
+              onRestored={choose}
             />
           )}
           {selected && selected.kind !== "account" && (
             <div className="min-w-0 space-y-5">
-              <ReportHero r={selected} meId={meId} onEntry={() => { setEntryDay(null); setEntryOpen(true); }} onEdit={() => setForm("edit")}
+              <ReportHero r={selected} meId={meId} today={today} onRestored={choose}
+                onEntry={() => { setEntryDay(null); setEntryOpen(true); }} onEdit={() => setForm("edit")}
                 onOpenAccount={selected.account_id && reports.some((x) => x.id === selected.account_id) ? () => choose(selected.account_id!) : undefined} />
               <PerformanceOverview key={selected.id} report={selected} today={today} />
               <History report={selected} today={today} onEdit={(d) => { setEntryDay(d); setEntryOpen(true); }} />

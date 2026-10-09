@@ -11,8 +11,11 @@ class CreateAdReportRequest(BaseModel):
     # numbers are the sum of the ads inside it (nothing is typed for it).
     kind: Literal["ad", "account"] = "ad"
     name: str
-    team_id: str
-    # Ads: owner first, then an optional backup. Both can enter, both are reminded.
+    # The main team first. `team_id` alone still works (one team).
+    team_id: str = ""
+    team_ids: list[str] = []
+    # Owner first, then anyone else who helps (up to 6). Ads: they enter the
+    # numbers and are reminded. Accounts (optional): they see and update its ads.
     assignees: list[str] = []
     start_date: str = ""                  # IST calendar day, YYYY-MM-DD (ads)
     account_id: Optional[str] = None      # ads: the account it belongs to (same team), or none
@@ -30,6 +33,7 @@ class UpdateAdReportRequest(BaseModel):
     account_id: Optional[str] = None      # ads: move into this account
     clear_account: bool = False           # ads: take it out of its account
     ad_account_ref: Optional[str] = None  # accounts
+    team_ids: Optional[list[str]] = None  # main team first
     assignees: Optional[list[str]] = None
     end_date: Optional[str] = None
     clear_end_date: bool = False

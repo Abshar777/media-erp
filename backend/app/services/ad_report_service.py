@@ -45,16 +45,20 @@ from app.utils.timezone import IST, today_ist, utc_iso
 logger = logging.getLogger(__name__)
 
 REPORTS, ENTRIES, REMINDERS = "ad_reports", "ad_report_entries", "ad_report_reminders"
+# Deleted reports (and their days of numbers) wait here so a delete can be undone.
+DELETED_REPORTS, DELETED_ENTRIES = "ad_reports_deleted", "ad_report_entries_deleted"
 
 ELEVATED_ROLES = ("Super Admin", "Admin", "Coordinator")
 BASE_METRICS = ("leads", "spend")
 EXTRA_METRICS = ("impressions", "reach", "clicks")
-MAX_ASSIGNEES = 2                 # owner + one backup
+MAX_ASSIGNEES = 6                 # the first one is the owner
+MAX_TEAMS = 5                     # team_ids[0] is the main team
 OWNER_EDIT_DAYS = 7               # the assigned person may correct the last 7 days
 MAX_COUNT = 10_000_000_000        # sanity ceiling for counts
 MAX_SPEND_PAISE = 10_000_000_000  # ₹10 crore a day
 MAX_RANGE_DAYS = 731
 MANUAL_REMIND_GAP = timedelta(hours=1)
+DELETE_CLAIM_TTL = timedelta(minutes=10)   # a delete that crashed mid-way frees the report after this
 POLL_SECONDS = 60
 NOTIF_DUE, NOTIF_OVERDUE = "ad_report_due", "ad_report_overdue"
 CREATIVE_FOLDER = "ad-creatives"
@@ -220,54 +224,115 @@ def day_status(report: dict, missing: list[str], now: datetime | None = None) ->
 
 # ── Permissions ───────────────────────────────────────────────────────────────
 
+def teams_of(report: dict) -> list[str]:
+    """The report's teams, main team first. Reports from before multi-team have only team_id."""
+    ids = [t for t in (report.get("team_ids") or []) if t]
+    if not ids and report.get("team_id"):
+        ids = [report["team_id"]]
+    return ids
+
+
 async def leads_team(db, user_id: str, team_id) -> bool:
-    if not team_id or not ObjectId.is_valid(team_id):
+    return await leads_any(db, user_id, [team_id])
+
+
+async def leads_any(db, user_id: str, team_ids) -> bool:
+    ids = [ObjectId(t) for t in team_ids if t and ObjectId.is_valid(t)]
+    if not ids:
         return False
     return bool(await db["teams"].find_one(
-        {"_id": ObjectId(team_id), "members": {"$elemMatch": {"user_id": user_id, "role": "leader"}}},
+        {"_id": {"$in": ids}, "members": {"$elemMatch": {"user_id": user_id, "role": "leader"}}},
         {"_id": 1},
     ))
 
 
+async def led_team_ids(db, user_id: str) -> list[str]:
+    led = await db["teams"].find(
+        {"members": {"$elemMatch": {"user_id": user_id, "role": "leader"}}}, {"_id": 1}
+    ).to_list(500)
+    return [str(t["_id"]) for t in led]
+
+
 async def can_manage(db, user: dict, report: dict) -> bool:
-    """Create-time rule, applied to the report's team: its leaders and the admin roles."""
-    return is_elevated(user) or await leads_team(db, str(user["_id"]), report.get("team_id"))
+    """Edit, delete, remind, pause, end: the admin roles and a leader of ANY of the report's teams."""
+    return is_elevated(user) or await leads_any(db, str(user["_id"]), teams_of(report))
+
+
+async def looks_after_account(db, user_id: str, report: dict) -> bool:
+    """An ad inside an account whose people include this user (account people see and update its ads)."""
+    acc_id = report.get("account_id")
+    if is_account(report) or not acc_id or not ObjectId.is_valid(acc_id):
+        return False
+    return bool(await db[REPORTS].find_one({"_id": ObjectId(acc_id), "assignees": user_id}, {"_id": 1}))
 
 
 async def can_enter(db, user: dict, report: dict) -> bool:
-    return str(user["_id"]) in report.get("assignees", []) or await can_manage(db, user, report)
+    uid = str(user["_id"])
+    return (uid in report.get("assignees", []) or await can_manage(db, user, report)
+            or await looks_after_account(db, uid, report))
 
 
 async def team_leader_ids(db, team_id) -> list[str]:
-    if not team_id or not ObjectId.is_valid(team_id):
+    return await teams_leader_ids(db, [team_id])
+
+
+async def teams_leader_ids(db, team_ids) -> list[str]:
+    ids = [ObjectId(t) for t in team_ids if t and ObjectId.is_valid(t)]
+    if not ids:
         return []
-    team = await db["teams"].find_one({"_id": ObjectId(team_id)}, {"members": 1})
-    return [m["user_id"] for m in (team or {}).get("members", []) if m.get("role") == "leader"]
+    teams = await db["teams"].find({"_id": {"$in": ids}}, {"members": 1}).to_list(len(ids))
+    return list(dict.fromkeys(m["user_id"] for t in teams for m in t.get("members", []) if m.get("role") == "leader"))
 
 
 async def visible_query(db, user: dict) -> dict:
-    """Reports this user may see: theirs, their teams' (as leader), or all (admins)."""
+    """Reports this user may see: theirs, their accounts' ads, their teams' (as leader), or all (admins)."""
     if is_elevated(user):
         return {}
     uid = str(user["_id"])
-    led = await db["teams"].find(
-        {"members": {"$elemMatch": {"user_id": uid, "role": "leader"}}}, {"_id": 1}
-    ).to_list(500)
-    return {"$or": [{"assignees": uid}, {"team_id": {"$in": [str(t["_id"]) for t in led]}}]}
+    led = await led_team_ids(db, uid)
+    accounts = await db[REPORTS].find({"kind": "account", "assignees": uid}, {"_id": 1}).to_list(500)
+    ors: list[dict] = [{"assignees": uid}]
+    if led:
+        ors += [{"team_id": {"$in": led}}, {"team_ids": {"$in": led}}]
+    if accounts:
+        ors.append({"account_id": {"$in": [str(a["_id"]) for a in accounts]}})
+    return {"$or": ors}
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
-async def validate_assignees(db, raw) -> tuple[list[str], dict[str, str]]:
+async def validate_teams(db, raw) -> list[str]:
+    """De-duplicated, existing team ids, main team first."""
+    ids: list[str] = []
+    for t in raw or []:
+        t = str(t).strip()
+        if t and t not in ids:
+            ids.append(t)
+    if not ids:
+        raise AdReportError("Please select a team.")
+    if len(ids) > MAX_TEAMS:
+        raise AdReportError(f"Choose up to {MAX_TEAMS} teams.")
+    if not all(ObjectId.is_valid(t) for t in ids):
+        raise AdReportError("That team no longer exists.")
+    found = {str(t["_id"]) for t in await db["teams"].find(
+        {"_id": {"$in": [ObjectId(t) for t in ids]}}, {"_id": 1}).to_list(len(ids))}
+    if any(t not in found for t in ids):
+        raise AdReportError("That team no longer exists.")
+    return ids
+
+
+async def validate_assignees(db, raw, required: bool = True) -> tuple[list[str], dict[str, str]]:
     ids: list[str] = []
     for a in raw or []:
         a = str(a).strip()
         if a and a not in ids:
             ids.append(a)
     if not ids:
+        if not required:
+            return [], {}
         raise AdReportError("Choose who will update this report.")
     if len(ids) > MAX_ASSIGNEES:
-        raise AdReportError("Choose one person, plus an optional backup.")
+        raise AdReportError(f"Choose up to {MAX_ASSIGNEES} people.")
     if not all(ObjectId.is_valid(a) for a in ids):
         raise AdReportError("That person no longer exists.")
     users = await db["users"].find(
@@ -525,7 +590,8 @@ def serialize_entry(e: dict, names: dict[str, str] | None = None) -> dict:
 
 async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[str, str],
                            user: dict | None = None, today: date | None = None,
-                           account_names: dict[str, str] | None = None) -> dict:
+                           account_names: dict[str, str] | None = None,
+                           account_people: dict[str, list[str]] | None = None) -> dict:
     today = today or today_ist()
     missing = await missing_days(db, r, today)
     acct = None
@@ -551,6 +617,8 @@ async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[
         "platform": r.get("platform", "meta"),
         "team_id": r.get("team_id"),
         "team_name": team_names.get(r.get("team_id"), ""),
+        "team_ids": teams_of(r),
+        "teams": [{"id": t, "name": team_names.get(t, "")} for t in teams_of(r)],
         "assignees": [{"id": a, "name": names.get(a, "")} for a in r.get("assignees", [])],
         "start_date": (acct["start"] if acct else r.get("start_date")),
         "end_date": r.get("end_date"),
@@ -575,8 +643,10 @@ async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[
         "updated_at": utc_iso(r.get("updated_at")),
     }
     if user is not None:
+        uid = str(user["_id"])
         out["can_manage"] = await can_manage(db, user, r)
-        out["can_enter"] = out["can_manage"] or str(user["_id"]) in r.get("assignees", [])
+        out["can_enter"] = (out["can_manage"] or uid in r.get("assignees", [])
+                            or uid in (account_people or {}).get(r.get("account_id") or "", []))
     return out
 
 
@@ -638,7 +708,7 @@ async def send_stage(db, report: dict, stage: int, missing: list[str]) -> int:
         kind = NOTIF_DUE
     else:
         assignees = await _active_users(db, report.get("assignees", []))
-        leaders = await _active_users(db, await team_leader_ids(db, report.get("team_id")))
+        leaders = await _active_users(db, await teams_leader_ids(db, teams_of(report)))
         people = list(dict.fromkeys(assignees + leaders))
         title = f"Still missing: {name}"
         msg = f"No numbers yet for {when} ({owners})."
@@ -708,10 +778,124 @@ async def auto_end(db, today: date) -> int:
     return n
 
 
+# ── Delete / undo ─────────────────────────────────────────────────────────────
+
+async def delete_report(db, user: dict, report: dict, with_ads: bool = False) -> dict:
+    """
+    Move a report (and its days of numbers) to the trash under one batch id, so
+    the delete can be undone. An account takes its ads along only when asked —
+    otherwise they are detached and carry on as standalone ads. An open
+    "Ad not performing" request on a deleted ad stays with the media team.
+    """
+    import uuid
+    from app.services.ad_flag_service import on_report_deleted
+
+    uid, now = str(user["_id"]), datetime.now(timezone.utc)
+    root_id = str(report["_id"])
+    targets, detached = [report], []
+    if is_account(report):
+        kids = await children_of(db, report)
+        if with_ads:
+            for k in kids:
+                if not await can_manage(db, user, k):
+                    raise AdReportError(
+                        f"“{k.get('name', 'An ad')}” belongs to a team you don't lead — keep the ads instead.", 403)
+            targets += kids
+        else:
+            detached = [str(k["_id"]) for k in kids]
+    batch = uuid.uuid4().hex
+    # Claim every report first, atomically, so two people deleting at once can't
+    # both copy it (two trash entries, two Undo toasts). A claim left behind by
+    # a crash expires after DELETE_CLAIM_TTL, so the report can be deleted again.
+    claimed = []
+    for t in targets:
+        got = await db[REPORTS].find_one_and_update(
+            {"_id": t["_id"], "$or": [{"deleting": {"$exists": False}},
+                                      {"deleting.at": {"$lt": now - DELETE_CLAIM_TTL}}]},
+            {"$set": {"deleting": {"batch": batch, "at": now}}},
+            return_document=True,
+        )
+        if not got:
+            if claimed:
+                await db[REPORTS].update_many({"_id": {"$in": claimed}, "deleting.batch": batch}, {"$unset": {"deleting": ""}})
+            raise AdReportError("Someone else is deleting this right now — refresh in a moment.", 409)
+        claimed.append(t["_id"])
+    for t in targets:
+        t.pop("deleting", None)            # the trash copy is the report as it was
+    ids = [str(t["_id"]) for t in targets]
+    meta = {"batch": batch, "deleted_at": now, "deleted_by": uid, "deleted_by_name": user.get("name", "")}
+
+    # Copy first, remove second: a crash in between leaves a duplicate, never a loss.
+    await db[DELETED_REPORTS].insert_many([
+        {**meta, "report": t, "root": str(t["_id"]) == root_id,
+         "detached": detached if str(t["_id"]) == root_id else []}
+        for t in targets
+    ])
+    n_entries, chunk = 0, []
+    async for e in db[ENTRIES].find({"report_id": {"$in": ids}}):
+        chunk.append({**meta, "entry": e})
+        if len(chunk) >= 500:
+            await db[DELETED_ENTRIES].insert_many(chunk)
+            n_entries, chunk = n_entries + len(chunk), []
+    if chunk:
+        await db[DELETED_ENTRIES].insert_many(chunk)
+        n_entries += len(chunk)
+
+    for t in targets:
+        if not is_account(t):
+            await on_report_deleted(db, t, user)
+    if detached:
+        await db[REPORTS].update_many({"account_id": root_id, **AD_ONLY},
+                                      {"$set": {"account_id": None, "updated_at": now}})
+    await db[ENTRIES].delete_many({"report_id": {"$in": ids}})
+    await db[REPORTS].delete_many({"_id": {"$in": [t["_id"] for t in targets]}})
+    return {"batch": batch, "name": report.get("name", ""), "kind": "account" if is_account(report) else "ad",
+            "reports": len(targets), "entries": n_entries, "detached": len(detached)}
+
+
+async def restore_batch(db, user: dict, batch: str) -> dict:
+    """Undo a delete: everything comes back with the same ids, detached ads rejoin their account."""
+    from pymongo.errors import BulkWriteError
+
+    rows = await db[DELETED_REPORTS].find({"batch": batch}).to_list(1000) if batch else []
+    if not rows:
+        raise AdReportError("Nothing to restore — it may have been restored already.", 404)
+    if not (is_elevated(user) or rows[0].get("deleted_by") == str(user["_id"])):
+        raise AdReportError("Only the person who deleted it, or an admin, can bring it back.", 403)
+    docs = [r["report"] for r in rows]
+    have = {d["_id"] for d in await db[REPORTS].find({"_id": {"$in": [d["_id"] for d in docs]}}, {"_id": 1}).to_list(len(docs))}
+    back = [d for d in docs if d["_id"] not in have]
+    coming = {str(d["_id"]) for d in docs}
+    for d in back:
+        acc = d.get("account_id")
+        if acc and not is_account(d) and acc not in coming and not (
+                ObjectId.is_valid(acc) and await db[REPORTS].find_one({"_id": ObjectId(acc), "kind": "account"}, {"_id": 1})):
+            d["account_id"] = None                       # its account is gone now
+    if back:
+        await db[REPORTS].insert_many(back)
+    entries = [x["entry"] for x in await db[DELETED_ENTRIES].find({"batch": batch}).to_list(None)]
+    if entries:
+        try:
+            await db[ENTRIES].insert_many(entries, ordered=False)
+        except BulkWriteError:
+            pass                                         # already there (a second undo)
+    root = next((r for r in rows if r.get("root")), rows[0])
+    if root.get("detached"):
+        await db[REPORTS].update_many(
+            {"_id": {"$in": [ObjectId(i) for i in root["detached"] if ObjectId.is_valid(i)]}, "account_id": None, **AD_ONLY},
+            {"$set": {"account_id": str(root["report"]["_id"]), "updated_at": datetime.now(timezone.utc)}})
+    await db[DELETED_ENTRIES].delete_many({"batch": batch})
+    await db[DELETED_REPORTS].delete_many({"batch": batch})
+    return {"report_id": str(root["report"]["_id"]), "name": root["report"].get("name", ""), "restored": len(back)}
+
+
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db[REPORTS].create_index([("status", 1)])
     await db[REPORTS].create_index([("assignees", 1)])
     await db[REPORTS].create_index([("team_id", 1)])
+    await db[REPORTS].create_index([("team_ids", 1)])
+    await db[DELETED_REPORTS].create_index([("batch", 1)])
+    await db[DELETED_ENTRIES].create_index([("batch", 1)])
     await db[REPORTS].create_index([("account_id", 1)])
     await db[ENTRIES].create_index([("report_id", 1), ("date", 1)], unique=True, name="unique_ad_report_day")
     await db[REMINDERS].create_index([("report_id", 1), ("on_date", 1), ("stage", 1)],

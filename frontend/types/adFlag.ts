@@ -34,8 +34,10 @@ export interface AdFlag {
   flagged_by: { id: string; name: string };
   resolution_note: string;
   snapshot: AdFlagSnapshot | null;
-  /** The ad as it is now — what the media team works from. */
+  /** The ad as it is now — what the media team works from (a copy, if its report was deleted). */
   creatives: AdCreative[];
+  /** The ad report was deleted after this was sent. */
+  report_deleted?: boolean;
   history: { action: string; label: string; by_name: string; at: string; note: string }[];
   created_at: string;
   updated_at: string;
