@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, ArrowUpDown, Calendar, Paperclip, Trash2, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDeleteTask, useUpdateTask } from "@/hooks/useProjects";
+import { useCanDeleteTask } from "@/hooks/useCanDeleteTask";
 import type { Task, TaskPriority, TaskStatus } from "@/types/project";
 import { BOARD_COLUMNS, PRIORITY_META, isTaskOverdue, assigneeLabel, statusStyles, allowedColumns } from "@/types/project";
 import { listItemVariants, listVariants } from "@/lib/animations";
@@ -23,6 +24,7 @@ export function TaskTable({ tasks }: Props) {
   const [sortAsc, setSortAsc]   = useState(false);
   const updateTask  = useUpdateTask();
   const deleteTask  = useDeleteTask();
+  const canDelete   = useCanDeleteTask();
   const statuses = BOARD_COLUMNS;
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const canApprove = useCanApprove();
@@ -208,9 +210,9 @@ export function TaskTable({ tasks }: Props) {
                     {fmtDate(task.created_at, { day: "numeric", month: "short" })}
                   </td>
 
-                  {/* Delete */}
+                  {/* Delete — only offered to who may (creator, team leader, admins) */}
                   <td className="px-4 py-3">
-                    <button
+                    {canDelete(task) && <button
                       onClick={() => handleDelete(task.id)}
                       className={cn(
                         "rounded-md p-1.5 opacity-0 group-hover:opacity-100 transition-all",
@@ -221,7 +223,7 @@ export function TaskTable({ tasks }: Props) {
                       title={confirmId === task.id ? "Click again to confirm" : "Delete"}
                     >
                       <Trash2 className="size-3.5" />
-                    </button>
+                    </button>}
                   </td>
                 </motion.tr>
               );

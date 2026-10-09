@@ -6,6 +6,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { FolderKanban, GripVertical, PauseCircle, Timer, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDeleteTask, useUpdateTask } from "@/hooks/useProjects";
+import { useCanDeleteTask } from "@/hooks/useCanDeleteTask";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import type { Task, TaskStatus } from "@/types/project";
 import { BOARD_COLUMNS, PRIORITY_META, allowedColumns } from "@/types/project";
@@ -44,6 +45,7 @@ export function KanbanCard({ task, overlay = false }: Props) {
   };
 
   const deleteTask  = useDeleteTask();
+  const canDelete   = useCanDeleteTask();
   const updateTask  = useUpdateTask();
   const canApprove  = useCanApprove();
 
@@ -141,8 +143,8 @@ export function KanbanCard({ task, overlay = false }: Props) {
           {meta.label}
         </span>
 
-        {/* Delete — appears on hover */}
-        <button
+        {/* Delete — appears on hover, only for who may (creator, team leader, admins) */}
+        {canDelete(task) && <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
@@ -163,7 +165,7 @@ export function KanbanCard({ task, overlay = false }: Props) {
           title={confirmDelete ? "Click again to confirm delete" : "Delete task"}
         >
           <Trash2 className="size-3" />
-        </button>
+        </button>}
       </div>
 
       {/* Project (ad account), when the task has one — muted, one line. */}

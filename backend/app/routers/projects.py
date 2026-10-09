@@ -953,6 +953,36 @@ async def leader_queue(
 
 
 
+_ELEVATED_ROLES = ("Super Admin", "Admin", "Coordinator")
+
+
+async def _can_view_task(db, user: dict, doc: dict) -> bool:
+    """Admin roles, the assignee, the creator, or any member of the task's team."""
+    from bson import ObjectId
+    uid = str(user["_id"])
+    if (user.get("_role") or {}).get("role_name", "") in _ELEVATED_ROLES:
+        return True
+    if uid in (doc.get("assigned_to", ""), doc.get("created_by", "")):
+        return True
+    if doc.get("team_id") and ObjectId.is_valid(doc["team_id"]):
+        team = await db["teams"].find_one({"_id": ObjectId(doc["team_id"])}, {"members": 1})
+        if team and any(m.get("user_id") == uid for m in team.get("members", [])):
+            return True
+    return False
+
+
+async def _can_delete_task(db, user: dict, doc: dict) -> bool:
+    """Admin roles, whoever created it, or a leader of its team — not the assignee or teammates."""
+    from bson import ObjectId
+    uid = str(user["_id"])
+    if (user.get("_role") or {}).get("role_name", "") in _ELEVATED_ROLES or doc.get("created_by") == uid:
+        return True
+    if doc.get("team_id") and ObjectId.is_valid(doc["team_id"]):
+        return bool(await db["teams"].find_one(
+            {"_id": ObjectId(doc["team_id"]), "members": {"$elemMatch": {"user_id": uid, "role": "leader"}}}, {"_id": 1}))
+    return False
+
+
 @router.get("/{task_id}")
 async def get_task_detail(
     task_id: str,
@@ -976,16 +1006,7 @@ async def get_task_detail(
     if not doc:
         return error_response("Task not found", status_code=404)
 
-    uid = str(current_user["_id"])
-    role_name = (current_user.get("_role") or {}).get("role_name", "")
-    allowed = role_name in ("Super Admin", "Admin", "Coordinator")
-    if not allowed and uid in (doc.get("assigned_to", ""), doc.get("created_by", "")):
-        allowed = True
-    if not allowed and doc.get("team_id") and ObjectId.is_valid(doc["team_id"]):
-        team = await db["teams"].find_one({"_id": ObjectId(doc["team_id"])}, {"members": 1})
-        if team and any(m.get("user_id") == uid for m in team.get("members", [])):
-            allowed = True
-    if not allowed:
+    if not await _can_view_task(db, current_user, doc):
         return error_response("You don't have access to this task", status_code=403)
 
     # Aggregate the full routing-chain history (across every team the task
@@ -1041,6 +1062,11 @@ async def edit_task(
     current = await db["project_tasks"].find_one({"_id": oid})
     if not current:
         return error_response("Task not found", status_code=404)
+    # Same rule as viewing it. Every finer rule below (approve, assign,
+    # transfer…) still applies on top; this only shuts out strangers, who
+    # could previously rename or re-status any task by its id.
+    if not await _can_view_task(db, current_user, current):
+        return error_response("You don't have access to this task", status_code=403)
     cur_status = current.get("status", "pending")
 
     # Enforce the workflow state machine on any status change
@@ -1510,6 +1536,15 @@ async def remove_task(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
+    from bson import ObjectId
+    if not ObjectId.is_valid(task_id):
+        return error_response("Task not found", status_code=404)
+    doc = await db["project_tasks"].find_one({"_id": ObjectId(task_id)}, {"created_by": 1, "team_id": 1, "assigned_to": 1})
+    if not doc:
+        return error_response("Task not found", status_code=404)
+    if not await _can_delete_task(db, current_user, doc):
+        return error_response("Only the person who created this task, its team leader or an admin can delete it.",
+                              status_code=403)
     deleted = await delete_task(db, task_id)
     if not deleted:
         return error_response("Task not found", status_code=404)

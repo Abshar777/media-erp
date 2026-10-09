@@ -14,6 +14,13 @@ If a mistake is listed here, do NOT repeat it.
 
 ## Log
 
+### 2026-10-09 · Tasks · Anyone signed in could edit or DELETE any task
+- **Bug (found in QA of the Project picker):** `PUT /projects/{id}` and `DELETE /projects/{id}` checked nothing about the task — an employee with no link to a task (403 on viewing it) could rename it, change its status / assignee / project, or delete it (204).
+- **Root Cause:** only `GET /projects/{id}` had an access check; the write routes trusted the id.
+- **Fix:** `_can_view_task` (admin roles, assignee, creator, members of its team) is now shared by view AND edit — every finer rule (approve, assign, transfer…) still applies on top. Delete: `_can_delete_task` — admin roles, the creator, or a leader of its team (not the assignee or teammates). UI: the trash icon only shows for those (`hooks/useCanDeleteTask.ts`). Tests: `tests/test_task_access.py` (4; the old router fails 3).
+- **How to Avoid:** every route that takes an id must check the caller's right to THAT object — reading the id's check off the GET route is not enough.
+
+
 ### 2026-10-09 · Rate limiter · "View as this user" (and other /auth calls) answered 429 in production
 - **Bug:** Impersonating a team leader failed on production with 429 Too Many Requests (api-out.log), while it always worked locally.
 - **Root Cause:** Two things. (1) One Redis counter per IP per minute (`rl:{ip}:{window}`) was shared by every bucket, but each request was compared with its own bucket's limit — so after 60 ordinary API calls in a minute every `/api/v1/auth/*` call (impersonate, me, 2FA…) got 429. (2) In production every request reaches the API through the Next.js rewrite on the same server, so all users have ONE client IP (72.60.218.158): the whole company shared the 60/min auth and 300/min overall budgets. Locally there is no Redis, so the limiter is off and it never showed.

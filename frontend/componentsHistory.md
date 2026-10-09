@@ -505,3 +505,4 @@ end-to-end, not just "the socket reconnects."
 - **AddTaskModal:** "Project · Optional" right after Description; sent as `project_id` on single and batch/repeating creates.
 - **TaskDetailModal:** "Project" row after Description — picker that saves on pick (reverts if refused) for editors, a chip when read-only.
 - **KanbanCard:** muted one-line project label under the title, only when the task has one.
+- **(2026-10-09)** Board card + table: the delete (trash) icon only shows for who may delete — admin roles, the task's creator, its team's leaders (`hooks/useCanDeleteTask.ts`, mirrors `_can_delete_task`).
