@@ -1,3 +1,30 @@
+# plan.md — Manage the Project list (add · rename · delete · order)
+
+> **Status: DONE (2026-10-09)** — backend 208 passed (6 new manage tests) / same 8 old failures; live API 16/16 across roles; type check clean; production build passes. Browser (QA Super Admin): Settings → Projects add (Enter), inline edit name + platform, ↑ within group, delete with confirm, Restore; Add Task → picker → Manage projects opens over the form, Enter adds without submitting the task, half-filled title kept, picker shows the new project at once. Test projects removed; list back to the original 12.
+
+## The idea
+The Project picker's 12 names were seeded by us. Now the list is managed in the app: **add** a project, **edit** its name (and platform), **delete** one, and put them in order.
+
+## Decisions (senior-dev view)
+- **Who:** admin roles (Super Admin / Admin / Coordinator) — the list is company-wide and a delete affects everyone, same rule as the company Saved tasks. Everyone else just picks from it. The server enforces it (403).
+- **Delete = archive, with Restore.** Tasks keep pointing at the project, so it is hidden from the picker, never erased: old tasks still show their project, and an accidental delete is one click to undo. The row shows how many tasks use it, so the admin knows what they're touching. (A seeded project that is archived stays archived after a restart — the seed only adds missing keys.)
+- **Rename fixes it everywhere.** A rename is a correction of the same ad account, so tasks already tagged with it show the new name too (their stored `project_name` is updated in the same request).
+- **No duplicates:** two active projects can't share a name (case-insensitive) → 409 with a clear message.
+- **Order:** ↑ ↓ move a project within the list; a project can be put in another group (the dividers in the picker), including a new group at the end.
+- **Platforms:** Meta, Google, Snapchat, plus **Other** (neutral badge) for a channel that isn't one of those (TikTok, LinkedIn …).
+- **API:** `GET /task-projects?manage=1` (admins: archived too + usage counts), `POST /task-projects`, `PATCH /task-projects/{id}` (name / platform / group / active), `DELETE /task-projects/{id}` (archive), `PUT /task-projects/order` (ids in display order).
+
+## UI (designer pass)
+- **Where:** Settings → new **Projects** tab (admin roles), next to "Saved tasks". And a shortcut at the bottom of the picker list — **⚙ Manage projects** (admins only) — that opens the same manager in a window *on top of* Add Task, so a half-filled task is never lost; the picker updates as soon as it closes.
+- **Manager layout:** an "Add a project" row on top (name · platform chips · Add); then the list grouped like the picker. Each row: platform badge · name · "12 tasks" · on hover ↑ ↓ ✎ 🗑. ✎ turns the row into an inline editor (name, platform, group) with Save / Cancel (Enter / Esc). 🗑 asks inline: "Delete? Used on 12 tasks — they keep the name." with Cancel / Delete. A collapsed **Deleted (n)** section at the bottom lists archived projects with **Restore**.
+- Search box when the list grows; empty state when there are none.
+
+## Proving nothing breaks
+Backend tests (throwaway DB): admin-only rules (each role), add / duplicate / rename propagates to tasks / platform & group / archive hides from the picker but old tasks keep it / restore / reorder / seed doesn't undo an archive or rename; picker list unchanged for everyone. Full suite, type check, production build, browser: add, rename, move, delete, restore — from Settings and from the picker.
+
+---
+---
+
 # plan.md — Tasks: optional "Project" picker (ad accounts)
 
 > **Status: DONE (2026-10-09)** — backend 198 passed (7 new) / the same 8 old failures; type check clean; production build passes. Browser (QA Super Admin): picker after Description, all 12 in order with group dividers + platform badges, search + Enter picks without submitting; task created with a project (stored id + name); board card shows it; detail view changes it (Snapchat) and clears it. QA test task, its notifications and chat message removed.

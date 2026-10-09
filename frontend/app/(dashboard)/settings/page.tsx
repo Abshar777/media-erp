@@ -5,9 +5,10 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, ClipboardList, Eye, EyeOff, KeyRound, Loader2, Mail, Palette, QrCode, Shield, Sparkles, User, Star
+import { Bell, ClipboardList, Eye, EyeOff, FolderKanban, KeyRound, Loader2, Mail, Palette, QrCode, Shield, Sparkles, User, Star
 } from "lucide-react";
 import { SavedTasksManager } from "@/components/projects/SavedTasksManager";
+import { ProjectsManager } from "@/components/projects/ProjectsManager";
 import { Switch } from "@/components/ui/switch";
 import { useBranding, useUpdateBranding, useResetBranding } from "@/hooks/useWhitelabel";
 import { useEmailSettings, useUpdateEmailSettings, useTestEmail } from "@/hooks/useEmailSettings";
@@ -41,7 +42,7 @@ const passwordSchema = z
 
 type ProfileForm   = z.infer<typeof profileSchema>;
 type PasswordForm  = z.infer<typeof passwordSchema>;
-type Tab = "profile" | "password" | "plan" | "branding" | "security" | "audit" | "email" | "notifications" | "saved-tasks";
+type Tab = "profile" | "password" | "plan" | "branding" | "security" | "audit" | "email" | "notifications" | "saved-tasks" | "projects";
 
 // ── Notification-prefs helpers ────────────────────────────────────────────────
 type NotifCategory = "employee" | "leader" | "elevated";
@@ -845,6 +846,7 @@ const TABS: { id: Tab; label: string; icon: React.ElementType; superAdminOnly?: 
   { id: "security",      label: "Security",      icon: Shield },
   { id: "notifications", label: "Notifications", icon: Bell },
   { id: "saved-tasks",   label: "Saved tasks",   icon: Star, elevatedOnly: true },
+  { id: "projects",      label: "Projects",      icon: FolderKanban, elevatedOnly: true },
   { id: "audit",         label: "Audit Logs",    icon: ClipboardList },
   { id: "email",         label: "Email SMTP",    icon: Mail, superAdminOnly: true },
 ];
@@ -895,6 +897,7 @@ export default function SettingsPage() {
             {tab === "notifications" && <NotificationsTab />}
             {tab === "email"         && <EmailTab />}
             {tab === "saved-tasks"   && <SavedTasksManager teamId={null} />}
+            {tab === "projects"      && <ProjectsManager />}
           </motion.div>
         </AnimatePresence>
       </div>

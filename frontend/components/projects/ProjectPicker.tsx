@@ -11,25 +11,16 @@
  * were given in; ↑ ↓ Enter Esc work.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, FolderKanban, Search, X } from "lucide-react";
+import { Check, ChevronDown, FolderKanban, Search, Settings2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTaskProjects, type TaskProject } from "@/hooks/useTaskProjects";
+import { useAuthStore } from "@/stores/authStore";
+import { PlatformBadge } from "./PlatformBadge";
+import { ProjectsManagerModal } from "./ProjectsManager";
 
-const PLATFORM: Record<string, { label: string; className: string }> = {
-  meta:     { label: "Meta",   className: "bg-[#0866FF]/12 text-[#0866FF] dark:bg-[#0866FF]/20 dark:text-[#6aa6ff]" },
-  google:   { label: "Google", className: "bg-[#EA4335]/12 text-[#C5221F] dark:bg-[#EA4335]/20 dark:text-[#ff8a80]" },
-  snapchat: { label: "Snap",   className: "bg-[#FFFC00]/60 text-[#3d3a00] dark:bg-[#FFFC00]/20 dark:text-[#fff86b]" },
-};
+const ELEVATED = ["Super Admin", "Admin", "Coordinator"];
 
-export function PlatformBadge({ platform, className }: { platform: string; className?: string }) {
-  const p = PLATFORM[platform];
-  if (!p) return null;
-  return (
-    <span className={cn("inline-flex h-[18px] w-[54px] shrink-0 items-center justify-center rounded-md text-[10px] font-semibold uppercase tracking-wide", p.className, className)}>
-      {p.label}
-    </span>
-  );
-}
+export { PlatformBadge } from "./PlatformBadge";
 
 interface Props {
   /** Project id, or "" for none. */
@@ -48,6 +39,9 @@ export function ProjectPicker({ value, onChange, fallbackName, disabled, id }: P
   const [active, setActive] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  // Admin roles can open the list's manager from here, without leaving the form.
+  const canManage = ELEVATED.includes(useAuthStore((s) => s.user?.role?.role_name) ?? "");
+  const [managing, setManaging] = useState(false);
 
   const selected = projects.find((p) => p.id === value) ?? null;
   const shown = useMemo(() => {
@@ -156,8 +150,16 @@ export function ProjectPicker({ value, onChange, fallbackName, disabled, id }: P
               );
             })}
           </ul>
+          {canManage && (
+            <button type="button" onClick={() => { setOpen(false); setQ(""); setManaging(true); }}
+              className="flex w-full items-center gap-2 border-t px-3 py-2 text-left text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground">
+              <Settings2 className="size-3.5" /> Manage projects
+              <span className="ml-auto font-normal">add · rename · delete</span>
+            </button>
+          )}
         </div>
       )}
+      {canManage && <ProjectsManagerModal open={managing} onClose={() => setManaging(false)} />}
     </div>
   );
 }

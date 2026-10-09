@@ -14,6 +14,13 @@ If a mistake is listed here, do NOT repeat it.
 
 ## Log
 
+### 2026-10-09 · Task projects · Simultaneous adds made duplicate names
+- **Bug (QA):** 8 admins adding the same project name at the same instant → 6 copies (two renames to one name could do the same).
+- **Root Cause:** "is this name taken?" was checked, then the insert ran — a check-then-act race; nothing in the database enforced it.
+- **Fix:** each project stores `name_key` (whitespace-tidied, casefolded) with a unique index on ACTIVE projects (`unique_active_name`, partial `active: true`); create / rename / restore turn a DuplicateKeyError into 409. `ensure_seed` backfills `name_key` on older rows before creating the index. Tests: `test_simultaneous_adds_and_renames_never_make_duplicates`, `test_seed_backfills_name_keys_for_older_rows` (the first fails without the index).
+- **How to Avoid:** a uniqueness rule needs a unique index; an application check alone loses to concurrent requests.
+
+
 ### 2026-10-09 · Tasks · Anyone signed in could edit or DELETE any task
 - **Bug (found in QA of the Project picker):** `PUT /projects/{id}` and `DELETE /projects/{id}` checked nothing about the task — an employee with no link to a task (403 on viewing it) could rename it, change its status / assignee / project, or delete it (204).
 - **Root Cause:** only `GET /projects/{id}` had an access check; the write routes trusted the id.

@@ -506,3 +506,8 @@ end-to-end, not just "the socket reconnects."
 - **TaskDetailModal:** "Project" row after Description — picker that saves on pick (reverts if refused) for editors, a chip when read-only.
 - **KanbanCard:** muted one-line project label under the title, only when the task has one.
 - **(2026-10-09)** Board card + table: the delete (trash) icon only shows for who may delete — admin roles, the task's creator, its team's leaders (`hooks/useCanDeleteTask.ts`, mirrors `_can_delete_task`).
+
+### Projects — manage the list (2026-10-09)
+- **`components/projects/ProjectsManager.tsx`** (new): add (name + Meta/Google/Snapchat/Other chips, Enter), list grouped like the picker with task counts, hover actions ↑ ↓ (within a group) ✎ (inline: name, platform, group incl. a new one; Enter/Esc) 🗑 (inline confirm, "used on N tasks — they keep the name"), collapsible **Deleted (n)** with Restore, search past 8. No `<form>` (it can sit over Add Task — a portal'd submit would reach that form). `ProjectsManagerModal` = the same in a window (z-60) over Add Task.
+- **Where:** Settings → **Projects** tab (admin roles) and **Manage projects** at the bottom of the picker list (admin roles) — opens the window, the half-filled task is kept, the picker refreshes at once.
+- `components/projects/PlatformBadge.tsx` (moved out of ProjectPicker; adds "Other"); hooks in `hooks/useTaskProjects.ts` (useManagedProjects, useCreateProject, useUpdateProject, useReorderProjects).
