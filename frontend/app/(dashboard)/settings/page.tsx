@@ -7,7 +7,8 @@ import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bell, ClipboardList, Eye, EyeOff, FolderKanban, KeyRound, Loader2, Mail, Palette, QrCode, Shield, Sparkles, User, Star
 } from "lucide-react";
-import { SavedTasksManager } from "@/components/projects/SavedTasksManager";
+import { LeaderSavedTasks, SavedTasksManager } from "@/components/projects/SavedTasksManager";
+import { useTeams } from "@/hooks/useTeams";
 import { ProjectsManager } from "@/components/projects/ProjectsManager";
 import { Switch } from "@/components/ui/switch";
 import { useBranding, useUpdateBranding, useResetBranding } from "@/hooks/useWhitelabel";
@@ -838,15 +839,16 @@ function EmailTab() {
   );
 }
 
-const TABS: { id: Tab; label: string; icon: React.ElementType; superAdminOnly?: boolean; elevatedOnly?: boolean }[] = [
+// leaderOk: admin roles AND anyone who leads a team (by membership).
+const TABS: { id: Tab; label: string; icon: React.ElementType; superAdminOnly?: boolean; elevatedOnly?: boolean; leaderOk?: boolean }[] = [
   { id: "profile",       label: "Profile",       icon: User },
   { id: "password",      label: "Password",      icon: KeyRound },
   { id: "plan",          label: "Plan",          icon: Sparkles },
   { id: "branding",      label: "Branding",      icon: Palette },
   { id: "security",      label: "Security",      icon: Shield },
   { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "saved-tasks",   label: "Saved tasks",   icon: Star, elevatedOnly: true },
-  { id: "projects",      label: "Projects",      icon: FolderKanban, elevatedOnly: true },
+  { id: "saved-tasks",   label: "Saved tasks",   icon: Star, leaderOk: true },
+  { id: "projects",      label: "Projects",      icon: FolderKanban, leaderOk: true },
   { id: "audit",         label: "Audit Logs",    icon: ClipboardList },
   { id: "email",         label: "Email SMTP",    icon: Mail, superAdminOnly: true },
 ];
@@ -856,7 +858,10 @@ export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = !!(user?.role?.is_system_role && user?.role?.role_name === "Super Admin");
   const isElevated = ["Super Admin", "Admin", "Coordinator"].includes(user?.role?.role_name ?? "");
-  const visibleTabs = TABS.filter((t) => (!t.superAdminOnly || isSuperAdmin) && (!t.elevatedOnly || isElevated));
+  const { data: myTeams = [] } = useTeams();
+  const isLeader = myTeams.some((t) => t.my_role === "leader");
+  const visibleTabs = TABS.filter((t) => (!t.superAdminOnly || isSuperAdmin) && (!t.elevatedOnly || isElevated)
+    && (!t.leaderOk || isElevated || isLeader));
 
   return (
     <div className="space-y-5">
@@ -896,7 +901,8 @@ export default function SettingsPage() {
             {tab === "audit"         && <AuditTab />}
             {tab === "notifications" && <NotificationsTab />}
             {tab === "email"         && <EmailTab />}
-            {tab === "saved-tasks"   && <SavedTasksManager teamId={null} />}
+            {/* Admins: the company-wide list. Leaders: their own team(s)' lists. */}
+            {tab === "saved-tasks"   && (isElevated ? <SavedTasksManager teamId={null} /> : <LeaderSavedTasks />)}
             {tab === "projects"      && <ProjectsManager />}
           </motion.div>
         </AnimatePresence>

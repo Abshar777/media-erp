@@ -177,18 +177,29 @@ async def test_the_list_needs_a_signed_in_user(w):
 M = "/api/v1/task-projects"
 
 
-async def test_only_admin_roles_manage_the_list(w):
-    call = w["call"]
+async def test_admins_and_team_leaders_manage_the_list_employees_dont(w):
+    call, db = w["call"], w["db"]
     pid = (await projects(w))[0]["id"]
-    for who in ("lead", "emp"):
-        assert (await call("GET", M, who, params={"manage": 1})).status_code == 403
-        assert (await call("POST", M, who, json={"name": "X", "platform": "meta"})).status_code == 403
-        assert (await call("PATCH", f"{M}/{pid}", who, json={"name": "X"})).status_code == 403
-        assert (await call("DELETE", f"{M}/{pid}", who)).status_code == 403
-        assert (await call("PUT", f"{M}/order", who, json={"ids": []})).status_code == 403
-    for who in ("admin", "coord"):
-        assert (await call("GET", M, who, params={"manage": 1})).status_code == 200
+    # A plain employee: every change refused, the list untouched.
+    assert (await call("GET", M, "emp", params={"manage": 1})).status_code == 403
+    assert (await call("POST", M, "emp", json={"name": "X", "platform": "meta"})).status_code == 403
+    assert (await call("PATCH", f"{M}/{pid}", "emp", json={"name": "X"})).status_code == 403
+    assert (await call("DELETE", f"{M}/{pid}", "emp")).status_code == 403
+    assert (await call("PUT", f"{M}/order", "emp", json={"ids": []})).status_code == 403
     assert len(await projects(w)) == 12, "nothing changed"
+    # Admin roles and a Team Leader can.
+    for who in ("admin", "coord", "lead"):
+        assert (await call("GET", M, who, params={"manage": 1})).status_code == 200, who
+    r = await call("POST", M, "lead", json={"name": "Added by a leader", "platform": "other"})
+    assert r.status_code == 201, r.text
+    assert (await call("PATCH", f"{M}/{r.json()['data']['id']}", "lead", json={"name": "Renamed by a leader"})).status_code == 200
+    assert (await call("DELETE", f"{M}/{r.json()['data']['id']}", "lead")).status_code == 200
+    # An Employee-role person who leads a team counts as a leader (membership, like the rest of the app)…
+    await db["teams"].insert_one({"name": "Side team", "members": [{"user_id": w["s"]["emp2"], "role": "leader"}]})
+    assert (await call("GET", M, "emp2", params={"manage": 1})).status_code == 200
+    # …and stops being one when they no longer lead.
+    await db["teams"].delete_one({"name": "Side team"})
+    assert (await call("GET", M, "emp2", params={"manage": 1})).status_code == 403
 
 
 async def test_add_with_validation_and_no_duplicates(w):

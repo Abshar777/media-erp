@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Managing the Project list (admin roles) — Settings → Projects, and the
+ * Managing the Project list (admin roles + team leaders) — Settings → Projects, and the
  * "Manage projects" window opened from the picker in Add Task.
  *
  * Add (name + platform), rename / change platform / move to another group
@@ -84,7 +84,7 @@ export function ProjectsManager({ compact = false }: { compact?: boolean }) {
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold"><FolderKanban className="size-4 text-primary" /> Projects</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            The ad accounts in the task form&apos;s <span className="font-medium text-foreground">Project</span> field. Only admins can change this list;
+            The ad accounts in the task form&apos;s <span className="font-medium text-foreground">Project</span> field. Admins and team leaders can change this list;
             renaming one renames it on its tasks too.
           </p>
         </div>

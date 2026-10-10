@@ -17,6 +17,7 @@ import {
   useDeleteTaskPreset, useSaveTaskPreset, useTaskPresets, useTaskSuggestions, useUpdateTaskPreset, type TaskPreset,
 } from "@/hooks/useTaskPresets";
 import type { TaskPriority } from "@/types/project";
+import { useTeams } from "@/hooks/useTeams";
 
 const PRIORITY_DOT: Record<TaskPriority, string> = { low: "bg-slate-400", medium: "bg-amber-500", high: "bg-red-500" };
 const field = "h-9 w-full rounded-lg border bg-background px-3 text-sm outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";
@@ -198,5 +199,36 @@ function PresetRow({ row }: { row: TaskPreset }) {
         </span>
       )}
     </li>
+  );
+}
+
+/**
+ * Settings → Saved tasks for a team leader (not an admin): the saved tasks of
+ * the team(s) they lead — the company-wide list stays with the admin roles.
+ * A switcher when they lead more than one team.
+ */
+export function LeaderSavedTasks() {
+  const { data: teams = [], isLoading } = useTeams();
+  const led = useMemo(() => teams.filter((t) => t.my_role === "leader"), [teams]);
+  const [picked, setPicked] = useState<string | null>(null);
+  const team = led.find((t) => t.id === picked) ?? led[0];
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>;
+  if (!team) return <p className="text-sm text-muted-foreground">You don&apos;t lead a team, so there are no saved tasks to manage.</p>;
+  return (
+    <div className="space-y-3">
+      {led.length > 1 && (
+        <div role="group" aria-label="Which team" className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-xs text-muted-foreground">Team</span>
+          {led.map((t) => (
+            <button key={t.id} type="button" aria-pressed={t.id === team.id} onClick={() => setPicked(t.id)}
+              className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition",
+                t.id === team.id ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}>
+              <span className="size-2 rounded-full" style={{ background: t.color || "#94a3b8" }} /> {t.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <SavedTasksManager key={team.id} teamId={team.id} teamName={team.name} />
+    </div>
   );
 }

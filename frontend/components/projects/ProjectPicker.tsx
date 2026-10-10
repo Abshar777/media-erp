@@ -13,12 +13,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, FolderKanban, Search, Settings2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useTaskProjects, type TaskProject } from "@/hooks/useTaskProjects";
-import { useAuthStore } from "@/stores/authStore";
+import { useCanManageProjects, useTaskProjects, type TaskProject } from "@/hooks/useTaskProjects";
 import { PlatformBadge } from "./PlatformBadge";
 import { ProjectsManagerModal } from "./ProjectsManager";
 
-const ELEVATED = ["Super Admin", "Admin", "Coordinator"];
 
 export { PlatformBadge } from "./PlatformBadge";
 
@@ -39,8 +37,8 @@ export function ProjectPicker({ value, onChange, fallbackName, disabled, id }: P
   const [active, setActive] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  // Admin roles can open the list's manager from here, without leaving the form.
-  const canManage = ELEVATED.includes(useAuthStore((s) => s.user?.role?.role_name) ?? "");
+  // Admin roles and team leaders can open the list's manager from here, without leaving the form.
+  const canManage = useCanManageProjects();
   const [managing, setManaging] = useState(false);
 
   const selected = projects.find((p) => p.id === value) ?? null;

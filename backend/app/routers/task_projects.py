@@ -2,7 +2,7 @@
 Task projects — the optional "Project" picker on tasks, and managing its list.
 Rules live in services/task_project_service.py.
 
-Everyone signed in reads the active list. Admin roles manage it: add, rename
+Everyone signed in reads the active list. Admin roles and team leaders manage it: add, rename
 (tasks follow the new name), archive ("delete" — tasks keep their project) and
 restore, change platform / group, and order it.
 """
@@ -20,7 +20,7 @@ from app.utils.response import error_response, success_response
 router = APIRouter(prefix="/api/v1/task-projects", tags=["task-projects"])
 
 Platform = Literal["meta", "google", "snapchat", "other"]
-ADMIN_ONLY = "Only an admin can change the project list."
+ADMIN_ONLY = "Only an admin or a team leader can change the project list."
 
 
 class ProjectCreate(BaseModel):
@@ -52,7 +52,7 @@ async def list_task_projects(
 ):
     """Active projects in display order. `manage=1` (admin roles): archived too, with task counts."""
     if manage:
-        if not tps.can_manage(current_user):
+        if not await tps.can_manage(db, current_user):
             return error_response(ADMIN_ONLY, status_code=403)
         return success_response(data=await tps.list_for_manager(db), message="Projects retrieved")
     return success_response(data=await tps.list_active(db), message="Projects retrieved")
@@ -64,7 +64,7 @@ async def create_task_project(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    if not tps.can_manage(current_user):
+    if not await tps.can_manage(db, current_user):
         return error_response(ADMIN_ONLY, status_code=403)
     try:
         data = await tps.create(db, current_user, body.name, body.platform, body.group)
@@ -80,7 +80,7 @@ async def reorder_task_projects(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    if not tps.can_manage(current_user):
+    if not await tps.can_manage(db, current_user):
         return error_response(ADMIN_ONLY, status_code=403)
     try:
         await tps.reorder(db, body.ids)
@@ -96,7 +96,7 @@ async def update_task_project(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    if not tps.can_manage(current_user):
+    if not await tps.can_manage(db, current_user):
         return error_response(ADMIN_ONLY, status_code=403)
     try:
         data = await tps.update(db, current_user, project_id, body.model_dump(exclude_none=True))
@@ -113,7 +113,7 @@ async def archive_task_project(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """'Delete' = archive: hidden from the picker; tasks keep their project; restorable."""
-    if not tps.can_manage(current_user):
+    if not await tps.can_manage(db, current_user):
         return error_response(ADMIN_ONLY, status_code=403)
     try:
         data = await tps.update(db, current_user, project_id, {"active": False})

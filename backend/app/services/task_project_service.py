@@ -100,10 +100,14 @@ async def resolve(db, project_id) -> dict | None:
     return doc
 
 
-# ── Managing the list (admin roles) ───────────────────────────────────────────
+# ── Managing the list (admin roles + team leaders) ───────────────────────────────────────────
 
-def can_manage(user: dict) -> bool:
-    return ((user.get("_role") or {}).get("role_name", "")) in ELEVATED_ROLES
+async def can_manage(db, user: dict) -> bool:
+    """Admin roles, and anyone who leads a team (by membership — an Employee-role leader counts)."""
+    if ((user.get("_role") or {}).get("role_name", "")) in ELEVATED_ROLES:
+        return True
+    return bool(await db["teams"].find_one(
+        {"members": {"$elemMatch": {"user_id": str(user["_id"]), "role": "leader"}}}, {"_id": 1}))
 
 
 def _clean_name(name) -> str:

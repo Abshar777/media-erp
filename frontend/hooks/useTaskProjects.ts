@@ -8,6 +8,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import api from "@/lib/axios";
+import { useAuthStore } from "@/stores/authStore";
+import { useTeams } from "@/hooks/useTeams";
 
 export type ProjectPlatform = "meta" | "google" | "snapchat" | "other";
 
@@ -30,6 +32,18 @@ type Env<T> = { success: boolean; data: T; message?: string };
 
 function errMsg(err: unknown, fallback: string): string {
   return (err as { response?: { data?: { message?: string } } })?.response?.data?.message || fallback;
+}
+
+const ELEVATED = ["Super Admin", "Admin", "Coordinator"];
+
+/**
+ * May this person manage the Project list? Admin roles, and anyone who leads a
+ * team (by membership — mirrors task_project_service.can_manage).
+ */
+export function useCanManageProjects(): boolean {
+  const role = useAuthStore((s) => s.user?.role?.role_name ?? "");
+  const { data: teams = [] } = useTeams();
+  return ELEVATED.includes(role) || teams.some((t) => t.my_role === "leader");
 }
 
 export function useTaskProjects(enabled = true) {
