@@ -640,3 +640,171 @@ async def submit_verification_for_portal(db: AsyncIOMotorDatabase, task_id: str,
     return {"verifiedAs": user.get("email", ""), "passed": decision.passed, "result": out.get("data")}
 
 
+
+
+# ── Pending work, company-wide ────────────────────────────────────────────────
+
+_ELEVATED_ROLE_NAMES = ("Super Admin", "Admin", "Coordinator")
+
+# The sidebar's badges, in the order the sidebar shows them.
+_PENDING_KINDS = (
+    ("ad_reports", "Ad Reports"),
+    ("leader_desk", "Leader Desk"),
+    ("verifications", "Verifications"),
+    ("chat", "Chat"),
+)
+
+
+async def pending_for_portal(db: AsyncIOMotorDatabase) -> dict:
+    """
+    Every sidebar badge, counted for the whole company, and who each item is
+    waiting on.
+
+    Each count follows the endpoint its badge reads, so the portal shows the
+    same number a person sees here:
+
+      ad_reports     /ad-reports/today  my_due_count — active ad reports with
+                     an owed day (up to yesterday) still blank, once per
+                     assignee. Overdue = past the "due" grace, i.e. the card
+                     says "missing".
+      leader_desk    /projects/leader/queue  review + incoming + reedit —
+                     tasks in review, new unassigned work, and work sent back,
+                     in any existing team or in none. Waits on the team's
+                     leaders; with no team, or a team with no leader, on every
+                     active Super Admin / Admin / Coordinator, who are the ones
+                     who see it.
+      verifications  /verify?scope=pending — a task in review on which the
+                     person's own verification is still pending.
+      chat           /chat/unread — direct messages to the person not yet read.
+
+    Only people with an account here are counted: a badge belongs to somebody
+    who can sign in to see it.
+    """
+    from app.services import ad_report_service as ar
+    from app.services import workflow
+    from app.utils.timezone import today_ist
+
+    users = await db["users"].find(
+        {}, {"name": 1, "email": 1, "is_active": 1, "role_id": 1}
+    ).to_list(None)
+    by_id = {str(u["_id"]): u for u in users}
+
+    role_ids = {u.get("role_id") for u in users if u.get("role_id") and ObjectId.is_valid(u.get("role_id"))}
+    roles = await db["roles"].find(
+        {"_id": {"$in": [ObjectId(r) for r in role_ids]}}, {"role_name": 1}
+    ).to_list(None)
+    role_name = {str(r["_id"]): r.get("role_name", "") for r in roles}
+    elevated_active = [
+        uid for uid, u in by_id.items()
+        if u.get("is_active", True) and role_name.get(u.get("role_id") or "") in _ELEVATED_ROLE_NAMES
+    ]
+
+    counts: dict[str, dict[str, int]] = {}
+    totals = {key: 0 for key, _ in _PENDING_KINDS}
+    overdue_total = {"ad_reports": 0}
+
+    def add(uid: str, key: str, n: int = 1) -> None:
+        if n:
+            counts.setdefault(uid, {})
+            counts[uid][key] = counts[uid].get(key, 0) + n
+
+    # ── Ad Reports ────────────────────────────────────────────────────────────
+    today = today_ist()
+    reports = await db[ar.REPORTS].find({"status": "active", **ar.AD_ONLY}).to_list(None)
+    for r in reports:
+        owners = {a for a in (r.get("assignees") or []) if a in by_id}
+        if not owners:
+            continue
+        missing = await ar.missing_days(db, r, today)
+        if not missing:
+            continue
+        late = ar.day_status(r, missing) == "missing"
+        for uid in owners:
+            add(uid, "ad_reports")
+            totals["ad_reports"] += 1
+            if late:
+                add(uid, "ad_reports_overdue")
+                overdue_total["ad_reports"] += 1
+
+    # ── Leader Desk ───────────────────────────────────────────────────────────
+    teams = await db["teams"].find({}, {"members": 1}).to_list(None)
+    leaders_of = {
+        str(t["_id"]): [
+            m["user_id"] for m in (t.get("members") or [])
+            if m.get("role") == "leader" and m.get("user_id") in by_id
+        ]
+        for t in teams
+    }
+    desk = await db["project_tasks"].find(
+        {"$or": [
+            {"status": {"$in": ["pending_review", "reedit"]}},
+            {"status": "pending", "assigned_to": {"$in": ["", None]}},
+        ]},
+        {"team_id": 1},
+    ).to_list(None)
+    for t in desk:
+        team_id = t.get("team_id")
+        if team_id in ("", None):
+            waiting_on = elevated_active                   # no team: the admins'
+        elif team_id in leaders_of:
+            waiting_on = leaders_of[team_id] or elevated_active
+        else:
+            continue                                       # a team that is gone: on nobody's desk
+        totals["leader_desk"] += 1
+        for uid in waiting_on:
+            add(uid, "leader_desk")
+
+    # ── Verifications ─────────────────────────────────────────────────────────
+    in_review = await db["project_tasks"].find(
+        {"status": "pending_review", "verifications.status": workflow.VERIFY_PENDING},
+        {"verifications": 1},
+    ).to_list(None)
+    for t in in_review:
+        seen: set[str] = set()
+        for v in t.get("verifications") or []:
+            uid = v.get("user_id")
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)                                  # the badge reads each person's first slot
+            if v.get("status") == workflow.VERIFY_PENDING and uid in by_id:
+                add(uid, "verifications")
+                totals["verifications"] += 1
+
+    # ── Chat ──────────────────────────────────────────────────────────────────
+    unread = await db["messages"].aggregate([
+        {"$match": {"read": False}},
+        {"$group": {"_id": "$to_user_id", "count": {"$sum": 1}}},
+    ]).to_list(None)
+    for row in unread:
+        uid = row["_id"]
+        if uid in by_id:
+            add(uid, "chat", row["count"])
+            totals["chat"] += row["count"]
+
+    kinds = []
+    for key, label in _PENDING_KINDS:
+        kind = {"key": key, "label": label, "total": totals[key]}
+        if key in overdue_total:
+            kind["overdue"] = overdue_total[key]
+        kinds.append(kind)
+
+    people = []
+    for uid, c in counts.items():
+        total = sum(n for k, n in c.items() if not k.endswith("_overdue"))
+        if not total:
+            continue
+        u = by_id[uid]
+        full = {key: c.get(key, 0) for key, _ in _PENDING_KINDS}
+        for key in overdue_total:
+            full[f"{key}_overdue"] = c.get(f"{key}_overdue", 0)
+        people.append({
+            "id": uid,
+            "name": u.get("name") or u.get("email", ""),
+            "email": (u.get("email") or "").strip().lower(),
+            "active": bool(u.get("is_active", True)),
+            "counts": full,
+            "total": total,
+        })
+    people.sort(key=lambda p: (-p["total"], p["name"].lower()))
+
+    return {"kinds": kinds, "people": people}

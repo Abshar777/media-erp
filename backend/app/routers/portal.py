@@ -25,6 +25,7 @@ from app.services.portal_service import (
     get_task_for_portal,
     list_raised_for_portal,
     list_verifications_for_portal,
+    pending_for_portal,
     submit_verification_for_portal,
     list_roles_for_portal,
     provision_from_portal,
@@ -246,5 +247,20 @@ async def verify_task(
         return refused
     try:
         return success_response(await submit_verification_for_portal(db, task_id, body), "Recorded")
+    except PortalError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+
+
+@router.get("/pending")
+async def pending(
+    x_portal_secret: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Every sidebar badge, counted company-wide, and who each item waits on."""
+    refused = _guard(x_portal_secret)
+    if refused:
+        return refused
+    try:
+        return success_response(await pending_for_portal(db), "Pending")
     except PortalError as exc:
         return error_response(exc.message, status_code=exc.status_code)
