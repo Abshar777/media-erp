@@ -9,8 +9,9 @@ import { FileUploader } from "@/components/shared/FileUploader";
 import { useAllTeams, useTeam, useTeams, useAssignableUsers } from "@/hooks/useTeams";
 import { VerifierPicker } from "@/components/projects/VerifierPicker";
 import { UserPicker } from "@/components/teams/UserPicker";
-import { RepeatField, REPEAT_DEFAULT, type RepeatValue } from "@/components/projects/RepeatField";
+import { RepeatField, REPEAT_DEFAULT, toRepeatSpec, type RepeatValue } from "@/components/projects/RepeatField";
 import { ProjectPicker } from "./ProjectPicker";
+import { useCanManageProjects } from "@/hooks/useTaskProjects";
 import { TaskNameCombobox } from "@/components/projects/TaskNameCombobox";
 import type { Suggestion } from "@/lib/taskPresets";
 import { istTodayKey } from "@/lib/datetime";
@@ -18,7 +19,14 @@ import { useCanApprove } from "@/hooks/useCanApprove";
 import { useAuthStore } from "@/stores/authStore";
 import type { TaskPriority, TaskStatus, Attachment } from "@/types/project";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { toast } from "sonner";
+
+const PRIORITY_OPTIONS: { value: TaskPriority; label: string; dot: string }[] = [
+  { value: "low", label: "Low", dot: "#94a3b8" },
+  { value: "medium", label: "Medium", dot: "#f97316" },
+  { value: "high", label: "High", dot: "#ef4444" },
+];
 
 interface Props {
   open: boolean;
@@ -33,7 +41,9 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
 
   const [title, setTitle]           = useState("");
   const [description, setDesc]      = useState("");
-  const [projectId, setProjectId]   = useState("");
+  const [projectIds, setProjectIds] = useState<string[]>([]);
+  // Several projects on one task: team leaders and admins (the server enforces it).
+  const multiProject = useCanManageProjects();
   const [priority, setPriority]     = useState<TaskPriority>("medium");
   // What a saved task just filled in (and what was there before), for "Undo".
   const [filled, setFilled] = useState<null | { fields: string[]; prev: { description: string; priority: TaskPriority; teamId: string } }>(null);
@@ -168,7 +178,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
   }, [teamId, teamDetail]);
 
   function reset() {
-    setTitle(""); setDesc(""); setProjectId(""); setPriority("medium"); setFilled(null);
+    setTitle(""); setDesc(""); setProjectIds([]); setPriority("medium"); setFilled(null);
     setTeamId(defaultTeamId);
     setAssignees([]); setPickerMode("first"); setRepeat(REPEAT_DEFAULT);
     setApproverId(""); setDueDate(""); setAttachments([]);
@@ -233,7 +243,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
       priority,
       status: "pending" as const,
       team_id: teamId || null,
-      project_id: projectId || null,
+      project_ids: projectIds,
       attachments,
       verify_users: verifyUsers,
       verify_teams: verifyTeams,
@@ -253,15 +263,8 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
         assignees,
         // Ignored by the server when repeating — each copy's due date comes from the schedule.
         due_date: repeating ? null : dueDate || null,
-        repeat: repeating
-          ? {
-              frequency: repeat.frequency as Exclude<RepeatValue["frequency"], "once">,
-              count: repeat.untilStopped ? null : repeat.count,
-              due_offset_days: repeat.dueOffset,
-              ...(repeat.frequency === "weekly" && repeat.weekday != null ? { weekday: repeat.weekday } : {}),
-              ...(repeat.frequency === "monthly" && repeat.monthDay != null ? { month_day: repeat.monthDay } : {}),
-            }
-          : null,
+        // Weekly counts weeks in the form, tasks on the server (toRepeatSpec converts).
+        repeat: toRepeatSpec(repeat, istTodayKey()),
       });
       close();
       return;
@@ -279,7 +282,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
       assigned_to: finalAssignee,
       assigned_to_name: finalAssigneeName,
       due_date: dueDate || null,
-      project_id: projectId || null,
+      project_ids: projectIds,
       attachments,
       // Sent explicitly — including as an empty list, which is how "nobody"
       // reaches the server as a decision rather than as silence it would fill
@@ -396,7 +399,7 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                 <label htmlFor="task-project" className="flex items-baseline justify-between text-xs font-medium text-muted-foreground">
                   Project <span className="text-[11px] font-normal">Optional</span>
                 </label>
-                <ProjectPicker id="task-project" value={projectId} onChange={setProjectId} />
+                <ProjectPicker id="task-project" value={projectIds} onChange={setProjectIds} multiple={multiProject} />
               </div>
 
               {/* Team. Required when the work is for someone else — it is the
@@ -408,23 +411,20 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                   <label className="text-xs font-medium text-muted-foreground">
                     {isSelfAssigned ? "Team" : "Team *"}
                   </label>
-                  <select
+                  <SelectField
+                    aria-label="Team"
                     value={teamId}
-                    onChange={e => {
-                      setTeamId(e.target.value);
+                    onValueChange={v => {
+                      setTeamId(v);
                       // Whoever was picked may not be on the newly chosen team.
                       setAssignees([]);
                       setPickerMode("first");
                     }}
-                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
-                  >
-                    <option value="">
-                      {isSelfAssigned ? "No team — just for me" : "Select a team…"}
-                    </option>
-                    {teams.map(t => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: "", label: isSelfAssigned ? "No team — just for me" : "Select a team…" },
+                      ...teams.map(t => ({ value: t.id, label: t.name, dot: t.color || "#94a3b8" })),
+                    ]}
+                  />
                 </div>
               )}
 
@@ -439,15 +439,12 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">Priority</label>
-                  <select
+                  <SelectField<TaskPriority>
+                    aria-label="Priority"
                     value={priority}
-                    onChange={e => setPriority(e.target.value as TaskPriority)}
-                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
-                  >
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                  </select>
+                    onValueChange={setPriority}
+                    options={PRIORITY_OPTIONS}
+                  />
                 </div>
               </div>
 
@@ -561,19 +558,19 @@ export function AddTaskModal({ open, onClose, defaultStatus = "pending", default
                   <label className="text-xs font-medium text-muted-foreground">
                     Approved By
                   </label>
-                  <select
+                  <SelectField
+                    aria-label="Approved by"
                     value={approverId}
-                    onChange={e => setApproverId(e.target.value)}
-                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
-                  >
-                    <option value="">Team leaders only (default)</option>
-                    {approverOptions.map(o => (
-                      <option key={o.id} value={o.id}>
-                        {o.name}{o.role === "leader" ? " · Leader" : ""}
-                        {o.designation ? ` — ${o.designation}` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    onValueChange={setApproverId}
+                    options={[
+                      { value: "", label: "Team leaders only (default)", description: "Any leader of the team can approve" },
+                      ...approverOptions.map(o => ({
+                        value: o.id,
+                        label: o.name,
+                        description: [o.role === "leader" ? "Leader" : "Member", o.designation].filter(Boolean).join(" · "),
+                      })),
+                    ]}
+                  />
                   <p className="text-[11px] text-muted-foreground">
                     Lets a chosen member approve this task, not just team leaders.
                     Leaders keep their approval rights either way.

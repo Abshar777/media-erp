@@ -15,6 +15,7 @@ import {
 import PageHeader from "@/components/shared/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { SelectField } from "@/components/ui/select-field";
 import { cn } from "@/lib/utils";
 import { fmtDateTimeIST } from "@/lib/datetime";
 import {
@@ -129,18 +130,20 @@ function ScheduleModal({ onClose, initial }: { onClose: () => void; initial?: Em
           {/* Frequency */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Frequency</label>
-              <select
-                className={inputCls}
+              <label htmlFor="email-frequency" className={labelCls}>Frequency</label>
+              <SelectField<EmailScheduleCreate["frequency"]>
+                id="email-frequency"
+                className="rounded-md"
                 value={form.frequency}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, frequency: e.target.value as EmailScheduleCreate["frequency"] }))
+                onValueChange={(v) =>
+                  setForm((f) => ({ ...f, frequency: v }))
                 }
-              >
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
+                options={[
+                  { value: "daily", label: "Daily" },
+                  { value: "weekly", label: "Weekly" },
+                  { value: "monthly", label: "Monthly" },
+                ]}
+              />
             </div>
             <div>
               <label className={labelCls}>Send Time (UTC)</label>
@@ -156,16 +159,14 @@ function ScheduleModal({ onClose, initial }: { onClose: () => void; initial?: Em
           {/* Day of week */}
           {form.frequency === "weekly" && (
             <div>
-              <label className={labelCls}>Day of Week</label>
-              <select
-                className={inputCls}
+              <label htmlFor="email-day-of-week" className={labelCls}>Day of Week</label>
+              <SelectField<number>
+                id="email-day-of-week"
+                className="rounded-md"
                 value={form.day_of_week ?? 0}
-                onChange={(e) => setForm((f) => ({ ...f, day_of_week: parseInt(e.target.value) }))}
-              >
-                {DOW_LABELS.map((d, i) => (
-                  <option key={i} value={i}>{d}</option>
-                ))}
-              </select>
+                onValueChange={(v) => setForm((f) => ({ ...f, day_of_week: v }))}
+                options={DOW_LABELS.map((d, i) => ({ value: i, label: d }))}
+              />
             </div>
           )}
 
@@ -187,18 +188,20 @@ function ScheduleModal({ onClose, initial }: { onClose: () => void; initial?: Em
 
           {/* Date range */}
           <div>
-            <label className={labelCls}>Data window (days of history to include)</label>
-            <select
-              className={inputCls}
+            <label htmlFor="email-date-range" className={labelCls}>Data window (days of history to include)</label>
+            <SelectField<number>
+              id="email-date-range"
+              className="rounded-md"
               value={form.date_range_days}
-              onChange={(e) => setForm((f) => ({ ...f, date_range_days: parseInt(e.target.value) }))}
-            >
-              <option value={1}>Last 1 day</option>
-              <option value={7}>Last 7 days</option>
-              <option value={14}>Last 14 days</option>
-              <option value={30}>Last 30 days</option>
-              <option value={90}>Last 90 days</option>
-            </select>
+              onValueChange={(v) => setForm((f) => ({ ...f, date_range_days: v }))}
+              options={[
+                { value: 1, label: "Last 1 day" },
+                { value: 7, label: "Last 7 days" },
+                { value: 14, label: "Last 14 days" },
+                { value: 30, label: "Last 30 days" },
+                { value: 90, label: "Last 90 days" },
+              ]}
+            />
           </div>
 
           {/* Recipients */}

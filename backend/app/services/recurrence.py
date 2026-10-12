@@ -14,6 +14,8 @@ Series document
   assignees           [user_id, …]               ← one copy per person
   frequency           daily | weekly | monthly
   anchor_date         "YYYY-MM-DD" (IST)          ← fixes the weekday / day-of-month
+  weekdays            [0..6] (weekly; Mon 0)       ← several days a week; absent on older
+                                                     series = just the anchor's weekday
   next_index          anchor-relative index of the next occurrence
   next_date           its date, or None once finished
   occurrences_total   N, or None = until stopped
@@ -65,7 +67,7 @@ POLL_SECONDS = 60
 ELEVATED_ROLES = ("Super Admin", "Admin", "Coordinator")
 
 TEMPLATE_FIELDS = ("title", "description", "priority", "team_id", "approver_id",
-                   "approver_name", "verify_users", "verify_teams", "attachments", "project_id")
+                   "approver_name", "verify_users", "verify_teams", "attachments", "project_id", "project_ids")
 
 
 # ── Date engine ───────────────────────────────────────────────────────────────
@@ -77,7 +79,26 @@ def add_months(d: date, months: int, anchor_day: int) -> date:
     return date(year, month, min(anchor_day, calendar.monthrange(year, month)[1]))
 
 
-def occurrence_date(frequency: str, anchor: date, index: int, month_day: int | None = None) -> date:
+def week_offsets(anchor: date, weekdays) -> list[int] | None:
+    """
+    Days after the anchor of each chosen weekday within one week, sorted — e.g.
+    anchor Tue with Mon/Tue/Fri/Sun → [0, 3, 5, 6]. None for one day (the plain
+    every-7-days case). The anchor is always one of the chosen days, so [0] leads.
+    """
+    days = sorted({d for d in (weekdays or [])})
+    if len(days) <= 1:
+        return None
+    return sorted((d - anchor.weekday()) % 7 for d in days)
+
+
+def series_offsets(s: dict) -> list[int] | None:
+    if s.get("frequency") != "weekly" or not s.get("weekdays"):
+        return None
+    return week_offsets(date.fromisoformat(s["anchor_date"]), s["weekdays"])
+
+
+def occurrence_date(frequency: str, anchor: date, index: int, month_day: int | None = None,
+                    offsets: list[int] | None = None) -> date:
     """
     Date of occurrence `index` (0 = the anchor itself).
 
@@ -92,17 +113,25 @@ def occurrence_date(frequency: str, anchor: date, index: int, month_day: int | N
     if frequency == "daily":
         return anchor + timedelta(days=index)
     if frequency == "weekly":
+        # Several days a week: copy i is in week i // k, on the (i % k)-th chosen day.
+        # Still pure arithmetic from the anchor — no stepping, so no drift.
+        if offsets:
+            k = len(offsets)
+            return anchor + timedelta(weeks=index // k, days=offsets[index % k])
         return anchor + timedelta(weeks=index)
     if frequency == "monthly":
         return add_months(anchor, index, month_day or anchor.day)
     raise ValueError(f"unknown frequency: {frequency!r}")
 
 
-def first_date(frequency: str, today: date, weekday: int | None = None, month_day: int | None = None) -> date:
+def first_date(frequency: str, today: date, weekday: int | None = None, month_day: int | None = None,
+               weekdays: list[int] | None = None) -> date:
     """
-    The series' first day: today, or the next chosen weekday / day of the month.
-    `weekday` uses Python's numbering (Monday 0 … Sunday 6).
+    The series' first day: today, or the next chosen weekday (the soonest of
+    several) / day of the month. Weekdays use Python's numbering (Monday 0 … Sunday 6).
     """
+    if frequency == "weekly" and weekdays:
+        return min(today + timedelta(days=(d - today.weekday()) % 7) for d in weekdays)
     if frequency == "weekly" and weekday is not None:
         return today + timedelta(days=(weekday - today.weekday()) % 7)
     if frequency == "monthly" and month_day:
@@ -112,13 +141,18 @@ def first_date(frequency: str, today: date, weekday: int | None = None, month_da
 
 
 def first_index_on_or_after(frequency: str, anchor: date, start: int, target: date,
-                            month_day: int | None = None) -> int:
+                            month_day: int | None = None, offsets: list[int] | None = None) -> int:
     """Smallest index >= `start` whose date is on or after `target` (used on resume)."""
     days = (target - anchor).days
     if frequency == "daily":
         return max(start, days)
-    if frequency == "weekly":
+    if frequency == "weekly" and not offsets:
         return max(start, -(-days // 7))          # ceiling division
+    if frequency == "weekly":                     # jump to the target's week, then step (≤ 7 steps)
+        i = max(start, (max(days, 0) // 7) * len(offsets))
+        while occurrence_date(frequency, anchor, i, month_day, offsets) < target:
+            i += 1
+        return i
     i = start
     while occurrence_date(frequency, anchor, i, month_day) < target:
         i += 1
@@ -216,17 +250,25 @@ async def validate_assignees(db: AsyncIOMotorDatabase, assignees) -> tuple[list[
     return ids, {a: users[a].get("name", "") for a in ids}, ""
 
 
-def validate_repeat(frequency: str, count, due_offset_days, weekday=None, month_day=None) -> str:
+def validate_repeat(frequency: str, count, due_offset_days, weekday=None, month_day=None, weekdays=None) -> str:
     if frequency not in FREQUENCIES:
         return "Choose daily, weekly or monthly."
     if weekday is not None and (frequency != "weekly" or isinstance(weekday, bool) or not 0 <= weekday <= 6):
         return "Choose a day of the week for a weekly task."
+    if weekdays is not None:
+        if frequency != "weekly":
+            return "Days of the week are only for a weekly task."
+        if (not isinstance(weekdays, list) or not weekdays
+                or any(isinstance(d, bool) or not isinstance(d, int) or not 0 <= d <= 6 for d in weekdays)):
+            return "Choose at least one day of the week."
     if month_day is not None and (frequency != "monthly" or isinstance(month_day, bool) or not 1 <= month_day <= 31):
         return "Choose a date between 1 and 31 for a monthly task."
     if count is not None:
         if not isinstance(count, int) or count < 1:
             return "Repeat at least once."
-        if count > MAX_COUNT[frequency]:
+        # Several days a week: up to the same 104 weeks, so 104 × days copies.
+        per_week = len(set(weekdays)) if frequency == "weekly" and weekdays else 1
+        if count > MAX_COUNT[frequency] * per_week:
             unit = {"daily": "days", "weekly": "weeks", "monthly": "months"}[frequency]
             return f"A {frequency} task can repeat at most {MAX_COUNT[frequency]} {unit}."
     if due_offset_days is not None and not (0 <= due_offset_days <= MAX_DUE_OFFSET_DAYS):
@@ -317,7 +359,8 @@ async def advance_series(db: AsyncIOMotorDatabase, series_id: ObjectId,
             "occurrences_done": done,
             "next_index": nxt,
             "next_date": None if finished else occurrence_date(
-                s["frequency"], date.fromisoformat(s["anchor_date"]), nxt, s.get("month_day")).isoformat(),
+                s["frequency"], date.fromisoformat(s["anchor_date"]), nxt, s.get("month_day"),
+                series_offsets(s)).isoformat(),
             "status": "completed" if finished else "active",
             "last_run_at": now,
             "updated_at": now,
@@ -347,13 +390,15 @@ async def _pause(db, series: dict, reason: str) -> None:
 
 async def create_series(db: AsyncIOMotorDatabase, template: dict, assignees: list[str],
                         frequency: str, count, due_offset_days: int, creator: dict,
-                        weekday: int | None = None, month_day: int | None = None) -> tuple[dict, dict]:
+                        weekday: int | None = None, month_day: int | None = None,
+                        weekdays: list[int] | None = None) -> tuple[dict, dict]:
     """
     Insert a series anchored on its first day — today, or the chosen weekday /
     day of the month — and create today's copy now when the first day is today.
     """
     today = today_ist()
-    anchor = first_date(frequency, today, weekday, month_day)
+    days = sorted(set(weekdays)) if (frequency == "weekly" and weekdays) else None
+    anchor = first_date(frequency, today, weekday, month_day, days)
     now = datetime.now(timezone.utc)
     doc = {k: template.get(k) for k in TEMPLATE_FIELDS}
     doc.update({
@@ -362,6 +407,8 @@ async def create_series(db: AsyncIOMotorDatabase, template: dict, assignees: lis
         "anchor_date": anchor.isoformat(),
         "month_day": (month_day or anchor.day) if frequency == "monthly" else None,
         "weekday": anchor.weekday() if frequency == "weekly" else None,
+        # Only stored for several days; one day keeps the older shape (anchor's weekday).
+        **({"weekdays": days} if days and len(days) > 1 else {}),
         "next_index": 0,
         "next_date": anchor.isoformat(),
         "occurrences_total": count,
@@ -389,11 +436,12 @@ async def resume_series(db: AsyncIOMotorDatabase, series: dict) -> dict:
     """
     anchor = date.fromisoformat(series["anchor_date"])
     md = series.get("month_day")
-    idx = first_index_on_or_after(series["frequency"], anchor, series["next_index"], today_ist(), md)
+    off = series_offsets(series)
+    idx = first_index_on_or_after(series["frequency"], anchor, series["next_index"], today_ist(), md, off)
     await db["recurring_tasks"].update_one(
         {"_id": series["_id"], "status": "paused"},
         {"$set": {"status": "active", "paused_reason": "", "next_index": idx,
-                  "next_date": occurrence_date(series["frequency"], anchor, idx, md).isoformat(),
+                  "next_date": occurrence_date(series["frequency"], anchor, idx, md, off).isoformat(),
                   "updated_at": datetime.now(timezone.utc)}},
     )
     await advance_series(db, series["_id"])          # today's copy now, if today is a day
@@ -427,6 +475,8 @@ def serialize_series(s: dict, names: dict[str, str]) -> dict:
         "anchor_date": s.get("anchor_date"),
         "month_day": s.get("month_day"),
         "weekday": s.get("weekday"),
+        # Every chosen day (older one-day series: just their weekday).
+        "weekdays": s.get("weekdays") or ([s["weekday"]] if s.get("weekday") is not None else None),
         "next_date": s.get("next_date"),
         "occurrences_total": s.get("occurrences_total"),
         "occurrences_done": s.get("occurrences_done", 0),

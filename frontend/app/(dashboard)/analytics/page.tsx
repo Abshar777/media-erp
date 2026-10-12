@@ -22,6 +22,7 @@ import {
 } from "@/hooks/useSocial";
 import type { Connector } from "@/types/connector";
 import { fmtDateOnly } from "@/lib/datetime";
+import { SelectField } from "@/components/ui/select-field";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -361,15 +362,13 @@ export default function AnalyticsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           {/* Connector selector */}
           {igConnectors.length > 1 && (
-            <select
+            <SelectField
+              aria-label="Instagram account"
               value={activeId}
-              onChange={(e) => { setConnectorId(e.target.value); setSelectedPost(null); }}
-              className="rounded-xl border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary"
-            >
-              {igConnectors.map((c: Connector) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+              onValueChange={(v) => { setConnectorId(v); setSelectedPost(null); }}
+              options={igConnectors.map((c: Connector) => ({ value: c.id, label: c.name }))}
+              className="w-auto min-w-[10rem] rounded-xl"
+            />
           )}
 
           {/* Preset buttons */}

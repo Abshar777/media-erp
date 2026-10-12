@@ -128,6 +128,8 @@ export interface Task {
    *  Absent, or "" once cleared, when there is none. */
   project_id?: string;
   project_name?: string;
+  /** All of the task's projects, in order (several: team leaders / admins). project_id/_name = the first. */
+  projects?: { id: string; name: string }[];
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -155,8 +157,9 @@ export interface CreateTaskPayload {
    *  the server fills the latter with the creator (see add_task). */
   verify_users?: string[];
   verify_teams?: string[];
-  /** Optional ad account (GET /task-projects); the server looks up the name. */
+  /** Optional ad account(s) (GET /task-projects); the server looks up the names. */
   project_id?: string | null;
+  project_ids?: string[];
 }
 
 // ── Repeating tasks + multiple assignees ──────────────────────────────────────
@@ -182,6 +185,8 @@ export interface RepeatSpec {
   due_offset_days: number;
   /** Weekly: Monday 0 … Sunday 6. Omitted = the day it's created. */
   weekday?: number | null;
+  /** Weekly on several days, e.g. [0, 1, 4, 6] = Mon, Tue, Fri, Sun. Wins over `weekday`. */
+  weekdays?: number[] | null;
   /** Monthly: 1–31 (shorter months use their last day). Omitted = today's date. */
   month_day?: number | null;
 }
@@ -211,6 +216,8 @@ export interface RecurringSeries {
   anchor_date: string;
   month_day?: number | null;
   weekday?: number | null;
+  /** Weekly: every chosen day (older one-day series: just their weekday). */
+  weekdays?: number[] | null;
   next_date: string | null;
   occurrences_total: number | null;
   occurrences_done: number;
@@ -267,8 +274,15 @@ export interface UpdateTaskPayload {
   verify_teams?: string[];
   verify_instructions?: string;
   caption?: string;
-  /** Change the project; "" clears it. */
+  /** Change the project(s): project_ids ([] clears) — or the older single project_id ("" clears). */
   project_id?: string;
+  project_ids?: string[];
+}
+
+/** A task's projects as a list — older tasks only have the single project_id / project_name. */
+export function taskProjectList(task: Pick<Task, "projects" | "project_id" | "project_name">): { id: string; name: string }[] {
+  if (task.projects?.length) return task.projects;
+  return task.project_id ? [{ id: task.project_id, name: task.project_name ?? "" }] : [];
 }
 
 /** Display label for a task's assignee — prefers the denormalized name,

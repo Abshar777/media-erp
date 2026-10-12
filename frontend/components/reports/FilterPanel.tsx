@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
+import { SelectField } from "@/components/ui/select-field";
 import type { ReportDimension } from "@/types/report";
 
 export const PLATFORMS = [
@@ -57,20 +58,17 @@ export function FilterPanel({
     <div className={cn("space-y-4", className)}>
       {/* Platform filter */}
       <div className="space-y-1.5">
-        <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <label htmlFor="filter-panel-platform" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Platform
         </label>
-        <select
+        <SelectField
+          id="filter-panel-platform"
+          size="sm"
           value={platform}
-          onChange={(e) => onPlatformChange(e.target.value)}
-          className="h-8 w-full max-w-xs rounded-lg border bg-background px-2.5 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
-        >
-          {PLATFORMS.map((p) => (
-            <option key={p.value} value={p.value}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+          onValueChange={(v) => onPlatformChange(v)}
+          options={PLATFORMS}
+          className="max-w-xs"
+        />
       </div>
 
       {/* Group by (dimensions) */}

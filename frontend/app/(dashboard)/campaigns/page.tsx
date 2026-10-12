@@ -13,6 +13,7 @@ import { SearchInput } from "@/components/shared/SearchInput";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
 import { Pagination } from "@/components/reports/Pagination";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/select-field";
 import { useCampaigns, useExportCsv } from "@/hooks/useReports";
 import { usePauseCampaign, useResumeCampaign, useUpdateCampaignBudget, useWriteConnectors } from "@/hooks/useCampaignWrite";
 import { useCreateBudgetGoal } from "@/hooks/useBudget";
@@ -165,13 +166,12 @@ function BudgetModal({ campaign, onClose }: BudgetModalProps) {
                 <p className="text-xs text-muted-foreground">Update the campaign daily budget directly in Facebook Ads.</p>
                 {fbConnectors.length > 1 && (
                   <div>
-                    <label className="mb-1 block text-xs font-medium">Connector</label>
-                    <select
-                      value={connectorId} onChange={e => setConnectorId(e.target.value)}
-                      className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-                    >
-                      {fbConnectors.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
+                    <label htmlFor="budget-connector" className="mb-1 block text-xs font-medium">Connector</label>
+                    <SelectField
+                      id="budget-connector"
+                      value={connectorId} onValueChange={v => setConnectorId(v)}
+                      options={fbConnectors.map(c => ({ value: c.id, label: c.name }))}
+                    />
                   </div>
                 )}
                 <div>
@@ -434,18 +434,20 @@ export default function CampaignsPage() {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <SearchInput value={search} onChange={v => { setSearch(v); setPage(1); }} placeholder="Search campaigns…" className="w-56" />
-        <select
-          value={platform} onChange={e => { setPlatform(e.target.value); setPage(1); }}
-          className="h-8 rounded-lg border bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition text-foreground"
-        >
-          {PLATFORMS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
-        <select
-          value={limit} onChange={e => { setLimit(Number(e.target.value)); setPage(1); }}
-          className="h-8 rounded-lg border bg-background px-2.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition text-foreground"
-        >
-          {[10,20,50,100].map(n => <option key={n} value={n}>{n} / page</option>)}
-        </select>
+        <SelectField
+          aria-label="Platform"
+          size="sm"
+          value={platform} onValueChange={v => { setPlatform(v); setPage(1); }}
+          options={PLATFORMS}
+          className="w-auto min-w-[9rem]"
+        />
+        <SelectField<number>
+          aria-label="Rows per page"
+          size="sm"
+          value={limit} onValueChange={v => { setLimit(v); setPage(1); }}
+          options={[10,20,50,100].map(n => ({ value: n, label: `${n} / page` }))}
+          className="w-auto min-w-[7rem]"
+        />
         {campaigns.isFetching && <RefreshCw className="size-3.5 animate-spin text-muted-foreground" />}
         <div className="ml-auto">
           <DateRangePicker

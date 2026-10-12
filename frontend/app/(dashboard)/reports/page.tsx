@@ -39,6 +39,7 @@ import { BlendBuilder }       from "@/components/reports/BlendBuilder";
 import { AttributionReport }  from "@/components/reports/AttributionReport";
 import { AnomalyPanel }       from "@/components/reports/AnomalyPanel";
 import { Button }         from "@/components/ui/button";
+import { SelectField }    from "@/components/ui/select-field";
 
 import {
   useOverview,
@@ -350,16 +351,14 @@ export default function ReportsPage() {
                 />
               </div>
               <div className="space-y-1 shrink-0">
-                <p className="text-xs text-muted-foreground">Currency</p>
-                <select
+                <p id="reports-currency-label" className="text-xs text-muted-foreground">Currency</p>
+                <SelectField<Currency>
+                  aria-labelledby="reports-currency-label"
                   value={currency}
-                  onChange={(e) => setCurrency(e.target.value as Currency)}
-                  className="rounded-xl border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-                >
-                  {SUPPORTED_CURRENCIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                  onValueChange={(v) => setCurrency(v)}
+                  options={SUPPORTED_CURRENCIES.map((c) => ({ value: c, label: c }))}
+                  className="w-auto min-w-[6rem] rounded-xl"
+                />
               </div>
             </div>
 

@@ -23,6 +23,7 @@ import {
   type FundRequest,
   type FundRequestStatus,
 } from "@/hooks/useFundRequests";
+import { SelectField } from "@/components/ui/select-field";
 import { fmtDateTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 
@@ -98,15 +99,18 @@ function RequestForm({ platforms, currency }: { platforms: string[]; currency: s
       </label>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="block space-y-1">
-          <span className="text-xs font-medium text-muted-foreground">Platform</span>
-          <select value={platform} onChange={(e) => setPlatform(e.target.value)} className={inputCls}>
-            <option value="">Choose…</option>
-            {platforms.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
-        </label>
+        <div className="block space-y-1">
+          <span id="fund-request-platform-label" className="text-xs font-medium text-muted-foreground">Platform</span>
+          <SelectField
+            aria-labelledby="fund-request-platform-label"
+            value={platform}
+            onValueChange={setPlatform}
+            options={[
+              { value: "", label: "Choose…" },
+              ...platforms.map((p) => ({ value: p, label: p })),
+            ]}
+          />
+        </div>
         <label className="block space-y-1">
           <span className="text-xs font-medium text-muted-foreground">Month</span>
           <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className={inputCls} />

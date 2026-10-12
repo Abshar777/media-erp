@@ -12,6 +12,7 @@ import { useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ArrowDownRight, ArrowUpRight, Info, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { useAdSeries } from "@/hooks/useAdReports";
 import {
   METRIC_META, addDaysISO, changePct, compactIN, dayLabel, dayLabelW, formatMetric, monthLabel, tilesFor,
@@ -119,14 +120,10 @@ export function PerformanceOverview({ report, today, renderBelow }: {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-base font-semibold">Performance overview</h3>
         <div className="flex flex-wrap items-center gap-2">
-          <select aria-label="Group by" value={granularity} onChange={(e) => setGranularity(e.target.value as AdGranularity)} className={selectCls}>
-            <option value="day">Day</option>
-            <option value="week">Week</option>
-            <option value="month">Month</option>
-          </select>
-          <select aria-label="Date range" value={rangeKey} onChange={(e) => setRangeKey(e.target.value as RangeKey)} className={selectCls}>
-            {RANGES.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
-          </select>
+          <SelectField<AdGranularity> aria-label="Group by" value={granularity} onValueChange={setGranularity} className="w-auto min-w-[6.5rem]"
+            options={[{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }]} />
+          <SelectField<RangeKey> aria-label="Date range" value={rangeKey} onValueChange={setRangeKey} className="w-auto min-w-[9.5rem]"
+            options={RANGES.map((r) => ({ value: r.key, label: r.label }))} />
           {rangeKey === "custom" && (
             <div className="flex items-center gap-1.5 text-sm">
               <input type="date" aria-label="From" value={custom.from} max={custom.to}

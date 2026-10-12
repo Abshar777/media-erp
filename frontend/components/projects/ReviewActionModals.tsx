@@ -17,7 +17,6 @@ import {
   RotateCcw,
   Loader2,
   X,
-  ChevronDown,
   Crown,
   AlertTriangle,
   Users,
@@ -28,6 +27,7 @@ import {
   Paperclip,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask } from "@/hooks/useProjects";
 import { FileUploader } from "@/components/shared/FileUploader";
@@ -311,58 +311,54 @@ export function ApproveRouteModal({
       </p>
 
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">
+        <label htmlFor="approve-route-team" className="text-sm font-medium">
           Route to team <span className="text-muted-foreground font-normal">(optional)</span>
         </label>
         <p className="text-xs text-muted-foreground">
           A copy of this task will appear in the selected team&apos;s incoming queue.
         </p>
-        <div className="relative">
-          <select
-            value={destTeamId}
-            onChange={(e) => pickTeam(e.target.value)}
-            className="w-full appearance-none rounded-lg border bg-background px-3 py-2 pr-8 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-          >
-            <option value="">No routing — approve only</option>
-            {allTeams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-        </div>
+        <SelectField
+          id="approve-route-team"
+          value={destTeamId}
+          // A native select fires only on a real change; re-picking the same
+          // team must not wipe the assignee / approver below.
+          onValueChange={(v) => { if (v !== destTeamId) pickTeam(v); }}
+          options={[
+            { value: "", label: "No routing — approve only" },
+            ...allTeams.map((t) => ({ value: t.id, label: t.name, dot: t.color || "#94a3b8" })),
+          ]}
+        />
       </div>
 
       {destTeamId && (
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">
+          <label htmlFor="approve-route-assignee" className="text-sm font-medium">
             Assign to <span className="text-muted-foreground font-normal">(optional)</span>
           </label>
           <p className="text-xs text-muted-foreground">
             Leave unset to drop it in the team&apos;s queue for any leader to pick up.
           </p>
-          <div className="relative">
-            <select
-              value={assigneeId}
-              onChange={(e) => setAssigneeId(e.target.value)}
-              disabled={membersLoading || members.length === 0}
-              className="w-full appearance-none rounded-lg border bg-background px-3 py-2 pr-8 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
-            >
-              <option value="">
-                {membersLoading
+          <SelectField
+            id="approve-route-assignee"
+            value={assigneeId}
+            onValueChange={setAssigneeId}
+            disabled={membersLoading || members.length === 0}
+            options={[
+              {
+                value: "",
+                label: membersLoading
                   ? "Loading members…"
                   : members.length === 0
                     ? "No members in this team"
-                    : "Unassigned — whole team"}
-              </option>
-              {members.map((m) => (
-                <option key={m.user_id} value={m.user_id}>
-                  {m.name}{m.role === "leader" ? " · Leader" : ""}
-                  {m.designation ? ` — ${m.designation}` : ""}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-          </div>
+                    : "Unassigned — whole team",
+              },
+              ...members.map((m) => ({
+                value: m.user_id,
+                label: m.name,
+                description: [m.role === "leader" ? "Leader" : "", m.designation].filter(Boolean).join(" · ") || undefined,
+              })),
+            ]}
+          />
           {assigneeId && members.find((m) => m.user_id === assigneeId)?.role === "leader" && (
             <p className="flex items-center gap-1 text-[11px] text-amber-600">
               <Crown className="size-3" /> Team leader
@@ -373,32 +369,27 @@ export function ApproveRouteModal({
 
       {destTeamId && (
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">
+          <label htmlFor="approve-route-approver" className="text-sm font-medium">
             Approved by <span className="text-muted-foreground font-normal">(optional)</span>
           </label>
           <p className="text-xs text-muted-foreground">
             This person may approve the routed task even if they are not a team
             leader. Leave unset and only the destination team&apos;s leaders can.
           </p>
-          <div className="relative">
-            <select
-              value={approverId}
-              onChange={(e) => setApproverId(e.target.value)}
-              disabled={membersLoading || members.length === 0}
-              className="w-full appearance-none rounded-lg border bg-background px-3 py-2 pr-8 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
-            >
-              <option value="">
-                {membersLoading ? "Loading members…" : "Team leaders only (default)"}
-              </option>
-              {members.map((m) => (
-                <option key={m.user_id} value={m.user_id}>
-                  {m.name}{m.role === "leader" ? " · Leader" : ""}
-                  {m.designation ? ` — ${m.designation}` : ""}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-          </div>
+          <SelectField
+            id="approve-route-approver"
+            value={approverId}
+            onValueChange={setApproverId}
+            disabled={membersLoading || members.length === 0}
+            options={[
+              { value: "", label: membersLoading ? "Loading members…" : "Team leaders only (default)" },
+              ...members.map((m) => ({
+                value: m.user_id,
+                label: m.name,
+                description: [m.role === "leader" ? "Leader" : "", m.designation].filter(Boolean).join(" · ") || undefined,
+              })),
+            ]}
+          />
           {approverId && approverId === assigneeId && (
             <p className="flex items-start gap-1 text-[11px] text-amber-600">
               <AlertTriangle className="size-3 mt-0.5 shrink-0" />

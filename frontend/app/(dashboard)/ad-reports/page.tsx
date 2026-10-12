@@ -19,6 +19,7 @@ import {
   BarChart3, BellRing, Building2, CalendarRange, ChevronRight, Flag, Loader2, Pause, PencilLine, Play, Plus, Settings2, Trash2, TrendingDown, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { istTodayKey } from "@/lib/datetime";
 import { useAdEntries, useAdReports, useAdToday, useRemindAdReport, useUpdateAdReport } from "@/hooks/useAdReports";
 import { dayLabel, formatCount, formatINR, missingPhrase, peopleLabel, teamsLabel } from "@/lib/adReports";
@@ -508,32 +509,27 @@ function AdReportsInner() {
         <div className="grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">
           {/* Rail — a dropdown below xl, where the overview needs the width */}
           <div className="xl:hidden">
-            <select aria-label="Choose a report" value={selected?.id ?? ""} onChange={(e) => choose(e.target.value)}
-              className="h-10 w-full rounded-lg border bg-background px-3 text-sm">
-              {(() => {
-                const tag = (r: AdReport) => (r.day_status === "missing" ? " — missing" : r.day_status === "due" ? " — due" : "");
+            <SelectField
+              aria-label="Choose a report"
+              size="lg"
+              value={selected?.id ?? ""}
+              onValueChange={choose}
+              options={(() => {
+                const tag = (r: AdReport) => (r.day_status === "missing" ? "Missing" : r.day_status === "due" ? "Due" : undefined);
                 const accs = reports.filter((r) => r.kind === "account").sort((x, y) => x.name.localeCompare(y.name));
                 const ids = new Set(accs.map((a) => a.id));
                 const ads = reports.filter((r) => r.kind !== "account");
                 const loose = ads.filter((r) => !r.account_id || !ids.has(r.account_id));
-                if (!accs.length) return ads.map((r) => <option key={r.id} value={r.id}>{r.name}{tag(r)}</option>);
-                return (
-                  <>
-                    {accs.map((a) => (
-                      <optgroup key={a.id} label={a.name}>
-                        <option value={a.id}>▣ {a.name} — all ads{tag(a)}</option>
-                        {ads.filter((r) => r.account_id === a.id).map((r) => <option key={r.id} value={r.id}>{"\u00a0\u00a0"}{r.name}{tag(r)}</option>)}
-                      </optgroup>
-                    ))}
-                    {loose.length > 0 && (
-                      <optgroup label="Ads without an account">
-                        {loose.map((r) => <option key={r.id} value={r.id}>{r.name}{tag(r)}</option>)}
-                      </optgroup>
-                    )}
-                  </>
-                );
+                if (!accs.length) return ads.map((r) => ({ value: r.id, label: r.name, description: tag(r) }));
+                return [
+                  ...accs.flatMap((a) => [
+                    { value: a.id, label: `${a.name} — all ads`, icon: <Building2 />, description: tag(a), group: a.name },
+                    ...ads.filter((r) => r.account_id === a.id).map((r) => ({ value: r.id, label: r.name, description: tag(r), group: a.name })),
+                  ]),
+                  ...loose.map((r) => ({ value: r.id, label: r.name, description: tag(r), group: "Ads without an account" })),
+                ];
               })()}
-            </select>
+            />
           </div>
           <ReportRail reports={reports} selectedId={selected?.id ?? null} onChoose={choose} />
 

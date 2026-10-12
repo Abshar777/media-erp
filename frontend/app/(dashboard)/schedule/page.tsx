@@ -10,6 +10,7 @@ import { toast } from "sonner";
 
 import PageHeader from "@/components/shared/PageHeader";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/select-field";
 import {
   useScheduledPosts, useCreateScheduledPost, useCancelScheduledPost,
   type ScheduledPost,
@@ -183,22 +184,20 @@ function CreateModal({ onClose }: { onClose: () => void }) {
         <div className="space-y-3">
           {/* Connector */}
           <div>
-            <label className="mb-1 block text-xs font-medium">Account</label>
+            <label htmlFor="schedule-account" className="mb-1 block text-xs font-medium">Account</label>
             {eligible.length === 0 ? (
               <p className="rounded-lg bg-amber-500/10 p-3 text-xs text-amber-600">
                 No connected Instagram or Facebook accounts found. Add a connector first.
               </p>
             ) : (
-              <select
-                value={connectorId} onChange={e => setConnectorId(e.target.value)}
-                className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring/30"
-              >
-                {eligible.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.platform.replace(/_/g, " ")})
-                  </option>
-                ))}
-              </select>
+              <SelectField
+                id="schedule-account"
+                value={connectorId} onValueChange={v => setConnectorId(v)}
+                options={eligible.map(c => ({
+                  value: c.id,
+                  label: `${c.name} (${c.platform.replace(/_/g, " ")})`,
+                }))}
+              />
             )}
           </div>
 

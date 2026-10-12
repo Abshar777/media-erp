@@ -12,8 +12,9 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { ArrowLeftRight, Loader2, X, ChevronDown, Crown } from "lucide-react";
+import { ArrowLeftRight, Loader2, X, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/select-field";
 import { useUpdateTask } from "@/hooks/useProjects";
 import { useTeam } from "@/hooks/useTeams";
 import { useAuthStore } from "@/stores/authStore";
@@ -87,30 +88,28 @@ export function TransferTaskModal({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Transfer to *</label>
-              <div className="relative">
-                <select
-                  value={toId}
-                  onChange={(e) => setToId(e.target.value)}
-                  disabled={membersLoading || candidates.length === 0}
-                  className="w-full appearance-none rounded-lg border bg-background px-3 py-2 pr-8 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
-                >
-                  <option value="">
-                    {membersLoading
+              <label htmlFor="transfer-task-to" className="text-sm font-medium">Transfer to *</label>
+              <SelectField
+                id="transfer-task-to"
+                value={toId}
+                onValueChange={setToId}
+                disabled={membersLoading || candidates.length === 0}
+                options={[
+                  {
+                    value: "",
+                    label: membersLoading
                       ? "Loading teammates…"
                       : candidates.length === 0
                         ? "No one else on this team"
-                        : "Choose a teammate…"}
-                  </option>
-                  {candidates.map((m) => (
-                    <option key={m.user_id} value={m.user_id}>
-                      {m.name}{m.role === "leader" ? " · Leader" : ""}
-                      {m.designation ? ` — ${m.designation}` : ""}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-              </div>
+                        : "Choose a teammate…",
+                  },
+                  ...candidates.map((m) => ({
+                    value: m.user_id,
+                    label: m.name,
+                    description: [m.role === "leader" ? "Leader" : "", m.designation].filter(Boolean).join(" · ") || undefined,
+                  })),
+                ]}
+              />
               {picked?.role === "leader" && (
                 <p className="flex items-center gap-1 text-[11px] text-amber-600">
                   <Crown className="size-3" /> This person leads the team.

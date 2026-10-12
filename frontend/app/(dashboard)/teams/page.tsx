@@ -9,6 +9,7 @@ import {
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SelectField } from "@/components/ui/select-field";
 import {
   useTeams, useCreateTeam, useUpdateTeam, useDeleteTeam, useAssignableUsers,
   type Team,
@@ -22,6 +23,11 @@ const TEAM_COLORS = [
   "#6366f1", "#8b5cf6", "#ec4899", "#ef4444",
   "#f97316", "#eab308", "#22c55e", "#14b8a6",
   "#06b6d4", "#3b82f6", "#a855f7", "#f43f5e",
+];
+
+const STATUS_OPTIONS: { value: "active" | "inactive"; label: string; dot: string }[] = [
+  { value: "active", label: "Active", dot: "#22c55e" },
+  { value: "inactive", label: "Inactive", dot: "#94a3b8" },
 ];
 
 // ── Create team modal ─────────────────────────────────────────────────────────
@@ -98,15 +104,13 @@ function CreateTeamModal({ onClose }: { onClose: () => void }) {
             {/* Status + Colour */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Status</label>
-                <select
+                <label htmlFor="create-team-status" className="text-sm font-medium">Status</label>
+                <SelectField<"active" | "inactive">
+                  id="create-team-status"
                   value={status}
-                  onChange={(e) => setStatus(e.target.value as "active" | "inactive")}
-                  className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
+                  onValueChange={setStatus}
+                  options={STATUS_OPTIONS}
+                />
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium flex items-center gap-1.5">
@@ -289,15 +293,13 @@ function EditTeamModal({ team, onClose }: { team: Team; onClose: () => void }) {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Status</label>
-                <select
+                <label htmlFor="edit-team-status" className="text-sm font-medium">Status</label>
+                <SelectField<"active" | "inactive">
+                  id="edit-team-status"
                   value={status}
-                  onChange={(e) => setStatus(e.target.value as "active" | "inactive")}
-                  className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
+                  onValueChange={setStatus}
+                  options={STATUS_OPTIONS}
+                />
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium flex items-center gap-1.5">

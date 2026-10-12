@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { Kanban, LayoutList, Plus, Repeat, User, Users, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/select-field";
 import { KanbanBoard } from "@/components/projects/KanbanBoard";
 import { TaskTable } from "@/components/projects/TaskTable";
 import { AddTaskModal } from "@/components/projects/AddTaskModal";
@@ -288,32 +289,34 @@ export default function ProjectsPage() {
             <>
               <div className="flex items-center gap-2">
                 <Users className="size-4 text-muted-foreground" />
-                <select
+                <SelectField
+                  aria-label="Team"
+                  size="sm"
                   value={filters.team_id || ""}
-                  onChange={e => patchFilter({ team_id: e.target.value, member_id: "" })}
-                  className="rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition min-w-[160px]"
-                >
-                  <option value="">All my tasks</option>
-                  {teams.map(t => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+                  onValueChange={v => patchFilter({ team_id: v, member_id: "" })}
+                  className="w-auto min-w-[160px]"
+                  options={[
+                    { value: "", label: "All my tasks" },
+                    ...teams.map(t => ({ value: t.id, label: t.name, dot: t.color || "#94a3b8" })),
+                  ]}
+                />
               </div>
 
               {/* Member selector — only for leaders / admins of the selected team */}
               {filters.team_id && canFilterByMember && (
                 <div className="flex items-center gap-2">
                   <UserRound className="size-4 text-muted-foreground" />
-                  <select
+                  <SelectField
+                    aria-label="Member"
+                    size="sm"
                     value={filters.member_id || ""}
-                    onChange={e => patchFilter({ member_id: e.target.value })}
-                    className="rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition min-w-[160px]"
-                  >
-                    <option value="">All members</option>
-                    {memberOptions.map(m => (
-                      <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
-                  </select>
+                    onValueChange={v => patchFilter({ member_id: v })}
+                    className="w-auto min-w-[160px]"
+                    options={[
+                      { value: "", label: "All members" },
+                      ...memberOptions.map(m => ({ value: m.id, label: m.name })),
+                    ]}
+                  />
                 </div>
               )}
 

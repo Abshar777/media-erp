@@ -19,6 +19,7 @@ from pymongo.errors import DuplicateKeyError
 COLLECTION = "task_projects"
 PLATFORMS = ("meta", "google", "snapchat", "other")
 MAX_NAME = 120
+MAX_PER_TASK = 10                 # projects one task may carry
 ELEVATED_ROLES = ("Super Admin", "Admin", "Coordinator")
 
 # (key, name, platform, group) — groups and order exactly as given.
@@ -87,6 +88,48 @@ async def list_active(db) -> list[dict]:
     return [serialize(d) for d in docs]
 
 
+def task_projects(task: dict) -> list[dict]:
+    """A task's projects as [{id, name}]. Tasks from before several were allowed only have project_id."""
+    if task.get("projects"):
+        return list(task["projects"])
+    return [{"id": task["project_id"], "name": task.get("project_name", "")}] if task.get("project_id") else []
+
+
+async def resolve_many(db, ids, already: list[dict] | None = None) -> list[dict]:
+    """
+    [{id, name}] for these project ids — de-duplicated, order kept, each active. [] for none.
+    `already` = the task's current projects (editing): those may stay even if they have
+    since been deleted, so a deleted project never blocks changing the rest of the list.
+    """
+    if ids is None:
+        return []
+    if not isinstance(ids, list):
+        raise ProjectError("Choose projects from the list.")
+    kept = {p["id"]: p.get("name", "") for p in (already or [])}
+    out, seen = [], set()
+    for pid in ids:
+        if isinstance(pid, str) and pid.strip() in kept:
+            pid = pid.strip()
+            if pid not in seen:
+                doc = await db[COLLECTION].find_one({"_id": ObjectId(pid)}, {"name": 1}) if ObjectId.is_valid(pid) else None
+                seen.add(pid)
+                out.append({"id": pid, "name": (doc or {}).get("name") or kept[pid]})
+            continue
+        doc = await resolve(db, pid)
+        if doc and str(doc["_id"]) not in seen:
+            seen.add(str(doc["_id"]))
+            out.append({"id": str(doc["_id"]), "name": doc.get("name", "")})
+    if len(out) > MAX_PER_TASK:
+        raise ProjectError(f"A task can have up to {MAX_PER_TASK} projects.")
+    return out
+
+
+def project_fields(projects: list[dict]) -> dict:
+    """What a task stores: the list, plus the first one in the single fields older screens read."""
+    first = projects[0] if projects else {"id": "", "name": ""}
+    return {"projects": projects, "project_id": first["id"], "project_name": first["name"]}
+
+
 async def resolve(db, project_id) -> dict | None:
     """The active project for this id; None for '' / None (no project). Raises on anything else."""
     pid = (project_id or "").strip() if isinstance(project_id, str) else project_id
@@ -149,9 +192,14 @@ async def _load(db, project_id: str) -> dict:
 async def list_for_manager(db) -> list[dict]:
     """Every project, archived too, with how many tasks use each."""
     docs = await db[COLLECTION].find({}).sort([("active", -1), ("group", 1), ("order", 1), ("name", 1)]).to_list(1000)
+    ids = [str(d["_id"]) for d in docs]
+    # A task counts once per project it carries — the list, or (older tasks) project_id.
     counts = {r["_id"]: r["n"] for r in await db["project_tasks"].aggregate([
-        {"$match": {"project_id": {"$in": [str(d["_id"]) for d in docs]}}},
-        {"$group": {"_id": "$project_id", "n": {"$sum": 1}}},
+        {"$match": {"$or": [{"projects.id": {"$in": ids}}, {"project_id": {"$in": ids}}]}},
+        {"$project": {"ids": {"$setUnion": [{"$ifNull": ["$projects.id", []]}, [{"$ifNull": ["$project_id", None]}]]}}},
+        {"$unwind": "$ids"},
+        {"$match": {"ids": {"$in": ids}}},
+        {"$group": {"_id": "$ids", "n": {"$sum": 1}}},
     ]).to_list(1000)}
     return [{**serialize(d), "active": bool(d.get("active", True)), "tasks": counts.get(str(d["_id"]), 0)} for d in docs]
 
@@ -203,9 +251,13 @@ async def update(db, user: dict, project_id: str, changes: dict) -> dict:
             raise ProjectError("A project with this name is already in the list.", 409)
         if "name" in upd:
             # A rename corrects the same ad account — tasks tagged with it follow.
-            await db["project_tasks"].update_many({"project_id": str(doc["_id"])}, {"$set": {"project_name": upd["name"]}})
+            pid = str(doc["_id"])
+            await db["project_tasks"].update_many({"project_id": pid}, {"$set": {"project_name": upd["name"]}})
+            await db["project_tasks"].update_many({"projects.id": pid}, {"$set": {"projects.$[p].name": upd["name"]}},
+                                                  array_filters=[{"p.id": pid}])
     doc = await db[COLLECTION].find_one({"_id": doc["_id"]})
-    n = await db["project_tasks"].count_documents({"project_id": str(doc["_id"])})
+    pid = str(doc["_id"])
+    n = await db["project_tasks"].count_documents({"$or": [{"project_id": pid}, {"projects.id": pid}]})
     return {**serialize(doc), "active": bool(doc.get("active", True)), "tasks": n}
 
 

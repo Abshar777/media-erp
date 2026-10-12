@@ -297,3 +297,100 @@ async def test_seed_backfills_name_keys_for_older_rows(w):
     await tps.ensure_seed(db)
     assert "unique_active_name" in await db[tps.COLLECTION].index_information()
     assert await db[tps.COLLECTION].count_documents({"name_key": {"$exists": False}}) == 0
+
+
+# ── Several projects on one task (team leaders / admins) ─────────────────────
+
+async def test_a_leader_can_put_several_projects_on_a_task(w):
+    call = w["call"]
+    P3 = (await projects(w))[:3]
+    ids = [p["id"] for p in P3]
+    r = await call("POST", "/api/v1/projects", "lead", json=body(w, project_ids=ids + [ids[0]]))
+    assert r.status_code == 201, r.text
+    t = r.json()["data"]
+    assert [p["id"] for p in t["projects"]] == ids, "order kept, duplicate dropped"
+    assert [p["name"] for p in t["projects"]] == [p["name"] for p in P3]
+    assert t["project_id"] == ids[0] and t["project_name"] == P3[0]["name"], "the first one feeds older screens"
+    assert (await call("POST", "/api/v1/projects", "admin", json=body(w, project_ids=ids))).status_code == 201
+    every = [p["id"] for p in await projects(w)]
+    assert (await call("POST", "/api/v1/projects", "lead", json=body(w, project_ids=every[:11]))).status_code == 422, "max 10"
+    assert (await call("POST", "/api/v1/projects", "lead", json=body(w, project_ids=[ids[0], "nope"]))).status_code == 422
+    r = await call("POST", "/api/v1/projects", "lead", json=body(w, project_ids=[]))
+    assert r.status_code == 201 and not r.json()["data"].get("projects"), "[] = no project"
+
+
+async def test_an_employee_picks_one(w):
+    call, s = w["call"], w["s"]
+    ids = [p["id"] for p in (await projects(w))[:2]]
+    own = body(w, assigned_to=s["emp"])
+    r = await call("POST", "/api/v1/projects", "emp", json={**own, "project_ids": ids})
+    assert r.status_code == 403 and "team leader" in r.json()["message"]
+    r = await call("POST", "/api/v1/projects", "emp", json={**own, "project_ids": ids[:1]})
+    assert r.status_code == 201 and r.json()["data"]["project_id"] == ids[0]
+
+
+async def test_batch_and_repeating_copies_carry_all_of_them(w):
+    call, s, db = w["call"], w["s"], w["db"]
+    ids = [p["id"] for p in (await projects(w))[3:6]]
+    r = await call("POST", "/api/v1/projects/batch", "lead", json={**body(w, project_ids=ids), "assignees": [s["emp"], s["emp2"]]})
+    assert r.status_code == 201
+    assert all([p["id"] for p in t["projects"]] == ids for t in r.json()["data"]["tasks"])
+    r = await call("POST", "/api/v1/projects/batch", "lead", json={**body(w, project_ids=ids, due_date=None),
+                   "assignees": [s["emp"]], "repeat": {"frequency": "daily", "count": 2}})
+    assert r.status_code == 201
+    assert all([p["id"] for p in t["projects"]] == ids for t in r.json()["data"]["tasks"])
+    assert (await db["recurring_tasks"].find_one({}))["project_ids"] == ids
+
+
+async def test_editing_several_projects(w):
+    call, s = w["call"], w["s"]
+    ids = [p["id"] for p in (await projects(w))[:4]]
+    tid = (await call("POST", "/api/v1/projects", "lead", json=body(w, project_ids=ids[:2]))).json()["data"]["id"]
+    r = await call("PUT", f"/api/v1/projects/{tid}", "lead", json={"project_ids": [ids[3], ids[2], ids[0]]})
+    assert r.status_code == 200 and [p["id"] for p in r.json()["data"]["projects"]] == [ids[3], ids[2], ids[0]]
+    assert r.json()["data"]["project_id"] == ids[3]
+    # The assignee (an employee) can't rework a task that has several…
+    assert (await call("PUT", f"/api/v1/projects/{tid}", "emp", json={"project_ids": [ids[1]]})).status_code == 403
+    assert (await call("PUT", f"/api/v1/projects/{tid}", "emp", json={"project_id": ""})).status_code == 403
+    # …but other edits are fine, and the projects stay.
+    r = await call("PUT", f"/api/v1/projects/{tid}", "emp", json={"description": "notes"})
+    assert r.status_code == 200 and len(r.json()["data"]["projects"]) == 3
+    r = await call("PUT", f"/api/v1/projects/{tid}", "lead", json={"project_ids": []})
+    assert r.status_code == 200 and r.json()["data"]["projects"] == [] and not r.json()["data"]["project_id"]
+    # A single-project task stays the employee's to change.
+    one = (await call("POST", "/api/v1/projects", "lead", json=body(w, project_ids=ids[:1]))).json()["data"]["id"]
+    assert (await call("PUT", f"/api/v1/projects/{one}", "emp", json={"project_ids": [ids[1]]})).status_code == 200
+    assert (await call("PUT", f"/api/v1/projects/{one}", "emp", json={"project_ids": ids[:2]})).status_code == 403
+
+
+async def test_rename_and_counts_cover_tasks_with_several(w):
+    call, db = w["call"], w["db"]
+    P = await projects(w)
+    a, b = P[0]["id"], P[1]["id"]
+    multi = (await call("POST", "/api/v1/projects", "lead", json=body(w, project_ids=[a, b]))).json()["data"]["id"]
+    await db["project_tasks"].insert_one({"title": "old shape", "project_id": b, "project_name": P[1]["name"]})
+    mgr = {x["id"]: x["tasks"] for x in (await call("GET", M, "admin", params={"manage": 1})).json()["data"]}
+    assert mgr[a] == 1 and mgr[b] == 2, mgr
+    await call("PATCH", f"{M}/{b}", "admin", json={"name": "SECOND RENAMED"})
+    t = (await call("GET", f"/api/v1/projects/{multi}", "lead")).json()["data"]
+    assert [p["name"] for p in t["projects"]] == [P[0]["name"], "SECOND RENAMED"], "renamed inside the list"
+    assert t["project_name"] == P[0]["name"], "the first one wasn't touched"
+    old = await db["project_tasks"].find_one({"title": "old shape"})
+    assert old["project_name"] == "SECOND RENAMED", "older single-project tasks follow too"
+
+
+async def test_a_deleted_project_already_on_a_task_never_blocks_editing_it(w):
+    """Found in QA: with a deleted project on it, a task's list couldn't be changed at all."""
+    call = w["call"]
+    a, b, c = [p["id"] for p in (await projects(w))[:3]]
+    tid = (await call("POST", "/api/v1/projects", "lead", json=body(w, project_ids=[a, b, c]))).json()["data"]["id"]
+    await call("DELETE", f"{M}/{b}", "admin")
+    r = await call("PUT", f"/api/v1/projects/{tid}", "lead", json={"project_ids": [a, b]})
+    assert r.status_code == 200, r.text
+    assert [p["id"] for p in r.json()["data"]["projects"]] == [a, b], "kept the deleted one, dropped another"
+    assert r.json()["data"]["projects"][1]["name"], "and still knows its name"
+    r = await call("PUT", f"/api/v1/projects/{tid}", "lead", json={"project_ids": [a]})
+    assert r.status_code == 200
+    assert (await call("PUT", f"/api/v1/projects/{tid}", "lead", json={"project_ids": [a, b]})).status_code == 422,         "once removed, a deleted project can't be added back"
+    other = (await call("POST", "/api/v1/projects", "lead", json=body(w, project_ids=[a]))).json()["data"]["id"]
+    assert (await call("PUT", f"/api/v1/projects/{other}", "lead", json={"project_ids": [a, b]})).status_code == 422,         "nor added to a task that never had it"

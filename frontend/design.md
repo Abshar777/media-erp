@@ -71,3 +71,19 @@ toast.dismiss();                           // clear all
 Position: `top-right`. Always `richColors`.
 
 ---
+
+## Dropdowns
+
+Never use a native `<select>` (Windows draws its list, unstyled). Use `SelectField` (`components/ui/select-field.tsx`):
+
+```tsx
+<SelectField value={v} onValueChange={setV} aria-label="Priority" size="sm"
+  options={[{ value: "high", label: "High", dot: "#ef4444" }]} />
+```
+
+- Sizes: `sm` (h-8, toolbars / table cells / cards), `md` (h-9, default), `lg` (h-10).
+- Use `dot` for team / status / priority colours, `description` for a second line (role, email), `group` for headings.
+- Priority dots: low `#94a3b8`, medium `#f97316`, high `#ef4444`. Status dots: `BOARD_COLUMNS[].color`.
+- Searchable / multi-pick lists stay custom (ProjectPicker, UserPicker, VerifierPicker).
+
+---

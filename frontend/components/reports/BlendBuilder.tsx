@@ -22,6 +22,7 @@ import {
 } from "recharts";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/select-field";
 import { useBlendReport } from "@/hooks/useReports";
 import type { BlendSource, BlendData, BlendSeries } from "@/hooks/useReports";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
@@ -98,16 +99,17 @@ function SourceRow({ source, index, color, onChange, onRemove, canRemove }: Sour
         <div className="size-3 rounded-full shrink-0" style={{ background: color }} />
 
         {/* Platform picker */}
-        <select
+        <SelectField
+          aria-label={`Platform for source ${index + 1}`}
           value={source.platform}
-          onChange={(e) => onChange({ ...source, platform: e.target.value })}
-          className="flex-1 rounded-xl border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-        >
-          <option value="">Select platform…</option>
-          {PLATFORMS.map((p) => (
-            <option key={p} value={p}>{platformLabel(p)}</option>
-          ))}
-        </select>
+          onValueChange={(v) => onChange({ ...source, platform: v })}
+          placeholder="Select platform…"
+          options={[
+            { value: "", label: "Select platform…" },
+            ...PLATFORMS.map((p) => ({ value: p, label: platformLabel(p) })),
+          ]}
+          className="flex-1 rounded-xl"
+        />
 
         {canRemove && (
           <button

@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Send, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { ModalShell } from "@/components/ad-reports/ModalShell";
 import { CreativeThumb } from "@/components/ad-reports/CreativeShowcase";
 import { FlagNumbers } from "@/components/ad-reports/FlagNumbers";
@@ -80,15 +81,20 @@ export function FlagAdModal({ report, open, onClose }: { report: AdReport; open:
           {/* Who */}
           <label className="space-y-1.5 text-sm font-medium">
             Send to
-            <select value={to} onChange={(e) => setTo(e.target.value)} className={cn(field, "font-normal")} required
-              aria-label="Team leader who should recreate the ad">
-              <option value="" disabled>Choose a team leader…</option>
-              {draft.recipients.map((t) => (
-                <optgroup key={t.team_id} label={t.team_name}>
-                  {t.leaders.map((l) => <option key={`${l.id}|${t.team_id}`} value={`${l.id}|${t.team_id}`}>{l.name}{l.email ? ` (${l.email})` : ""} — {t.team_name}</option>)}
-                </optgroup>
-              ))}
-            </select>
+            <SelectField
+              aria-label="Team leader who should recreate the ad"
+              className="font-normal"
+              required
+              value={to}
+              onValueChange={setTo}
+              placeholder="Choose a team leader…"
+              options={draft.recipients.flatMap((t) => t.leaders.map((l) => ({
+                value: `${l.id}|${t.team_id}`,
+                label: `${l.name} — ${t.team_name}`,
+                description: l.email || undefined,
+                group: t.team_name,
+              })))}
+            />
             {draft.recipients.length === 0 && (
               <span className="block text-xs font-normal text-muted-foreground">No other team leaders yet.</span>
             )}

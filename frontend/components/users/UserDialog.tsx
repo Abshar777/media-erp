@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, UserCog } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/select-field";
 import { useCreateUser, useUpdateUser } from "@/hooks/useUsers";
 import { useRolesSimple } from "@/hooks/useRoles";
 import { useAuthStore } from "@/stores/authStore";
@@ -157,17 +158,16 @@ export function UserDialog({ open, onClose, user }: Props) {
                     />
                   </Field>
                   <Field label="Role" required>
-                    <select
+                    <SelectField
+                      aria-label="Role"
                       value={roleId}
-                      onChange={(e) => setRoleId(e.target.value)}
-                      className={inputCls}
+                      onValueChange={setRoleId}
                       required
-                    >
-                      <option value="">Select role…</option>
-                      {assignableRoles.map((r) => (
-                        <option key={r.id} value={r.id}>{r.role_name}</option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: "", label: "Select role…" },
+                        ...assignableRoles.map((r) => ({ value: r.id, label: r.role_name })),
+                      ]}
+                    />
                   </Field>
                 </div>
 
@@ -181,14 +181,15 @@ export function UserDialog({ open, onClose, user }: Props) {
                     />
                   </Field>
                   <Field label="Status">
-                    <select
+                    <SelectField<"active" | "inactive">
+                      aria-label="Status"
                       value={status}
-                      onChange={(e) => setStatus(e.target.value as "active" | "inactive")}
-                      className={inputCls}
-                    >
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                    </select>
+                      onValueChange={setStatus}
+                      options={[
+                        { value: "active", label: "Active", dot: "#22c55e" },
+                        { value: "inactive", label: "Inactive", dot: "#94a3b8" },
+                      ]}
+                    />
                   </Field>
                 </div>
 

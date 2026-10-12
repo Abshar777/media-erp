@@ -30,8 +30,10 @@ class CreateTaskRequest(BaseModel):
     # is added — see add_task.
     verify_users: Optional[list[str]] = None
     verify_teams: Optional[list[str]] = None
-    # Which ad account the work is for — optional (task_project_service).
+    # Which ad account(s) the work is for — optional (task_project_service).
+    # project_ids: several (team leaders / admins); project_id: the older single form.
     project_id: Optional[str] = None
+    project_ids: Optional[list[str]] = None
 
 
 class RepeatSpec(BaseModel):
@@ -44,6 +46,8 @@ class RepeatSpec(BaseModel):
     # Weekly: which day (Monday 0 … Sunday 6). Monthly: which date (1–31; shorter
     # months use their last day). Omitted = the day the task is created.
     weekday: Optional[StrictInt] = None       # strict: JSON true must not become Tuesday (1)
+    # Weekly on several days (Mon 0 … Sun 6), e.g. [0, 1, 4, 6]. Wins over `weekday`.
+    weekdays: Optional[list[StrictInt]] = None
     month_day: Optional[StrictInt] = None
 
 
@@ -106,5 +110,6 @@ class UpdateTaskRequest(BaseModel):
     # approver sees what was handed in for review, not a pile mixing the task's
     # own working files with the evidence for this round.
     submission_attachments: Optional[list[Attachment]] = None
-    # Change the task's project; "" clears it.
+    # Change the task's project(s): project_ids (list, [] clears) or project_id ("" clears).
     project_id: Optional[str] = None
+    project_ids: Optional[list[str]] = None

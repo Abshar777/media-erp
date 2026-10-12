@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Search, Users, Pencil, Trash2, X, UserCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/select-field";
 import { UserDialog } from "@/components/users/UserDialog";
 import { DeleteUserDialog } from "@/components/users/DeleteUserDialog";
 import { useUsersList } from "@/hooks/useUsers";
@@ -71,26 +72,28 @@ export default function UsersPage() {
           )}
         </div>
 
-        <select
+        <SelectField
+          aria-label="Status"
           value={statusFilter}
-          onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-          className="rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none"
-        >
-          <option value="">All Status</option>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
+          onValueChange={(v) => { setStatus(v); setPage(1); }}
+          className="w-auto min-w-[8rem]"
+          options={[
+            { value: "", label: "All Status" },
+            { value: "active", label: "Active", dot: "#22c55e" },
+            { value: "inactive", label: "Inactive", dot: "#94a3b8" },
+          ]}
+        />
 
-        <select
+        <SelectField
+          aria-label="Role"
           value={roleFilter}
-          onChange={(e) => { setRoleFilter(e.target.value); setPage(1); }}
-          className="rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none"
-        >
-          <option value="">All Roles</option>
-          {roles.map((r) => (
-            <option key={r.id} value={r.id}>{r.role_name}</option>
-          ))}
-        </select>
+          onValueChange={(v) => { setRoleFilter(v); setPage(1); }}
+          className="w-auto min-w-[9rem]"
+          options={[
+            { value: "", label: "All Roles" },
+            ...roles.map((r) => ({ value: r.id, label: r.role_name })),
+          ]}
+        />
       </div>
 
       {/* Table */}

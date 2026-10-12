@@ -29,8 +29,10 @@ import { useTeams, useTeam, useAllTeams, useAssignableUsers } from "@/hooks/useT
 import { useAuthStore } from "@/stores/authStore";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import type { Task, Attachment, TaskHistoryEntry, TeamFlowStep } from "@/types/project";
-import { PRIORITY_META, BOARD_COLUMNS, assigneeLabel } from "@/types/project";
+import { PRIORITY_META, BOARD_COLUMNS, assigneeLabel, taskProjectList } from "@/types/project";
+import { useCanManageProjects } from "@/hooks/useTaskProjects";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { toast } from "sonner";
 import { fmtDateOnly, fmtDateTime } from "@/lib/datetime";
 
@@ -349,7 +351,10 @@ export function TaskDetailModal({
   const maySetApprover = !readOnly && canApprove({ team_id: task.team_id }) && !!task.team_id;
   const { data: taskTeam } = useTeam(maySetApprover ? (task.team_id ?? "") : "");
   const [approverId, setApproverId] = useState(task.approver_id ?? "");
-  const [projectId, setProjectId] = useState(task.project_id ?? "");
+  const [projectIds, setProjectIds] = useState<string[]>(() => taskProjectList(task).map((p) => p.id));
+  const multiProject = useCanManageProjects();
+  // A task with several projects is changed by team leaders / admins only (server rule too).
+  const projectsLocked = !multiProject && taskProjectList(task).length > 1;
   const [transferOpen, setTransferOpen] = useState(false);
   // Any employee may hand off a task assigned to them; leaders/admins may move
   // anyone's. Mirrors workflow.can_transfer_own_task — the server is the gate.
@@ -391,14 +396,14 @@ export function TaskDetailModal({
   }
 
   // Saved as soon as it's picked, like the approver — nothing else to confirm.
-  async function saveProject(next: string) {
-    const prev = projectId;
-    setProjectId(next);
+  async function saveProject(next: string[]) {
+    const prev = projectIds;
+    setProjectIds(next);
     try {
-      await update.mutateAsync({ id: task.id, payload: { project_id: next } });
-      toast.success(next ? "Project updated" : "Project cleared");
+      await update.mutateAsync({ id: task.id, payload: { project_ids: next } });
+      toast.success(next.length ? (next.length > 1 ? "Projects updated" : "Project updated") : "Project cleared");
     } catch {
-      setProjectId(prev);   // the server refused; don't show a state it rejected
+      setProjectIds(prev);  // the server refused; don't show a state it rejected
     }
   }
 
@@ -679,22 +684,32 @@ export function TaskDetailModal({
 
                 {/* Project (ad account) — optional */}
                 {readOnly ? (
-                  task.project_name ? (
+                  taskProjectList(task).length ? (
                     <div className="space-y-1.5">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Project</p>
-                      <p className="inline-flex max-w-full items-center gap-1.5 rounded-lg border bg-muted/30 px-2.5 py-1.5 text-sm font-medium">
-                        <FolderKanban className="size-3.5 shrink-0 text-muted-foreground" />
-                        <span className="truncate">{task.project_name}</span>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                        {taskProjectList(task).length > 1 ? "Projects" : "Project"}
                       </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {taskProjectList(task).map((p) => (
+                          <span key={p.id} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border bg-muted/30 px-2.5 py-1.5 text-sm font-medium">
+                            <FolderKanban className="size-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{p.name}</span>
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   ) : null
                 ) : (
                   <div className="space-y-1">
                     <label htmlFor="task-detail-project" className="flex items-baseline justify-between text-xs font-medium text-muted-foreground">
-                      Project <span className="text-[11px] font-normal">Optional</span>
+                      {multiProject ? "Projects" : "Project"} <span className="text-[11px] font-normal">Optional</span>
                     </label>
-                    <ProjectPicker id="task-detail-project" value={projectId} onChange={saveProject}
-                      fallbackName={task.project_name} disabled={update.isPending} />
+                    <ProjectPicker id="task-detail-project" value={projectIds} onChange={saveProject} multiple={multiProject}
+                      fallbackNames={Object.fromEntries(taskProjectList(task).map((p) => [p.id, p.name]))}
+                      disabled={update.isPending || projectsLocked} />
+                    {projectsLocked && (
+                      <p className="text-[11px] text-muted-foreground">This task has several projects — only a team leader can change them.</p>
+                    )}
                   </div>
                 )}
 
@@ -734,20 +749,21 @@ export function TaskDetailModal({
                     <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
                       Approved By
                     </p>
-                    <select
+                    <SelectField
+                      aria-label="Approved by"
                       value={approverId}
-                      onChange={(e) => saveApprover(e.target.value)}
+                      // Re-picking the current person must not fire a save (a native select wouldn't).
+                      onValueChange={(v) => { if (v !== approverId) saveApprover(v); }}
                       disabled={update.isPending}
-                      className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-60"
-                    >
-                      <option value="">Team leaders only (default)</option>
-                      {(taskTeam?.members ?? []).map((m) => (
-                        <option key={m.user_id} value={m.user_id}>
-                          {m.name}{m.role === "leader" ? " · Leader" : ""}
-                          {m.designation ? ` — ${m.designation}` : ""}
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: "", label: "Team leaders only (default)" },
+                        ...(taskTeam?.members ?? []).map((m) => ({
+                          value: m.user_id,
+                          label: m.name,
+                          description: [m.role === "leader" ? "Leader" : "", m.designation].filter(Boolean).join(" · ") || undefined,
+                        })),
+                      ]}
+                    />
                     <p className="text-[11px] text-muted-foreground">
                       Lets a chosen member approve this task. Team leaders keep
                       their approval rights either way.

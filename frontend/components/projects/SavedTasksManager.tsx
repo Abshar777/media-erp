@@ -13,6 +13,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Check, ChevronDown, Loader2, Pencil, Plus, Search, Star, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import {
   useDeleteTaskPreset, useSaveTaskPreset, useTaskPresets, useTaskSuggestions, useUpdateTaskPreset, type TaskPreset,
 } from "@/hooks/useTaskPresets";
@@ -20,6 +21,12 @@ import type { TaskPriority } from "@/types/project";
 import { useTeams } from "@/hooks/useTeams";
 
 const PRIORITY_DOT: Record<TaskPriority, string> = { low: "bg-slate-400", medium: "bg-amber-500", high: "bg-red-500" };
+const PRIORITY_SELECT_OPTIONS: { value: TaskPriority | ""; label: string; dot?: string }[] = [
+  { value: "", label: "No priority" },
+  { value: "low", label: "Low", dot: "#94a3b8" },
+  { value: "medium", label: "Medium", dot: "#f97316" },
+  { value: "high", label: "High", dot: "#ef4444" },
+];
 const field = "h-9 w-full rounded-lg border bg-background px-3 text-sm outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";
 
 export function SavedTasksManager({ teamId, teamName }: { teamId: string | null; teamName?: string }) {
@@ -84,13 +91,8 @@ export function SavedTasksManager({ teamId, teamName }: { teamId: string | null;
             <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} maxLength={2000}
               placeholder="Description to pre-fill (optional)"
               className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30" />
-            <select value={prio} onChange={(e) => setPrio(e.target.value as TaskPriority | "")} aria-label="Priority to pre-fill"
-              className={cn(field, "sm:w-36")}>
-              <option value="">No priority</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+            <SelectField<TaskPriority | ""> value={prio} onValueChange={setPrio} aria-label="Priority to pre-fill"
+              className="sm:w-36" options={PRIORITY_SELECT_OPTIONS} />
           </div>
         )}
       </form>
@@ -152,9 +154,8 @@ function PresetRow({ row }: { row: TaskPreset }) {
         <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
           <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={2} maxLength={2000} placeholder="Description (optional)"
             className="w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30" />
-          <select value={prio} onChange={(e) => setPrio(e.target.value as TaskPriority | "")} aria-label="Priority" className={cn(field, "sm:w-36")}>
-            <option value="">No priority</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
-          </select>
+          <SelectField<TaskPriority | ""> value={prio} onValueChange={setPrio} aria-label="Priority" className="sm:w-36"
+            options={PRIORITY_SELECT_OPTIONS} />
         </div>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={() => { setEditing(false); setTitle(row.title); setDesc(row.description); setPrio(row.priority ?? ""); }}

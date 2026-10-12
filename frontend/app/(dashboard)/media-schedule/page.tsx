@@ -35,6 +35,7 @@ import { useAuthStore } from "@/stores/authStore";
 import PageHeader from "@/components/shared/PageHeader";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { fmtDate as fmtDateIST } from "@/lib/datetime";
 
 // ─── constants ────────────────────────────────────────────────────────────────
@@ -361,25 +362,25 @@ function TaskModal({ onClose, teams = [], initial }: TaskModalProps) {
             value={form.description ?? ""} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
         </div>
         <div>
-          <label className={LABEL_CLS}>Team *</label>
-          <select className={INPUT_CLS} value={form.team_id}
-            onChange={(e) => setForm((f) => ({ ...f, team_id: e.target.value, assigned_to: "" }))} required>
-            <option value="">Select team</option>
-            {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
+          <label className={LABEL_CLS} htmlFor="ms-task-team">Team *</label>
+          <SelectField id="ms-task-team" value={form.team_id} required
+            onValueChange={(v) => setForm((f) => ({ ...f, team_id: v, assigned_to: "" }))}
+            placeholder="Select team"
+            options={[
+              { value: "", label: "Select team" },
+              ...teams.map((t) => ({ value: t.id, label: t.name, dot: t.color || "#94a3b8" })),
+            ]} />
         </div>
         <div>
-          <label className={LABEL_CLS}>Assign To *</label>
-          <select className={INPUT_CLS} value={form.assigned_to}
-            onChange={(e) => setForm((f) => ({ ...f, assigned_to: e.target.value }))}
-            disabled={!form.team_id} required>
-            <option value="">{form.team_id ? "Select employee" : "Select a team first"}</option>
-            {members.map((m) => (
-              <option key={m.user_id} value={m.user_id}>
-                {m.name}{m.designation ? ` — ${m.designation}` : ""}
-              </option>
-            ))}
-          </select>
+          <label className={LABEL_CLS} htmlFor="ms-task-assignee">Assign To *</label>
+          <SelectField id="ms-task-assignee" value={form.assigned_to}
+            onValueChange={(v) => setForm((f) => ({ ...f, assigned_to: v }))}
+            disabled={!form.team_id} required
+            placeholder={form.team_id ? "Select employee" : "Select a team first"}
+            options={[
+              { value: "", label: form.team_id ? "Select employee" : "Select a team first" },
+              ...members.map((m) => ({ value: m.user_id, label: m.name, description: m.designation || undefined })),
+            ]} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -633,12 +634,14 @@ function ShootingModal({ onClose, teams = [], onSave }: {
         </div>
 
         <div>
-          <label className={LABEL_CLS}>Team *</label>
-          <select className={INPUT_CLS} value={form.team_id}
-            onChange={(e) => setForm(f => ({ ...f, team_id: e.target.value, member_ids: [] }))} required>
-            <option value="">Select team</option>
-            {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
+          <label className={LABEL_CLS} htmlFor="ms-shoot-team">Team *</label>
+          <SelectField id="ms-shoot-team" value={form.team_id} required
+            onValueChange={(v) => setForm(f => ({ ...f, team_id: v, member_ids: [] }))}
+            placeholder="Select team"
+            options={[
+              { value: "", label: "Select team" },
+              ...teams.map(t => ({ value: t.id, label: t.name, dot: t.color || "#94a3b8" })),
+            ]} />
         </div>
 
         <div>
@@ -1058,8 +1061,7 @@ export default function MediaSchedulePage() {
   function openDetail(task: MediaTask) { setDetailTask(task); }
   function openEditFromDetail() { setEditTask(detailTask); setDetailTask(null); }
 
-  const selectCls =
-    "w-full sm:w-auto max-w-full min-w-0 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-ring";
+  const selectCls = "w-full sm:w-auto max-w-full min-w-0 sm:min-w-[9rem]";
 
   // ── 3-tab switcher ─────────────────────────────────────────────────────────
   const TABS = [
@@ -1126,21 +1128,19 @@ export default function MediaSchedulePage() {
 
         {!isEmployee && (
           <>
-            <select className={selectCls} value={filterTeam}
-              onChange={(e) => { setFilterTeam(e.target.value); setFilterMember(""); }}>
-              <option value="">{isLeader ? "My Teams" : "All Teams"}</option>
-              {visibleTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-            <select className={selectCls} value={filterMember}
-              onChange={(e) => setFilterMember(e.target.value)}>
-              <option value="">All Members</option>
-              {isLeader && <option value="__me__">⭐ My Tasks</option>}
-              {visibleUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}{u.designation ? ` — ${u.designation}` : ""}
-                </option>
-              ))}
-            </select>
+            <SelectField aria-label="Filter by team" className={selectCls} value={filterTeam}
+              onValueChange={(v) => { setFilterTeam(v); setFilterMember(""); }}
+              options={[
+                { value: "", label: isLeader ? "My Teams" : "All Teams" },
+                ...visibleTeams.map((t) => ({ value: t.id, label: t.name, dot: t.color || "#94a3b8" })),
+              ]} />
+            <SelectField aria-label="Filter by member" className={selectCls} value={filterMember}
+              onValueChange={setFilterMember}
+              options={[
+                { value: "", label: "All Members" },
+                ...(isLeader ? [{ value: "__me__", label: "⭐ My Tasks" }] : []),
+                ...visibleUsers.map((u) => ({ value: u.id, label: u.name, description: u.designation || undefined })),
+              ]} />
           </>
         )}
 

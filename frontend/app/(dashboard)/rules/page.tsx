@@ -19,6 +19,7 @@ import {
 import PageHeader from "@/components/shared/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { SelectField } from "@/components/ui/select-field";
 import { cn } from "@/lib/utils";
 import {
   useRules,
@@ -153,47 +154,45 @@ function RuleModal({ onClose, initial }: { onClose: () => void; initial?: Rule }
 
           {/* Connector */}
           <div>
-            <label className={labelCls}>Connector *</label>
-            <select
-              className={inputCls}
+            <label htmlFor="rule-connector" className={labelCls}>Connector *</label>
+            <SelectField
+              id="rule-connector"
+              className="rounded-md"
+              placeholder="Select connector…"
               value={form.connector_id}
-              onChange={(e) => handleConnectorChange(e.target.value)}
+              onValueChange={(v) => handleConnectorChange(v)}
               required
-            >
-              <option value="">Select connector…</option>
-              {connected.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {PLATFORM_LABELS[c.platform] ?? c.platform} — {c.name}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "", label: "Select connector…" },
+                ...connected.map((c) => ({
+                  value: c.id,
+                  label: `${PLATFORM_LABELS[c.platform] ?? c.platform} — ${c.name}`,
+                })),
+              ]}
+            />
           </div>
 
           {/* Metric + Operator + Threshold */}
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className={labelCls}>Metric</label>
-              <select
-                className={inputCls}
+              <label htmlFor="rule-metric" className={labelCls}>Metric</label>
+              <SelectField
+                id="rule-metric"
+                className="rounded-md"
                 value={form.metric}
-                onChange={(e) => setForm((f) => ({ ...f, metric: e.target.value }))}
-              >
-                {METRICS.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-              </select>
+                onValueChange={(v) => setForm((f) => ({ ...f, metric: v }))}
+                options={METRICS.map((m) => ({ value: m.value, label: m.label }))}
+              />
             </div>
             <div>
-              <label className={labelCls}>Operator</label>
-              <select
-                className={inputCls}
+              <label htmlFor="rule-operator" className={labelCls}>Operator</label>
+              <SelectField
+                id="rule-operator"
+                className="rounded-md"
                 value={form.operator}
-                onChange={(e) => setForm((f) => ({ ...f, operator: e.target.value }))}
-              >
-                {OPERATORS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
-              </select>
+                onValueChange={(v) => setForm((f) => ({ ...f, operator: v }))}
+                options={OPERATORS.map((o) => ({ value: o.value, label: o.label }))}
+              />
             </div>
             <div>
               <label className={labelCls}>Threshold</label>
@@ -210,16 +209,14 @@ function RuleModal({ onClose, initial }: { onClose: () => void; initial?: Rule }
 
           {/* Action */}
           <div>
-            <label className={labelCls}>Action when triggered</label>
-            <select
-              className={inputCls}
+            <label htmlFor="rule-action" className={labelCls}>Action when triggered</label>
+            <SelectField
+              id="rule-action"
+              className="rounded-md"
               value={form.action}
-              onChange={(e) => setForm((f) => ({ ...f, action: e.target.value }))}
-            >
-              {ACTIONS.map((a) => (
-                <option key={a.value} value={a.value}>{a.label}</option>
-              ))}
-            </select>
+              onValueChange={(v) => setForm((f) => ({ ...f, action: v }))}
+              options={ACTIONS.map((a) => ({ value: a.value, label: a.label }))}
+            />
           </div>
 
           {/* Email recipients (only when action=email) */}

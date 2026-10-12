@@ -641,3 +641,145 @@ async def test_monthly_31st_started_in_february_returns_to_the_31st(world):
         d += timedelta(days=1)
     dates = [c["recurrence"]["date"] for c in await copies(w, sid)]
     assert dates == ["2027-02-28", "2027-03-31", "2027-04-30"], dates
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Weekly on several days (2026-10-10)
+# ════════════════════════════════════════════════════════════════════════════
+
+FRI = date(2026, 10, 9)
+MON_TUE_FRI_SUN = [0, 1, 4, 6]
+
+
+def test_several_weekdays_date_engine():
+    off = rec.week_offsets(FRI, MON_TUE_FRI_SUN)
+    assert off == [0, 2, 3, 4], "Fri, Sun, Mon, Tue — counted from the Friday anchor"
+    got = [rec.occurrence_date("weekly", FRI, i, offsets=off) for i in range(9)]
+    assert [d.isoformat() for d in got] == [
+        "2026-10-09", "2026-10-11", "2026-10-12", "2026-10-13",      # Fri Sun Mon Tue
+        "2026-10-16", "2026-10-18", "2026-10-19", "2026-10-20",      # next week
+        "2026-10-23"]
+    assert all(d.weekday() in MON_TUE_FRI_SUN for d in got)
+    assert got == sorted(got) and len(set(got)) == len(got), "strictly in order, no repeats"
+    # Far ahead it is still exact (pure arithmetic, no drift): copy 400 = week 100, 1st day.
+    assert rec.occurrence_date("weekly", FRI, 400, offsets=off) == FRI + timedelta(weeks=100)
+    # One day (or none) = the plain every-7-days case, unchanged.
+    assert rec.week_offsets(FRI, [4]) is None and rec.week_offsets(FRI, None) is None
+
+
+def test_several_weekdays_first_day_is_the_soonest():
+    assert rec.first_date("weekly", FRI, weekdays=MON_TUE_FRI_SUN) == FRI, "today is one of them"
+    assert rec.first_date("weekly", FRI, weekdays=[0, 2]) == date(2026, 10, 12), "Mon is sooner than Wed"
+    assert rec.first_date("weekly", FRI, weekdays=[2, 5]) == date(2026, 10, 10), "Sat tomorrow"
+    assert rec.first_date("weekly", FRI, weekday=3, weekdays=[5]) == date(2026, 10, 10), "weekdays win"
+
+
+def test_several_weekdays_resume_lands_on_the_next_chosen_day():
+    off = rec.week_offsets(FRI, MON_TUE_FRI_SUN)
+    i = rec.first_index_on_or_after("weekly", FRI, 1, date(2026, 10, 14), offsets=off)   # a Wednesday
+    assert rec.occurrence_date("weekly", FRI, i, offsets=off) == date(2026, 10, 16), "→ Friday"
+    i = rec.first_index_on_or_after("weekly", FRI, 1, date(2026, 10, 13), offsets=off)   # a Tuesday
+    assert rec.occurrence_date("weekly", FRI, i, offsets=off) == date(2026, 10, 13), "Tuesday itself"
+    assert rec.first_index_on_or_after("weekly", FRI, 9, date(2026, 10, 10), offsets=off) == 9, "never back"
+
+
+def test_several_weekdays_validation():
+    v = rec.validate_repeat
+    assert v("weekly", 5, 0, weekdays=MON_TUE_FRI_SUN) == ""
+    assert v("weekly", 104 * 4, 0, weekdays=MON_TUE_FRI_SUN) == "", "104 weeks × 4 days"
+    assert "at most 104" in v("weekly", 104 * 4 + 1, 0, weekdays=MON_TUE_FRI_SUN)
+    assert "at most 104" in v("weekly", 105, 0, weekdays=[4]), "one day: unchanged limit"
+    for bad in ([], [7], [-1], [True], ["1"], [1.5]):
+        assert v("weekly", 5, 0, weekdays=bad) != "", bad
+    assert v("daily", 5, 0, weekdays=[1]) != "", "only for weekly"
+
+
+async def test_weekly_on_mon_tue_fri_sun(world):
+    w = world
+    r = await start(w, frequency="weekly", count=8, weekdays=[6, 0, 4, 1, 4], assignees=[w["s"]["asha"]])
+    assert r.status_code == 201, r.text
+    series = r.json()["data"]["series"]
+    assert series["weekdays"] == MON_TUE_FRI_SUN, "sorted, de-duplicated"
+    sid = series["id"]
+    for d in range(10, 32):
+        w["clock"].today = date(2026, 10, d)
+        await rec.run_due(w["db"])
+    dates = [c["recurrence"]["date"] for c in await copies(w, sid)]
+    assert dates == ["2026-10-09", "2026-10-11", "2026-10-12", "2026-10-13",
+                     "2026-10-16", "2026-10-18", "2026-10-19", "2026-10-20"]
+    s = await w["db"]["recurring_tasks"].find_one({"_id": ObjectId(sid)})
+    assert s["status"] == "completed" and s["occurrences_done"] == 8
+    assert [c["recurrence"]["index"] for c in await copies(w, sid)] == list(range(1, 9))
+
+
+async def test_several_weekdays_not_including_today_start_later(world):
+    w = world
+    r = await start(w, frequency="weekly", count=4, weekdays=[0, 2], assignees=[w["s"]["asha"]])   # Mon, Wed
+    assert r.status_code == 201, r.text
+    assert not r.json()["data"]["tasks"], "nothing today (a Friday)"
+    assert "Mon" in r.json()["message"]
+    sid = r.json()["data"]["series"]["id"]
+    for d in range(10, 23):
+        w["clock"].today = date(2026, 10, d)
+        await rec.run_due(w["db"])
+    assert [c["recurrence"]["date"] for c in await copies(w, sid)] == [
+        "2026-10-12", "2026-10-14", "2026-10-19", "2026-10-21"]
+
+
+async def test_several_weekdays_pause_resume_skips_to_the_next_chosen_day(world):
+    w, s = world, world["s"]
+    r = await start(w, frequency="weekly", count=6, weekdays=MON_TUE_FRI_SUN, assignees=[s["asha"]])
+    sid = r.json()["data"]["series"]["id"]
+    await w["call"]("PATCH", f"/api/v1/projects/recurring/{sid}", "lead", json={"action": "pause"})
+    for d in range(10, 15):
+        w["clock"].today = date(2026, 10, d)
+        await rec.run_due(w["db"])
+    w["clock"].today = date(2026, 10, 14)                         # Wednesday — not a chosen day
+    p = await w["call"]("PATCH", f"/api/v1/projects/recurring/{sid}", "lead", json={"action": "resume"})
+    assert p.status_code == 200 and p.json()["data"]["next_date"] == "2026-10-16"
+    for d in range(15, 26):
+        w["clock"].today = date(2026, 10, d)
+        await rec.run_due(w["db"])
+    assert [c["recurrence"]["date"] for c in await copies(w, sid)] == [
+        "2026-10-09", "2026-10-16", "2026-10-18", "2026-10-19", "2026-10-20", "2026-10-23"], \
+        "Sun–Tue while paused skipped; the count still reaches 6"
+
+
+async def test_one_day_in_weekdays_is_exactly_the_old_behaviour(world):
+    w = world
+    r = await start(w, frequency="weekly", count=3, weekdays=[4], assignees=[w["s"]["asha"]])
+    sid = r.json()["data"]["series"]["id"]
+    s = await w["db"]["recurring_tasks"].find_one({"_id": ObjectId(sid)})
+    assert "weekdays" not in s and s["weekday"] == 4, "stored in the older shape"
+    for d in range(10, 31):
+        w["clock"].today = date(2026, 10, d)
+        await rec.run_due(w["db"])
+    assert [c["recurrence"]["date"] for c in await copies(w, sid)] == ["2026-10-09", "2026-10-16", "2026-10-23"]
+    assert r.json()["data"]["series"]["weekdays"] == [4]
+
+
+async def test_several_weekdays_two_workers_never_duplicate(world):
+    w = world
+    r = await start(w, frequency="weekly", count=None, weekdays=MON_TUE_FRI_SUN)
+    sid = ObjectId(r.json()["data"]["series"]["id"])
+    db2 = w["client"][w["name"]]
+    for d in range(10, 21):
+        w["clock"].today = date(2026, 10, d)
+        await asyncio.gather(rec.run_due(w["db"]), rec.run_due(db2),
+                             rec.advance_series(w["db"], sid), rec.advance_series(db2, sid))
+    got = [(c["recurrence"]["date"], c["assigned_to"]) for c in await copies(w, str(sid))]
+    assert len(got) == len(set(got)), "no duplicates"
+    days = sorted({d for d, _ in got})
+    assert days == ["2026-10-09", "2026-10-11", "2026-10-12", "2026-10-13",
+                    "2026-10-16", "2026-10-18", "2026-10-19", "2026-10-20"]
+    assert len(got) == 2 * len(days), "both people, every day"
+
+
+async def test_weekdays_rejected_cleanly(world):
+    w = world
+    for bad in ([], [9], [True]):
+        r = await start(w, frequency="weekly", count=3, weekdays=bad)
+        assert r.status_code == 422, (bad, r.text)
+    r = await start(w, frequency="daily", count=3, weekdays=[1])
+    assert r.status_code == 422
+    assert await w["db"]["recurring_tasks"].count_documents({}) == 0

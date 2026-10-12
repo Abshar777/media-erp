@@ -102,14 +102,21 @@ async def raise_task(db: AsyncIOMotorDatabase, data: dict, current_user: dict) -
     # ── Project (optional) — which ad account the work is for ─────────────────
     # The name is looked up here, never taken from the request, and stored with
     # the id so the task still reads right if the project is renamed later.
+    # Several projects: team leaders and admins (task_project_service.can_manage);
+    # everyone else picks one. `project_ids` wins over the older single `project_id`.
     from app.services import task_project_service as tps
+    raw_ids, single = data.pop("project_ids", None), data.pop("project_id", None)
+    for k in ("project_name", "projects"):
+        data.pop(k, None)
     try:
-        project = await tps.resolve(db, data.pop("project_id", None))
+        projects = await tps.resolve_many(db, raw_ids if raw_ids is not None else ([single] if single else []))
     except tps.ProjectError as exc:
         raise TaskRaiseError(exc.message, exc.status_code)
-    data.pop("project_name", None)
-    if project:
-        data["project_id"], data["project_name"] = str(project["_id"]), project.get("name", "")
+    # A repeating series' copies were checked when it was set up.
+    if len(projects) > 1 and not data.get("recurrence") and not await tps.can_manage(db, current_user):
+        raise TaskRaiseError("Only a team leader can add more than one project to a task.", 403)
+    if projects:
+        data.update(tps.project_fields(projects))
 
     # ── Whoever raised the work checks the result ─────────────────────────────
     # Unless they said otherwise, the creator is named a verifier, so nothing

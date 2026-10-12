@@ -20,6 +20,7 @@ import {
   type ManagedProject, type ProjectPlatform,
 } from "@/hooks/useTaskProjects";
 import { PlatformBadge } from "./PlatformBadge";
+import { SelectField } from "@/components/ui/select-field";
 
 const PLATFORMS: { value: ProjectPlatform; label: string }[] = [
   { value: "meta", label: "Meta" }, { value: "google", label: "Google" },
@@ -247,13 +248,14 @@ function EditRow({ row, groups, onDone }: { row: ManagedProject; groups: number[
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }} className={field} />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <PlatformChips value={platform} onChange={setPlatform} />
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <label htmlFor={`project-group-${row.id}`} className="flex items-center gap-1.5 text-xs text-muted-foreground">
           Group
-          <select value={group} onChange={(e) => setGroup(Number(e.target.value))}
-            className="h-7 rounded-md border bg-background px-1.5 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring/30">
-            {groups.map((g) => <option key={g} value={g}>{g}</option>)}
-            {!groups.includes(newGroup) && <option value={newGroup}>{newGroup} (new)</option>}
-          </select>
+          <SelectField<number> id={`project-group-${row.id}`} size="sm" value={group} onValueChange={setGroup}
+            className="h-7 w-auto min-w-[5.5rem] px-2 text-foreground"
+            options={[
+              ...groups.map((g) => ({ value: g, label: String(g) })),
+              ...(!groups.includes(newGroup) ? [{ value: newGroup, label: `${newGroup} (new)` }] : []),
+            ]} />
         </label>
         <span className="ml-auto flex items-center gap-1.5">
           <button type="button" onClick={onDone} className="rounded-md px-2.5 py-1 text-xs font-medium hover:bg-muted">Cancel</button>

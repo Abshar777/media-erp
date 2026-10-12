@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SelectField } from "@/components/ui/select-field";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { useConnectors } from "@/hooks/useConnectors";
 import type { Connector } from "@/types/connector";
@@ -1180,24 +1181,26 @@ export default function SocialPage() {
             <div className="flex flex-wrap gap-3 mb-5">
               <div className="min-w-[200px] flex-1 max-w-xs">
                 <Field>
-                  <FieldLabel>Connector</FieldLabel>
-                  <select value={connectorId} onChange={(e) => handleConnectorChange(e.target.value)}
-                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
-                    <option value="">Select connector…</option>
-                    {activeConnectors.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  <FieldLabel htmlFor="social-connector">Connector</FieldLabel>
+                  <SelectField id="social-connector" value={connectorId} onValueChange={(v) => handleConnectorChange(v)}
+                    placeholder="Select connector…"
+                    options={[
+                      { value: "", label: "Select connector…" },
+                      ...activeConnectors.map((c) => ({ value: c.id, label: c.name })),
+                    ]} />
                 </Field>
               </div>
               {connectorId && platform === "facebook" && (
                 <div className="min-w-[200px] flex-1 max-w-xs">
                   <Field>
-                    <FieldLabel>Facebook Page</FieldLabel>
+                    <FieldLabel htmlFor="social-fb-page">Facebook Page</FieldLabel>
                     {pagesLoading ? <p className="text-sm text-muted-foreground py-2 px-1"><Loader2 className="size-3.5 inline animate-spin mr-1" />Loading…</p> : (
-                      <select value={pageId} onChange={(e) => setPageId(e.target.value)}
-                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
-                        <option value="">Select page…</option>
-                        {fbPages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
+                      <SelectField id="social-fb-page" value={pageId} onValueChange={(v) => setPageId(v)}
+                        placeholder="Select page…"
+                        options={[
+                          { value: "", label: "Select page…" },
+                          ...fbPages.map((p) => ({ value: p.id, label: p.name })),
+                        ]} />
                     )}
                   </Field>
                 </div>

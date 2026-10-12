@@ -9,6 +9,7 @@ import {
 import PageHeader from "@/components/shared/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
+import { SelectField } from "@/components/ui/select-field";
 import { useConnectors } from "@/hooks/useConnectors";
 import {
   useFacebookPages,
@@ -448,17 +449,17 @@ export default function SocialDMPage() {
         {/* Connector selector */}
         <div className="min-w-[200px] flex-1">
           <Field>
-            <FieldLabel>Connector</FieldLabel>
-            <select
+            <FieldLabel htmlFor="dm-connector">Connector</FieldLabel>
+            <SelectField
+              id="dm-connector"
               value={connectorId}
-              onChange={(e) => { setConnectorId(e.target.value); setAccountId(""); }}
-              className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="">Select connector…</option>
-              {activeConnectors.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+              onValueChange={(v) => { setConnectorId(v); setAccountId(""); }}
+              placeholder="Select connector…"
+              options={[
+                { value: "", label: "Select connector…" },
+                ...activeConnectors.map((c) => ({ value: c.id, label: c.name })),
+              ]}
+            />
           </Field>
         </div>
 
@@ -466,25 +467,25 @@ export default function SocialDMPage() {
         {connectorId && needsAccountPicker && (
           <div className="min-w-[200px] flex-1">
             <Field>
-              <FieldLabel>{platform === "facebook" ? "Facebook Page" : "Instagram Account"}</FieldLabel>
+              <FieldLabel htmlFor="dm-account">{platform === "facebook" ? "Facebook Page" : "Instagram Account"}</FieldLabel>
               {(platform === "facebook" ? fbPagesLoading : igAccountsLoading) ? (
                 <p className="text-sm text-muted-foreground py-2">Loading…</p>
               ) : (
-                <select
+                <SelectField
+                  id="dm-account"
                   value={accountId}
-                  onChange={(e) => setAccountId(e.target.value)}
-                  className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="">{platform === "facebook" ? "Select page…" : "Select account…"}</option>
-                  {platform === "facebook"
-                    ? fbPages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)
-                    : igAccounts.map((a) => (
-                        <option key={a.ig_id} value={a.ig_id}>
-                          {a.ig_username ? `@${a.ig_username}` : a.ig_name}
-                        </option>
-                      ))
-                  }
-                </select>
+                  onValueChange={(v) => setAccountId(v)}
+                  placeholder={platform === "facebook" ? "Select page…" : "Select account…"}
+                  options={[
+                    { value: "", label: platform === "facebook" ? "Select page…" : "Select account…" },
+                    ...(platform === "facebook"
+                      ? fbPages.map((p) => ({ value: p.id, label: p.name }))
+                      : igAccounts.map((a) => ({
+                          value: a.ig_id,
+                          label: a.ig_username ? `@${a.ig_username}` : a.ig_name,
+                        }))),
+                  ]}
+                />
               )}
             </Field>
           </div>

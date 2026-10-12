@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BarChart3, Building2, Crown, Loader2, Lock, Megaphone, Plus, Search, Settings2, Star, Users, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { ModalShell } from "./ModalShell";
 import { UserPicker } from "@/components/teams/UserPicker";
 import { useAssignableUsers, useTeams, type AssignableUser, type Team } from "@/hooks/useTeams";
@@ -321,10 +322,11 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
       ) : (
         <div className="space-y-1">
           <label className={label} htmlFor="ar-account">Account</label>
-          <select id="ar-account" value={accountId} onChange={(e) => chooseAccount(e.target.value)} className={field} disabled={!teamIds.length}>
-            <option value="">None</option>
-            {accounts.map((x) => <option key={x.id} value={x.id}>{x.name}{x.ad_account_ref ? ` · ${x.ad_account_ref}` : ""}</option>)}
-          </select>
+          <SelectField id="ar-account" value={accountId} onValueChange={chooseAccount} disabled={!teamIds.length}
+            options={[
+              { value: "", label: "None" },
+              ...accounts.map((x) => ({ value: x.id, label: x.name, icon: <Building2 />, description: x.ad_account_ref || undefined })),
+            ]} />
           <p className="text-[11px] text-muted-foreground">
             {!teamIds.length ? "Choose a team first." : accounts.length ? "Its numbers will also add up in that account." : "These teams have no ad accounts yet — None is fine."}
           </p>

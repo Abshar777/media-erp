@@ -12,16 +12,21 @@
  * will happen ("Every Friday · 5 times · 10 Oct → 7 Nov · 2 people × 5 = 10
  * tasks"), using lib/recurrence.ts — a verified mirror of the server's date
  * engine — so the dates shown are exactly the dates the scheduler will use.
+ *
+ * Weekly takes several days (Mon, Tue, Fri, Sun …) and counts in WEEKS: "for
+ * 5 weeks" on 4 days = 20 tasks. The server counts tasks, so toRepeatSpec()
+ * converts — use it to build the request.
  */
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CalendarClock, Info, Repeat } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import {
   DUE_OFFSET_OPTIONS, MAX_COUNT, WEEKDAY_LONG, WEEKDAY_SHORT, addDays, describePattern, firstDate,
-  needsMonthEndNote, occurrenceDate, ordinal, serverWeekday, shortDate, shortDateWithDay, unitFor,
+  needsMonthEndNote, occurrenceDate, ordinal, serverWeekday, shortDate, shortDateFrom, shortDateWithDay, unitFor, weekOffsets,
 } from "@/lib/recurrence";
-import type { RepeatFrequency } from "@/types/project";
+import type { RepeatFrequency, RepeatSpec } from "@/types/project";
 
 export type RepeatChoice = "once" | RepeatFrequency;
 
@@ -30,15 +35,37 @@ export interface RepeatValue {
   count: number;
   untilStopped: boolean;
   dueOffset: number;
-  /** Weekly: Monday 0 … Sunday 6. null = today's weekday. */
-  weekday: number | null;
+  /** Weekly: the chosen days, Monday 0 … Sunday 6. null = today's weekday. */
+  weekdays: number[] | null;
   /** Monthly: 1–31. null = today's date. */
   monthDay: number | null;
 }
 
 export const REPEAT_DEFAULT: RepeatValue = {
-  frequency: "once", count: 5, untilStopped: false, dueOffset: 0, weekday: null, monthDay: null,
+  frequency: "once", count: 5, untilStopped: false, dueOffset: 0, weekdays: null, monthDay: null,
 };
+
+/** Weekly: the chosen days (sorted), or today's weekday when none was picked. */
+export function chosenWeekdays(value: RepeatValue, todayISO: string): number[] {
+  return value.weekdays?.length ? [...new Set(value.weekdays)].sort((a, b) => a - b) : [serverWeekday(todayISO)];
+}
+
+/**
+ * The request's `repeat` for this value. Weekly counts weeks in the form but
+ * tasks on the server, so 5 weeks × 4 days = count 20.
+ */
+export function toRepeatSpec(value: RepeatValue, todayISO: string): RepeatSpec | null {
+  if (value.frequency === "once") return null;
+  const frequency = value.frequency as RepeatFrequency;
+  const days = frequency === "weekly" ? chosenWeekdays(value, todayISO) : null;
+  return {
+    frequency,
+    count: value.untilStopped ? null : value.count * (days ? days.length : 1),
+    due_offset_days: value.dueOffset,
+    ...(days ? { weekdays: days } : {}),
+    ...(frequency === "monthly" && value.monthDay != null ? { month_day: value.monthDay } : {}),
+  };
+}
 
 const OPTIONS: { value: RepeatChoice; label: string }[] = [
   { value: "once", label: "Once" },
@@ -66,17 +93,26 @@ export function RepeatField({ value, onChange, anchorISO, assigneeCount }: Props
   // to 1 at once, so backspacing and typing "3" produced 13.
   const [draft, setDraft] = useState<string | null>(null);
 
-  // Which weekday / date: the leader's choice, else today's.
+  // Which weekday(s) / date: the leader's choice, else today's.
   const todayISO = anchorISO;
-  const weekday = value.weekday ?? serverWeekday(todayISO);
+  const days = chosenWeekdays(value, todayISO);
   const monthDay = value.monthDay ?? Number(todayISO.slice(8, 10));
-  const startISO = firstDate(freq, todayISO, freq === "weekly" ? weekday : null, freq === "monthly" ? monthDay : null);
+  const startISO = firstDate(freq, todayISO, null, freq === "monthly" ? monthDay : null, freq === "weekly" ? days : null);
   const md = freq === "monthly" ? monthDay : null;
   const startsToday = startISO === todayISO;
+  const offsets = freq === "weekly" ? weekOffsets(startISO, days) : null;
+  // Weekly counts weeks; copies = weeks × days a week.
+  const perWeek = freq === "weekly" ? days.length : 1;
+  const copies = count * perWeek;
+  const toggleDay = (d: number) => {
+    // At least one day stays chosen: unticking the last one does nothing.
+    const next = days.includes(d) ? days.filter((x) => x !== d) : [...days, d];
+    if (next.length) set({ weekdays: next.sort((a, b) => a - b) });
+  };
 
   // Preview: the next few dates, and the last one when the series has an end.
-  const preview = [0, 1, 2].map((i) => occurrenceDate(freq, startISO, i, md));
-  const last = occurrenceDate(freq, startISO, count - 1, md);
+  const preview = [0, 1, 2].map((i) => occurrenceDate(freq, startISO, i, md, offsets));
+  const last = occurrenceDate(freq, startISO, copies - 1, md, offsets);
   const people = Math.max(assigneeCount, 1);
   const startLabel = startsToday ? `today (${shortDate(startISO)})` : shortDateWithDay(startISO);
 
@@ -126,19 +162,25 @@ export function RepeatField({ value, onChange, anchorISO, assigneeCount }: Props
               {/* Weekly: which day */}
               {freq === "weekly" && (
                 <div className="space-y-1.5">
-                  <span className="text-sm text-muted-foreground">On</span>
-                  <div role="radiogroup" aria-label="Day of the week" className="grid grid-cols-7 gap-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-sm text-muted-foreground">On</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {days.length > 1 ? `${days.length} days a week` : "Tap more days to repeat on each"}
+                    </span>
+                  </div>
+                  <div role="group" aria-label="Days of the week" className="grid grid-cols-7 gap-1">
                     {WEEKDAY_SHORT.map((d, i) => {
-                      const on = i === weekday;
+                      const on = days.includes(i);
                       const isToday = i === serverWeekday(todayISO);
+                      const onlyOne = on && days.length === 1;
                       return (
                         <button
                           key={d}
                           type="button"
-                          role="radio"
-                          aria-checked={on}
+                          aria-pressed={on}
                           aria-label={`${WEEKDAY_LONG[i]}${isToday ? " (today)" : ""}`}
-                          onClick={() => set({ weekday: i })}
+                          title={onlyOne ? "At least one day" : undefined}
+                          onClick={() => toggleDay(i)}
                           className={cn(
                             "relative rounded-lg border py-2.5 text-xs font-medium transition outline-none focus-visible:ring-2 focus-visible:ring-ring/40 sm:py-1.5",
                             on ? "border-primary bg-primary text-primary-foreground shadow-sm" : "bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
@@ -187,7 +229,7 @@ export function RepeatField({ value, onChange, anchorISO, assigneeCount }: Props
               {/* How many times */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <div className={cn("flex items-center gap-2 text-sm", value.untilStopped && "opacity-40")}>
-                  <span className="text-muted-foreground">Repeat</span>
+                  <span className="text-muted-foreground">{freq === "weekly" ? "Repeat for" : "Repeat"}</span>
                   <input
                     type="number"
                     min={1}
@@ -203,7 +245,9 @@ export function RepeatField({ value, onChange, anchorISO, assigneeCount }: Props
                     aria-label={`Number of ${unitFor(freq, 2)}`}
                     className="w-16 rounded-lg border bg-background px-2 py-1.5 text-center text-sm tabular-nums outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition disabled:cursor-not-allowed"
                   />
-                  <span className="text-muted-foreground">{count === 1 ? "time" : "times"}</span>
+                  <span className="text-muted-foreground">
+                    {freq === "weekly" ? (count === 1 ? "week" : "weeks") : count === 1 ? "time" : "times"}
+                  </span>
                 </div>
                 <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground select-none">
                   <input
@@ -219,40 +263,40 @@ export function RepeatField({ value, onChange, anchorISO, assigneeCount }: Props
               {/* When each copy is due */}
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-muted-foreground">Each copy due</span>
-                <select
+                <SelectField<number>
+                  aria-label="Each copy due"
                   value={value.dueOffset}
-                  onChange={(e) => set({ dueOffset: Number(e.target.value) })}
-                  className="rounded-lg border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition"
-                >
-                  {DUE_OFFSET_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
+                  onValueChange={(v) => set({ dueOffset: v })}
+                  className="h-auto w-auto min-w-[8.5rem] px-2.5 py-1.5"
+                  options={DUE_OFFSET_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                />
               </div>
 
               {/* Plain-English summary — exactly what will happen */}
               <div className="rounded-xl border border-primary/25 bg-primary/5 px-3.5 py-3" aria-live="polite">
                 <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                   <CalendarClock className="size-4 shrink-0 text-primary" />
-                  {describePattern(freq, startISO, md)}
+                  {describePattern(freq, startISO, md, freq === "weekly" ? days : null)}
                   <span className="text-muted-foreground">·</span>
-                  {value.untilStopped ? "until you stop it" : `${count} ${count === 1 ? "time" : "times"}`}
+                  {value.untilStopped ? "until you stop it"
+                    : freq === "weekly" ? `${count} ${count === 1 ? "week" : "weeks"}`
+                    : `${count} ${count === 1 ? "time" : "times"}`}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {value.untilStopped
                     ? <>Starts {startLabel} · next: {preview.slice(1).map(shortDate).join(", ")}…</>
-                    : count === 1
+                    : copies === 1
                     ? <>Just once, {startLabel}</>
-                    : <>{shortDate(startISO)} → {shortDate(last)}{count > 3 && <> · next: {preview.slice(1).map(shortDate).join(", ")}…</>}</>}
+                    : <>{shortDate(startISO)} → {shortDateFrom(last, startISO)}{copies > 3 && <> · next: {preview.slice(1).map(shortDate).join(", ")}…</>}</>}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {value.untilStopped
                     ? people === 1
-                      ? `One new task each ${unitFor(freq, 1)}`
-                      : `${people} people · one task each, every ${unitFor(freq, 1)}`
+                      ? perWeek > 1 ? `One new task on each chosen day` : `One new task each ${unitFor(freq, 1)}`
+                      : `${people} people · one task each, every ${perWeek > 1 ? "chosen day" : unitFor(freq, 1)}`
                     : people === 1
-                    ? `${count} ${count === 1 ? "task" : "tasks"} in total`
-                    : `${people} people × ${count} = ${people * count} tasks in total`}
+                    ? `${copies} ${copies === 1 ? "task" : "tasks"} in total${perWeek > 1 ? ` (${count} × ${perWeek} days)` : ""}`
+                    : `${people} people × ${copies} = ${people * copies} tasks in total`}
                   {value.dueOffset > 0 && <> · each due {value.dueOffset === 1 ? "the next day" : `${value.dueOffset} days later`}</>}
                 </p>
                 {needsMonthEndNote(freq, startISO, md) && (

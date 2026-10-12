@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertTriangle, ArrowUpDown, Calendar, Paperclip, Trash2, User } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { useDeleteTask, useUpdateTask } from "@/hooks/useProjects";
 import { useCanDeleteTask } from "@/hooks/useCanDeleteTask";
 import type { Task, TaskPriority, TaskStatus } from "@/types/project";
@@ -153,29 +154,35 @@ export function TaskTable({ tasks }: Props) {
 
                   {/* Status */}
                   <td className="px-4 py-3">
-                    <select
-                      value={task.status}
-                      onChange={e => changeStatus(task, e.target.value as TaskStatus)}
-                      style={colStyle}
-                      className="rounded-full px-2 py-0.5 text-[11px] font-semibold border-0 outline-none cursor-pointer"
-                    >
-                      {allowedColumns(task.status).map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-                    </select>
+                    {/* The pill colours come from the status (inline style), so they sit on a wrapper. */}
+                    <div className="inline-flex rounded-full" style={colStyle}>
+                      <SelectField<TaskStatus>
+                        aria-label="Status"
+                        size="sm"
+                        value={task.status}
+                        onValueChange={v => { if (v !== task.status) changeStatus(task, v); }}
+                        className="h-6 w-auto gap-1 rounded-full border-0 bg-transparent px-2 text-[11px] font-semibold [&>svg]:size-3"
+                        options={allowedColumns(task.status).map(c => ({ value: c.key as TaskStatus, label: c.label, dot: c.color }))}
+                      />
+                    </div>
                   </td>
 
                   {/* Priority */}
                   <td className="px-4 py-3">
-                    <select
+                    <SelectField<TaskPriority>
+                      aria-label="Priority"
+                      size="sm"
                       value={task.priority}
-                      onChange={e =>
-                        updateTask.mutate({ id: task.id, payload: { priority: e.target.value as TaskPriority } })
-                      }
-                      className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold border-0 outline-none cursor-pointer", pri.color)}
-                    >
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                      <option value="high">High</option>
-                    </select>
+                      onValueChange={v => {
+                        if (v !== task.priority) updateTask.mutate({ id: task.id, payload: { priority: v } });
+                      }}
+                      className={cn("h-6 w-auto gap-1 rounded-full border-0 px-2 text-[11px] font-semibold [&>svg]:size-3", pri.color)}
+                      options={[
+                        { value: "low", label: "Low", dot: "#94a3b8" },
+                        { value: "medium", label: "Medium", dot: "#f97316" },
+                        { value: "high", label: "High", dot: "#ef4444" },
+                      ]}
+                    />
                   </td>
 
                   {/* Assigned to */}

@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { useRecurringList, useUpdateRecurring } from "@/hooks/useRecurring";
 import { useAssignableUsers } from "@/hooks/useTeams";
 import { UserPicker } from "@/components/teams/UserPicker";
+import { SelectField } from "@/components/ui/select-field";
 import { DUE_OFFSET_OPTIONS, describePattern, shortDateWithDay, addDays } from "@/lib/recurrence";
 import { istTodayKey } from "@/lib/datetime";
 import type { RecurringSeries, TaskPriority } from "@/types/project";
@@ -52,8 +53,10 @@ export function RecurringDrawer({ open, onClose, focusId }: Props) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    // window, not document: a dropdown inside handles Esc on document and stops it
+    // there, so Esc closes the dropdown without also closing the drawer.
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
   const counts = useMemo(() => ({
@@ -161,7 +164,7 @@ function SeriesCard({ s, focused }: { s: RecurringSeries; focused: boolean }) {
           {s.assignees.length > 3 ? ` +${s.assignees.length - 3}` : ""}
         </span>
         <span>·</span>
-        <span>{describePattern(s.frequency, s.anchor_date, s.month_day)}</span>
+        <span>{describePattern(s.frequency, s.anchor_date, s.month_day, s.weekdays)}</span>
         {s.status === "active" && <><span>·</span><span>next: <b className="font-medium text-foreground">{nextLabel(s.next_date)}</b></span></>}
       </div>
 
@@ -262,14 +265,16 @@ function EditForm({ s, onDone }: { s: RecurringSeries; onDone: () => void }) {
       <p className="text-[11px] text-muted-foreground">Changes apply to future copies. Copies already created stay as they are.</p>
       <input value={title} onChange={(e) => setTitle(e.target.value)} className={field} aria-label="Title" />
       <div className="grid grid-cols-2 gap-2">
-        <select value={priority} onChange={(e) => setPriority(e.target.value as TaskPriority)} className={field} aria-label="Priority">
-          <option value="low">Low priority</option>
-          <option value="medium">Medium priority</option>
-          <option value="high">High priority</option>
-        </select>
-        <select value={due} onChange={(e) => setDue(Number(e.target.value))} className={field} aria-label="Each copy due">
-          {DUE_OFFSET_OPTIONS.map((o) => <option key={o.value} value={o.value}>Due: {o.label.toLowerCase()}</option>)}
-        </select>
+        <SelectField<TaskPriority> value={priority} onValueChange={setPriority} aria-label="Priority"
+          className="h-auto px-2.5 py-1.5"
+          options={[
+            { value: "low", label: "Low priority", dot: "#94a3b8" },
+            { value: "medium", label: "Medium priority", dot: "#f97316" },
+            { value: "high", label: "High priority", dot: "#ef4444" },
+          ]} />
+        <SelectField<number> value={due} onValueChange={setDue} aria-label="Each copy due"
+          className="h-auto px-2.5 py-1.5"
+          options={DUE_OFFSET_OPTIONS.map((o) => ({ value: o.value, label: `Due: ${o.label.toLowerCase()}` }))} />
       </div>
       <UserPicker
         users={directory}

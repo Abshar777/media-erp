@@ -15,6 +15,25 @@ If a mistake is listed, do NOT repeat it.
 
 ## Log
 
+### 2026-10-12 · SelectField · Esc in a dropdown also closed what it sits in
+- **Bug (QA, found before release):** with the new dropdown inside an inline edit row (Projects manager → Group) or the Recurring drawer, Esc would close the list *and* the row/drawer.
+- **Root Cause:** Base UI closes the list from a `document` keydown listener. React `onKeyDown` handlers on parents run earlier (React listens on the root/portal container, below `document`), and a `document` listener registered earlier (the drawer's) runs first too.
+- **Fix:** `SelectField` handles Esc itself on the trigger and the popup while open (`preventDefault` + `stopPropagation` + close); RecurringDrawer listens on `window` like the other dialogs.
+- **How to Avoid:** For "Esc closes this", listen on `window` (not `document`). Anything that opens a nested layer must swallow its own Esc before it bubbles.
+
+### 2026-10-12 · SelectField · Colour dot invisible in the list
+- **Bug:** team/priority dots showed on the trigger but not in the options.
+- **Root Cause:** the dot is a `<span>` with `size-2` inside a non-flex `<span>` — an inline element ignores width/height.
+- **Fix:** `block size-2` on the dot.
+- **How to Avoid:** give sized decorative spans `block`/`inline-block` unless they're a flex/grid child.
+
+### 2026-10-10 · ProjectPicker · Fast "type, Enter" picked nothing
+- **Bug (QA):** clearing the search, typing a name and pressing Enter quickly sometimes ticked nothing.
+- **Root Cause:** the highlighted row was reset in an effect after render; an Enter arriving first used an index from the previous (unfiltered) results — out of range for the new ones.
+- **Fix:** reset the highlight in the search input's onChange (same update as the text), and clamp the index on Enter.
+- **How to Avoid:** keep keyboard-selection state in step with the list in the same event, not in a later effect.
+
+
 ### 2026-10-09 · Ad Reports · "+ Add team" options invisible in dark mode
 - **Bug:** The team list opened white with near-invisible light text (Windows, dark theme).
 - **Root Cause:** "+ Add team" was a transparent native `<select>` (opacity 0 over a pill). Windows draws a native option list with the select's background — transparent → white — while the text color is inherited from the dark theme (light). Nothing told the browser the page was dark (`color-scheme` unset).

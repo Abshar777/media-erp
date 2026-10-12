@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import PageHeader from "@/components/shared/PageHeader";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/select-field";
 import { cn } from "@/lib/utils";
 import {
   useClients, useAgencyStats, useCreateClient, useUpdateClient,
@@ -127,11 +128,15 @@ function ClientModal({ onClose, initial }: { onClose: () => void; initial?: Clie
               <input className={inputCls} placeholder="Acme Inc." value={form.company ?? ""} onChange={(e) => setForm((f) => ({ ...f, company: e.target.value }))} />
             </div>
             <div>
-              <label className={labelCls}>Industry</label>
-              <select className={inputCls} value={form.industry ?? ""} onChange={(e) => setForm((f) => ({ ...f, industry: e.target.value }))}>
-                <option value="">Select…</option>
-                {INDUSTRIES.map((i) => <option key={i} value={i}>{i}</option>)}
-              </select>
+              <label htmlFor="client-industry" className={labelCls}>Industry</label>
+              <SelectField
+                id="client-industry"
+                className="rounded-md"
+                placeholder="Select…"
+                value={form.industry ?? ""}
+                onValueChange={(v) => setForm((f) => ({ ...f, industry: v }))}
+                options={[{ value: "", label: "Select…" }, ...INDUSTRIES.map((i) => ({ value: i, label: i }))]}
+              />
             </div>
             <div>
               <label className={labelCls}>Email</label>
@@ -147,12 +152,18 @@ function ClientModal({ onClose, initial }: { onClose: () => void; initial?: Clie
             </div>
             {initial && (
               <div>
-                <label className={labelCls}>Status</label>
-                <select className={inputCls} value={form.status ?? "active"} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="prospect">Prospect</option>
-                </select>
+                <label htmlFor="client-status" className={labelCls}>Status</label>
+                <SelectField
+                  id="client-status"
+                  className="rounded-md"
+                  value={form.status ?? "active"}
+                  onValueChange={(v) => setForm((f) => ({ ...f, status: v }))}
+                  options={[
+                    { value: "active", label: "Active" },
+                    { value: "inactive", label: "Inactive" },
+                    { value: "prospect", label: "Prospect" },
+                  ]}
+                />
               </div>
             )}
             <div className={cn("col-span-2", initial ? "" : "")}>

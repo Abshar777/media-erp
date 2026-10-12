@@ -9,12 +9,13 @@ import { useDeleteTask, useUpdateTask } from "@/hooks/useProjects";
 import { useCanDeleteTask } from "@/hooks/useCanDeleteTask";
 import { useCanApprove } from "@/hooks/useCanApprove";
 import type { Task, TaskStatus } from "@/types/project";
-import { BOARD_COLUMNS, PRIORITY_META, allowedColumns } from "@/types/project";
+import { BOARD_COLUMNS, PRIORITY_META, allowedColumns, taskProjectList } from "@/types/project";
 import { useTaskTimer, formatSeconds, formatSecondsHMS } from "@/hooks/useTaskTimer";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { VerificationBadge } from "./VerificationBadge";
 import { RepeatBadge } from "./RepeatBadge";
 import { ApproveRouteModal, ReeditModal, SubmitReviewModal } from "./ReviewActionModals";
+import { SelectField } from "@/components/ui/select-field";
 
 interface Props {
   task: Task;
@@ -45,6 +46,7 @@ export function KanbanCard({ task, overlay = false }: Props) {
   };
 
   const deleteTask  = useDeleteTask();
+  const projectList = taskProjectList(task);
   const canDelete   = useCanDeleteTask();
   const updateTask  = useUpdateTask();
   const canApprove  = useCanApprove();
@@ -169,10 +171,12 @@ export function KanbanCard({ task, overlay = false }: Props) {
       </div>
 
       {/* Project (ad account), when the task has one — muted, one line. */}
-      {task.project_name && (
-        <p className="pl-5 mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground min-w-0" title={`Project: ${task.project_name}`}>
+      {projectList.length > 0 && (
+        <p className="pl-5 mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground min-w-0"
+          title={`Project${projectList.length > 1 ? "s" : ""}: ${projectList.map((p) => p.name).join(", ")}`}>
           <FolderKanban className="size-3 shrink-0" />
-          <span className="truncate">{task.project_name}</span>
+          <span className="truncate">{projectList[0].name}</span>
+          {projectList.length > 1 && <span className="shrink-0 font-medium">+{projectList.length - 1}</span>}
         </p>
       )}
 
@@ -237,26 +241,30 @@ export function KanbanCard({ task, overlay = false }: Props) {
 
       {/* ── Status quick-switch ── */}
       <div className="pl-5 mt-2">
-        <select
-          value={task.status}
-          onChange={(e) => handleStatusChange(e.target.value as TaskStatus)}
+        {/* Wrapper keeps the card from opening / dragging: the trigger and the
+            portalled list both bubble through React to here. */}
+        <div
           onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          disabled={reviewLocked}
           title={
             reviewLocked
               ? "Only a team leader can approve or rework this task"
               : undefined
           }
           style={{ color: accentColor }}
-          className="w-full rounded-md border-0 bg-muted/50 px-2 py-1 text-[10px] font-semibold outline-none cursor-pointer hover:bg-muted transition-colors disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {statusOptions.map((c) => (
-            <option key={c.key} value={c.key}>
-              {c.label}
-            </option>
-          ))}
-        </select>
+          <SelectField<TaskStatus>
+            aria-label="Status"
+            size="sm"
+            value={task.status}
+            onValueChange={(s) => { if (s !== task.status) handleStatusChange(s); }}
+            disabled={reviewLocked}
+            options={statusOptions.map((c) => ({ value: c.key as TaskStatus, label: c.label, dot: c.color }))}
+            className="h-6 gap-1 border-0 bg-muted/50 px-2 text-[10px] font-semibold hover:bg-muted [&>svg]:size-3"
+          />
+        </div>
       </div>
 
       {detailOpen && (

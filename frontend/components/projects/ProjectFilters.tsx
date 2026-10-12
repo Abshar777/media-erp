@@ -3,6 +3,7 @@
 import { Search, X, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 import { BOARD_COLUMNS } from "@/types/project";
 import type { DateFilterOption, ProjectFilters, TaskPriority, TaskStatus } from "@/types/project";
 
@@ -86,28 +87,32 @@ export function ProjectFiltersBar({ filters, onChange, onReset }: Props) {
       )}
 
       {/* Status filter */}
-      <select
+      <SelectField<TaskStatus | "">
+        aria-label="Status"
+        size="sm"
         value={filters.status}
-        onChange={e => onChange({ status: e.target.value as TaskStatus | "" })}
-        className="rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition text-muted-foreground"
-      >
-        <option value="">All Statuses</option>
-        {statuses.map(s => (
-          <option key={s.key} value={s.key}>{s.label}</option>
-        ))}
-      </select>
+        onValueChange={v => onChange({ status: v })}
+        className="w-auto min-w-[8.5rem] text-muted-foreground"
+        options={[
+          { value: "", label: "All Statuses" },
+          ...statuses.map(s => ({ value: s.key as TaskStatus, label: s.label, dot: s.color })),
+        ]}
+      />
 
       {/* Priority filter */}
-      <select
+      <SelectField<TaskPriority | "">
+        aria-label="Priority"
+        size="sm"
         value={filters.priority}
-        onChange={e => onChange({ priority: e.target.value as TaskPriority | "" })}
-        className="rounded-lg border bg-background px-3 py-2 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 transition text-muted-foreground"
-      >
-        <option value="">All Priorities</option>
-        <option value="low">Low</option>
-        <option value="medium">Medium</option>
-        <option value="high">High</option>
-      </select>
+        onValueChange={v => onChange({ priority: v })}
+        className="w-auto min-w-[8rem] text-muted-foreground"
+        options={[
+          { value: "", label: "All Priorities" },
+          { value: "low", label: "Low", dot: "#94a3b8" },
+          { value: "medium", label: "Medium", dot: "#f97316" },
+          { value: "high", label: "High", dot: "#ef4444" },
+        ]}
+      />
 
       {/* Reset */}
       {hasActive && (

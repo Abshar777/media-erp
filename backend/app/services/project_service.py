@@ -357,7 +357,7 @@ async def create_task(db: AsyncIOMotorDatabase, data: dict) -> dict:
     # Absent, not null, on ordinary tasks — so their documents keep exactly the
     # shape they always had, and the partial unique index on recurrence ignores them.
     #   project_*  — the ad account the work is for (optional, task_project_service)
-    for key in ("recurrence", "batch_id", "project_id", "project_name"):
+    for key in ("recurrence", "batch_id", "project_id", "project_name", "projects"):
         if data.get(key):
             doc[key] = data[key]
     result = await db["project_tasks"].insert_one(doc)

@@ -14,6 +14,12 @@ If a mistake is listed here, do NOT repeat it.
 
 ## Log
 
+### 2026-10-10 · Task projects · A deleted project on a task blocked editing its list
+- **Bug (QA):** once a project on a task was deleted (archived), a leader couldn't change that task's projects at all — the picker sends the whole list, and the deleted id made the server refuse every edit ("no longer available").
+- **Fix:** `resolve_many(db, ids, already=task_projects(current))` — ids already on the task stay even if deleted (current name kept); adding a deleted project is still refused. Test: `test_a_deleted_project_already_on_a_task_never_blocks_editing_it` (fails without the fix).
+- **How to Avoid:** when an edit re-sends a whole list, validate only what's being added; what's already there may have changed state since.
+
+
 ### 2026-10-09 · Task projects · Simultaneous adds made duplicate names
 - **Bug (QA):** 8 admins adding the same project name at the same instant → 6 copies (two renames to one name could do the same).
 - **Root Cause:** "is this name taken?" was checked, then the insert ran — a check-then-act race; nothing in the database enforced it.

@@ -22,6 +22,7 @@ import {
   type MemberPerf, type ApproverPerf, type VerifierPerf, type TeamPerf, type PerfRole,
 } from "@/hooks/usePerformance";
 import { cn } from "@/lib/utils";
+import { SelectField } from "@/components/ui/select-field";
 
 const RANGES = [
   { id: "",      label: "All time" },
@@ -579,16 +580,16 @@ export default function PerformancePage() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-muted/20 px-3 py-2.5">
-        <select
+        <SelectField
+          aria-label="Team"
           value={teamId}
-          onChange={(e) => setTeamId(e.target.value)}
-          className="min-w-[160px] rounded-lg border bg-background px-3 py-1.5 text-sm outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
-        >
-          <option value="">All teams</option>
-          {teams.map((t) => (
-            <option key={t.id} value={t.id}>{t.name}</option>
-          ))}
-        </select>
+          onValueChange={setTeamId}
+          className="w-auto min-w-[160px]"
+          options={[
+            { value: "", label: "All teams" },
+            ...teams.map((t) => ({ value: t.id, label: t.name, dot: t.color || "#94a3b8" })),
+          ]}
+        />
 
         <div className="flex gap-1 rounded-lg border bg-background p-0.5">
           {RANGES.map((r) => (
@@ -650,24 +651,26 @@ export default function PerformancePage() {
         </div>
 
         {/* Which of the three tables to show */}
-        <select
+        <SelectField<SectionId>
+          aria-label="Which tables to show"
+          size="sm"
           value={section}
-          onChange={(e) => setSection(e.target.value as SectionId)}
-          className="rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
-        >
-          {SECTIONS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
-        </select>
+          onValueChange={setSection}
+          className="w-auto min-w-[7.5rem]"
+          options={SECTIONS.map((x) => ({ value: x.id, label: x.label }))}
+        />
 
         {/* Sort */}
         <div className="flex items-center gap-1.5">
           <ArrowUpDown className="size-3.5 text-muted-foreground" />
-          <select
+          <SelectField<SortId>
+            aria-label="Sort"
+            size="sm"
             value={sort}
-            onChange={(e) => setSort(e.target.value as SortId)}
-            className="rounded-lg border bg-background px-2.5 py-1.5 text-xs outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
-          >
-            {SORTS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
-          </select>
+            onValueChange={setSort}
+            className="w-auto min-w-[8.5rem]"
+            options={SORTS.map((x) => ({ value: x.id, label: x.label }))}
+          />
         </div>
 
         <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">

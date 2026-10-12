@@ -10,6 +10,7 @@ import {
   MessageSquare, Eye, AlertTriangle, TrendingDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/ui/select-field";
 import {
   useLeaderQueue,
   useUpdateTask,
@@ -252,16 +253,19 @@ function AssignCard({
             <RotateCcw className="size-3.5 mr-1" /> Reedit
           </Button>
           <div className="flex flex-1 gap-2 min-w-0">
-            <select
+            <SelectField
+              aria-label="Assign to"
+              size="sm"
               value={memberId}
-              onChange={(e) => setMemberId(e.target.value)}
-              className="flex-1 min-w-0 rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-            >
-              <option value="">Assign to…</option>
-              {team?.members.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}{m.role === "leader" ? " (leader)" : ""}</option>
-              ))}
-            </select>
+              onValueChange={setMemberId}
+              className="flex-1 min-w-0"
+              options={[
+                { value: "", label: "Assign to…" },
+                ...(team?.members ?? []).map((m) => ({
+                  value: m.id, label: m.name, description: m.role === "leader" ? "Leader" : undefined,
+                })),
+              ]}
+            />
             <Button size="sm" onClick={assign} disabled={!memberId || update.isPending}>
               {update.isPending ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
             </Button>
@@ -351,18 +355,19 @@ function ReeditCard({ task, team }: { task: Task; team?: LeaderTeam }) {
           >
             <Eye className="size-3.5" /> View
           </Button>
-          <select
+          <SelectField
+            aria-label="Assign to"
+            size="sm"
             value={memberId}
-            onChange={(e) => setMemberId(e.target.value)}
-            className="flex-1 rounded-lg border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-          >
-            <option value="">Assign to…</option>
-            {team?.members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}{m.role === "leader" ? " (leader)" : ""}
-              </option>
-            ))}
-          </select>
+            onValueChange={setMemberId}
+            className="flex-1"
+            options={[
+              { value: "", label: "Assign to…" },
+              ...(team?.members ?? []).map((m) => ({
+                value: m.id, label: m.name, description: m.role === "leader" ? "Leader" : undefined,
+              })),
+            ]}
+          />
           <Button
             size="sm"
             onClick={assign}
@@ -543,30 +548,34 @@ export default function LeaderPage() {
             />
           </div>
 
-          <select
+          <SelectField
+            aria-label="Priority"
             value={qFilters.priority ?? ""}
-            onChange={(e) => setQFilters((f) => ({ ...f, priority: e.target.value }))}
-            className="rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-          >
-            <option value="">All Priorities</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
+            onValueChange={(v) => setQFilters((f) => ({ ...f, priority: v }))}
+            className="w-auto min-w-[9rem]"
+            options={[
+              { value: "", label: "All Priorities" },
+              { value: "high", label: "High", dot: "#ef4444" },
+              { value: "medium", label: "Medium", dot: "#f97316" },
+              { value: "low", label: "Low", dot: "#94a3b8" },
+            ]}
+          />
 
           {/* Only meaningful on Assign Work, and only while "Assigned to me" is
               off — that scope already means assigned, so offering
               "Unassigned only" alongside it just contradicts itself. */}
           {tab === "assign" && qFilters.scope !== "assigned_to_me" && (
-            <select
+            <SelectField
+              aria-label="Assignment"
               value={qFilters.assigned ?? ""}
-              onChange={(e) => setQFilters((f) => ({ ...f, assigned: e.target.value }))}
-              className="rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-            >
-              <option value="">Unassigned only</option>
-              <option value="assigned">Already assigned</option>
-              <option value="all">All work</option>
-            </select>
+              onValueChange={(v) => setQFilters((f) => ({ ...f, assigned: v }))}
+              className="w-auto min-w-[10rem]"
+              options={[
+                { value: "", label: "Unassigned only" },
+                { value: "assigned", label: "Already assigned" },
+                { value: "all", label: "All work" },
+              ]}
+            />
           )}
 
           {filtersActive && (
@@ -635,20 +644,18 @@ export default function LeaderPage() {
       {/* Team filter (review tab) */}
       {tab === "review" && teamsList.length > 1 && (
         <div className="flex items-center gap-2.5">
-          <span className="text-sm text-muted-foreground shrink-0">Team</span>
-          <div className="relative">
-            <select
-              value={selectedTeamId}
-              onChange={(e) => setSelectedTeamId(e.target.value)}
-              className="appearance-none rounded-lg border bg-card px-3 py-1.5 pr-8 text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/30 cursor-pointer"
-            >
-              <option value="">All teams</option>
-              {teamsList.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-          </div>
+          <span id="leader-team-filter-label" className="text-sm text-muted-foreground shrink-0">Team</span>
+          <SelectField
+            aria-labelledby="leader-team-filter-label"
+            size="sm"
+            value={selectedTeamId}
+            onValueChange={setSelectedTeamId}
+            className="w-auto min-w-[10rem] bg-card"
+            options={[
+              { value: "", label: "All teams" },
+              ...teamsList.map((t) => ({ value: t.id, label: t.name, dot: t.color || "#94a3b8" })),
+            ]}
+          />
           {selectedTeamId && (
             <button
               onClick={() => setSelectedTeamId("")}

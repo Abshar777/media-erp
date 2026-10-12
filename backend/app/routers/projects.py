@@ -569,7 +569,7 @@ async def add_task_batch(
     # ── Repeating ─────────────────────────────────────────────────────────────
     if body.repeat:
         r = body.repeat
-        msg = rec.validate_repeat(r.frequency, r.count, r.due_offset_days, r.weekday, r.month_day)
+        msg = rec.validate_repeat(r.frequency, r.count, r.due_offset_days, r.weekday, r.month_day, r.weekdays)
         if msg:
             return error_response(msg, status_code=422)
         if not (template.get("title") or "").strip():
@@ -578,7 +578,7 @@ async def add_task_batch(
             return error_response("Only a team leader can set up repeating tasks.", status_code=403)
 
         today = rec.today_ist()
-        starts = rec.first_date(r.frequency, today, r.weekday, r.month_day)
+        starts = rec.first_date(r.frequency, today, r.weekday, r.month_day, r.weekdays)
         if starts > today:
             # Nothing is created today, so check now what the first copy would
             # trip over later (raise_task's approver rule) rather than letting the
@@ -593,7 +593,7 @@ async def add_task_batch(
 
         series, result = await rec.create_series(
             db, template, assignees, r.frequency, r.count, r.due_offset_days, current_user,
-            weekday=r.weekday, month_day=r.month_day,
+            weekday=r.weekday, month_day=r.month_day, weekdays=r.weekdays,
         )
         if not result["created"] and starts > today:
             return success_response(
@@ -1043,22 +1043,13 @@ async def edit_task(
     verify_users  = updates.pop("verify_users", None)
     verify_teams  = updates.pop("verify_teams", None)
     project_id    = updates.pop("project_id", None)
+    project_ids   = updates.pop("project_ids", None)
 
     try:
         oid = ObjectId(task_id)
     except InvalidId:
         return error_response("Invalid task ID", status_code=422)
 
-    # Project: "" clears it; an id is checked and its current name stored.
-    # (Empty strings rather than $unset — update_task only $sets.)
-    if project_id is not None:
-        from app.services import task_project_service as tps
-        try:
-            project = await tps.resolve(db, project_id)
-        except tps.ProjectError as exc:
-            return error_response(exc.message, status_code=exc.status_code)
-        updates["project_id"] = str(project["_id"]) if project else ""
-        updates["project_name"] = project.get("name", "") if project else ""
     current = await db["project_tasks"].find_one({"_id": oid})
     if not current:
         return error_response("Task not found", status_code=404)
@@ -1067,6 +1058,20 @@ async def edit_task(
     # could previously rename or re-status any task by its id.
     if not await _can_view_task(db, current_user, current):
         return error_response("You don't have access to this task", status_code=403)
+
+    # Projects: project_ids ([] clears) or the older single project_id ("" clears).
+    # Several — setting them, or touching a task that already has several — is
+    # for team leaders and admins. (Empty values rather than $unset: update_task only $sets.)
+    if project_ids is not None or project_id is not None:
+        from app.services import task_project_service as tps
+        try:
+            projects = await tps.resolve_many(db, project_ids if project_ids is not None else ([project_id] if project_id else []),
+                                              already=tps.task_projects(current))
+        except tps.ProjectError as exc:
+            return error_response(exc.message, status_code=exc.status_code)
+        if (len(projects) > 1 or len(tps.task_projects(current)) > 1) and not await tps.can_manage(db, current_user):
+            return error_response("Only a team leader can change a task's projects when there's more than one.", status_code=403)
+        updates.update(tps.project_fields(projects))
     cur_status = current.get("status", "pending")
 
     # Enforce the workflow state machine on any status change
