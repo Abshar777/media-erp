@@ -10,6 +10,7 @@ import { Header } from "@/components/layout/Header";
 import PWAInstallPrompt from "@/components/PWAInstallPrompt";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { useNotificationSocket } from "@/hooks/useNotificationSocket";
+import { useTaskAssignedSound } from "@/hooks/useTaskAssignedSound";
 import { useOnboardingStatus, useCompleteOnboarding, useStopImpersonation } from "@/hooks/useAuth";
 import { RootPortalHistoryBridge } from "@/components/RootPortalHistoryBridge";
 
@@ -28,6 +29,8 @@ export default function DashboardLayout({
   // App-wide, so the bell reacts on every screen — the chat page's own socket
   // only exists while that page is open.
   useNotificationSocket(user?.id ?? null);
+  // "New task assigned" chime + voice (lib/taskSound) — independent of desktop permission.
+  useTaskAssignedSound(user?.id ?? null);
 
   const { data: onboardingData, isLoading: onboardingLoading } = useOnboardingStatus();
   const completeOnboarding = useCompleteOnboarding();

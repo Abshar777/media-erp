@@ -12,6 +12,7 @@ import {
   Bell, CheckCheck, RefreshCw, ServerCrash, Wifi,
   ClipboardList, Play, Coffee, Eye, CheckCircle2,
   RotateCcw, Users, Clock, Wallet, BarChart3, TriangleAlert, TrendingDown,
+  Volume2, VolumeX,
 } from "lucide-react";
 import { fadeVariants, listItemVariants, listVariants } from "@/lib/animations";
 import { useMarkAllRead, useMarkRead, useNotifications } from "@/hooks/useNotifications";
@@ -22,6 +23,9 @@ import {
   subscribeToPush,
 } from "@/lib/browserNotifications";
 import { cn } from "@/lib/utils";
+import {
+  playTaskAssigned, setTaskSoundEnabled, setTaskVoiceEnabled, taskSoundEnabled, taskVoiceEnabled, unlockAudio,
+} from "@/lib/taskSound";
 
 // ── Relative time formatter ───────────────────────────────────────────────────
 function timeAgo(iso: string): string {
@@ -160,6 +164,57 @@ function NotifRow({ item, onClose }: { item: Notification; onClose: () => void }
   );
 }
 
+// ── "New task" sound switches (per device) ────────────────────────────────────
+function Switch({ on, onChange, label, disabled }: {
+  on: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!on)}
+      className={cn(
+        "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:opacity-40",
+        on ? "bg-primary" : "bg-muted-foreground/30",
+      )}
+    >
+      <span className={cn("inline-block size-3 rounded-full bg-white shadow transition-transform", on ? "translate-x-3.5" : "translate-x-0.5")} />
+    </button>
+  );
+}
+
+function TaskSoundControls() {
+  // localStorage isn't there during SSR — read after mount.
+  const [sound, setSound] = useState(true);
+  const [voice, setVoice] = useState(true);
+  useEffect(() => {
+    setSound(taskSoundEnabled());
+    setVoice(taskVoiceEnabled());
+  }, []);
+  return (
+    <div className="flex items-center gap-2 border-t px-4 py-2 text-[11px] text-muted-foreground">
+      {sound ? <Volume2 className="size-3.5 shrink-0" /> : <VolumeX className="size-3.5 shrink-0" />}
+      <span className="mr-auto">New task sound</span>
+      <Switch label="Sound when a task is assigned to me" on={sound}
+        onChange={(v) => { setSound(v); setTaskSoundEnabled(v); }} />
+      <span className={cn(!sound && "opacity-40")}>Voice</span>
+      <Switch label="Say “New task assigned”" on={voice && sound} disabled={!sound}
+        onChange={(v) => { setVoice(v); setTaskVoiceEnabled(v); }} />
+      <button
+        type="button"
+        disabled={!sound}
+        onClick={() => { unlockAudio(); playTaskAssigned(1, { voice }); }}
+        className="rounded-md border px-1.5 py-0.5 hover:bg-muted hover:text-foreground disabled:opacity-40 transition-colors"
+      >
+        Test
+      </button>
+    </div>
+  );
+}
+
 // ── Main bell component ───────────────────────────────────────────────────────
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
@@ -223,7 +278,7 @@ export function NotificationBell() {
             initial="initial"
             animate="animate"
             exit="exit"
-            className="absolute right-0 top-10 z-50 w-80 rounded-xl border bg-card shadow-xl overflow-hidden"
+            className="fixed inset-x-2 top-16 z-50 rounded-xl border bg-card shadow-xl overflow-hidden sm:absolute sm:inset-x-auto sm:right-0 sm:top-10 sm:w-80"
           >
             {/* Header */}
             <div className="flex items-center justify-between border-b px-4 py-2.5">
@@ -300,6 +355,7 @@ export function NotificationBell() {
                 </motion.div>
               )}
             </div>
+            <TaskSoundControls />
           </motion.div>
         )}
       </AnimatePresence>

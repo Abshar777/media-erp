@@ -13,6 +13,7 @@
  */
 
 import type { NotificationType } from "@/types/notification";
+import { getAudioContext } from "@/lib/taskSound";
 
 /** Types worth interrupting someone for. Everything else stays in the bell. */
 const ALERT_TYPES = new Set<string>([
@@ -70,8 +71,6 @@ export async function requestDesktopPermission(): Promise<NotificationPermission
 
 // ── Sound ─────────────────────────────────────────────────────────────────────
 
-let audioCtx: AudioContext | null = null;
-
 /**
  * A two-note chime synthesised via WebAudio rather than shipping an asset —
  * no file to load, and nothing to 404 if the deploy misses it.
@@ -82,12 +81,9 @@ let audioCtx: AudioContext | null = null;
  */
 export function playAlertSound(): void {
   try {
-    const Ctx =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    audioCtx ??= new Ctx();
-    if (audioCtx.state === "suspended") void audioCtx.resume();
+    // Shared context — unlocked on the first click by useTaskAssignedSound.
+    const audioCtx = getAudioContext();
+    if (!audioCtx) return;
 
     const now = audioCtx.currentTime;
     [880, 1174.7].forEach((freq, i) => {
@@ -120,10 +116,12 @@ export function showDesktopNotification(n: {
   if (!isAlertType(n.type)) return;
   if (!desktopSupported() || !desktopEnabled()) return;
   if (Notification.permission !== "granted") return;
+  // A new task has its own chime + voice (useTaskAssignedSound) — never a second sound here.
+  const ownSound = n.type === "task_assigned";
 
   // Don't interrupt someone who is already looking at the app.
   if (typeof document !== "undefined" && document.visibilityState === "visible") {
-    playAlertSound();
+    if (!ownSound) playAlertSound();
     return;
   }
 
@@ -140,7 +138,7 @@ export function showDesktopNotification(n: {
       window.focus();
       notif.close();
     };
-    playAlertSound();
+    if (!ownSound) playAlertSound();
   } catch {
     /* some browsers throw when constructing off a user gesture — ignore */
   }
