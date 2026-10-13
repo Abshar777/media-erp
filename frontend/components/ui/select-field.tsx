@@ -78,6 +78,7 @@ export function SelectField<V extends Val = string>({
   disabled, id, required, className, popupClassName, invalid, ...aria
 }: Props<V>) {
   const [open, setOpen] = React.useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
   const byKey = React.useMemo(() => new Map(options.map((o) => [key(o.value), o])), [options]);
   const current = value === null || value === undefined ? null : byKey.get(key(value)) ?? null;
   const items = React.useMemo(
@@ -85,26 +86,35 @@ export function SelectField<V extends Val = string>({
     [options],
   );
 
-  // Group headings, in first-seen order; ungrouped options first.
+  // Like <optgroup>: a heading starts wherever the group changes, in option order
+  // (two groups that share a name, e.g. same-named accounts, stay separate).
   const sections = React.useMemo(() => {
     const out: { group: string | null; options: SelectOption<V>[] }[] = [];
     for (const o of options) {
       const g = o.group ?? null;
-      let s = out.find((x) => x.group === g);
-      if (!s) { s = { group: g, options: [] }; out.push(s); }
-      s.options.push(o);
+      const last = out[out.length - 1];
+      if (last && last.group === g) last.options.push(o);
+      else out.push({ group: g, options: [o] });
     }
     return out;
   }, [options]);
 
-  // Esc closes only this list. Handled on the trigger and the popup (focus can be on
-  // either), before it reaches a parent's React onKeyDown (e.g. an inline edit row)
-  // or a dialog's window listener.
-  const closeOnEscape = (e: React.KeyboardEvent) => {
-    if (!open || e.key !== "Escape" || e.nativeEvent.isComposing) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setOpen(false);
+  // Keys while the list is open (focus is on the trigger or inside the portalled popup):
+  // - Esc closes only this list, before it reaches a parent's React onKeyDown (an inline
+  //   edit row) or a dialog's window listener; focus goes back to the field.
+  // - Tab closes the list and continues from the field, so it moves to the next field
+  //   (and dialog focus traps, which only see focus inside their panel, keep working).
+  const onListKeys = (e: React.KeyboardEvent) => {
+    if (!open || e.nativeEvent.isComposing) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(false);
+      triggerRef.current?.focus();
+    } else if (e.key === "Tab") {
+      setOpen(false);
+      triggerRef.current?.focus();   // the browser's Tab then moves on from the field
+    }
   };
 
   const renderItem = (o: SelectOption<V>) => (
@@ -147,7 +157,8 @@ export function SelectField<V extends Val = string>({
       id={id}
     >
       <Select.Trigger
-        onKeyDown={closeOnEscape}
+        ref={triggerRef}
+        onKeyDown={onListKeys}
         aria-label={aria["aria-label"]}
         aria-labelledby={aria["aria-labelledby"]}
         className={cn(
@@ -169,10 +180,13 @@ export function SelectField<V extends Val = string>({
         <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-data-[popup-open]/trigger:rotate-180" />
       </Select.Trigger>
 
-      <Select.Portal>
-        <Select.Positioner sideOffset={6} align="start" alignItemWithTrigger={false} collisionPadding={12} className="z-[100] outline-none">
+      {/* The portal is the stacking layer: while a list is open Base UI adds a full-screen
+          click-catcher next to it, which must sit above dialogs (z-50 / z-60) too, or a
+          click outside the list would land on the dialog behind and e.g. close it. */}
+      <Select.Portal className="relative z-[100]">
+        <Select.Positioner sideOffset={6} align="start" alignItemWithTrigger={false} collisionPadding={12} className="outline-none">
           <Select.Popup
-            onKeyDown={closeOnEscape}
+            onKeyDown={onListKeys}
             className={cn(
               "max-h-[min(20rem,var(--available-height))] min-w-[max(var(--anchor-width),10rem)] max-w-[var(--available-width)] overflow-y-auto overscroll-contain [scrollbar-width:thin]",
               "rounded-xl border bg-popover p-1 text-popover-foreground shadow-xl shadow-black/10 outline-none dark:shadow-black/40",

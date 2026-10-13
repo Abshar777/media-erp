@@ -65,6 +65,9 @@ function BudgetModal({ campaign, onClose }: BudgetModalProps) {
   const [tab, setTab]               = useState<"goal"|"live">("goal");
 
   const fbConnectors = writeConnectors.filter(c => c.platform === "facebook_ads");
+  // "Live" updates Facebook only: use the connector shown in its picker (the first
+  // Facebook one until another is picked), never a non-Facebook default.
+  const liveConnectorId = fbConnectors.some(c => c.id === connectorId) ? connectorId : (fbConnectors[0]?.id ?? "");
 
   function handleSaveGoal() {
     const val = parseFloat(budget);
@@ -83,10 +86,10 @@ function BudgetModal({ campaign, onClose }: BudgetModalProps) {
   function handleLiveBudget() {
     const val = parseFloat(budget);
     if (!val || val <= 0) { toast.error("Enter a valid budget"); return; }
-    if (!connectorId) { toast.error("Select a connector"); return; }
+    if (!liveConnectorId) { toast.error("Select a connector"); return; }
     updateBudget.mutate({
       campaignId: campaign.campaign_id,
-      connectorId,
+      connectorId: liveConnectorId,
       dailyBudget: val,
     }, { onSuccess: onClose });
   }
@@ -169,7 +172,7 @@ function BudgetModal({ campaign, onClose }: BudgetModalProps) {
                     <label htmlFor="budget-connector" className="mb-1 block text-xs font-medium">Connector</label>
                     <SelectField
                       id="budget-connector"
-                      value={connectorId} onValueChange={v => setConnectorId(v)}
+                      value={liveConnectorId} onValueChange={v => setConnectorId(v)}
                       options={fbConnectors.map(c => ({ value: c.id, label: c.name }))}
                     />
                   </div>

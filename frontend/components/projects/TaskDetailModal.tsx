@@ -752,6 +752,9 @@ export function TaskDetailModal({
                     <SelectField
                       aria-label="Approved by"
                       value={approverId}
+                      // While the team loads (or if the approver left it) the value has no row:
+                      // show who it is rather than "Select…".
+                      placeholder={task.approver_name || "Team leaders only (default)"}
                       // Re-picking the current person must not fire a save (a native select wouldn't).
                       onValueChange={(v) => { if (v !== approverId) saveApprover(v); }}
                       disabled={update.isPending}

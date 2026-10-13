@@ -15,6 +15,18 @@ If a mistake is listed, do NOT repeat it.
 
 ## Log
 
+### 2026-10-12 · SelectField · A click outside an open list closed the dialog behind it
+- **Bug (QA):** with a dropdown open in Add Task (or any dialog), clicking the dimmed area closed the whole dialog and lost what was typed; a click on a dialog button would run it.
+- **Root Cause:** Base UI Select (modal by default) adds a full-screen click-catcher next to the list, inside the portal. Only the Positioner had `z-[100]`; the catcher had no z-index, so it sat *under* the dialog's `z-50` backdrop.
+- **Fix:** the stacking layer is the portal itself — `<Select.Portal className="relative z-[100]">`. First click outside now only closes the list (like native).
+- **How to Avoid:** when a popup library adds its own backdrop/overlay, put the z-index on the common container (portal), not on the positioned popup alone. Test "click outside while open" inside a dialog.
+
+### 2026-10-12 · SelectField · Tab from an open list jumped to the top of the dialog; Esc sometimes left focus in the closed list
+- **Bug (QA):** in Ad Reports dialogs (`ModalShell` focus trap), Tab with a list open moved focus to the dialog's first field. After Esc, focus sometimes stayed on a hidden option.
+- **Root Cause:** focus is inside the portalled popup (outside the dialog panel), so the trap treated it as "outside"; closing via our own Esc handler didn't always return focus.
+- **Fix:** Tab while open closes the list and focuses the field (no `preventDefault`, so the browser moves on from there); Esc also focuses the field.
+- **How to Avoid:** popups portalled out of a focus-trapped dialog must hand focus back to their trigger before the trap sees the key.
+
 ### 2026-10-12 · SelectField · Esc in a dropdown also closed what it sits in
 - **Bug (QA, found before release):** with the new dropdown inside an inline edit row (Projects manager → Group) or the Recurring drawer, Esc would close the list *and* the row/drawer.
 - **Root Cause:** Base UI closes the list from a `document` keydown listener. React `onKeyDown` handlers on parents run earlier (React listens on the root/portal container, below `document`), and a `document` listener registered earlier (the drawer's) runs first too.
