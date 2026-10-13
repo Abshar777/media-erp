@@ -177,6 +177,21 @@ def fmt_duration(sec: float | int | None) -> str:
     return f"{s_}s"
 
 
+def fmt_late(sec: float | int | None) -> str:
+    """"Late by" as clock time: 2d 12h 43m · 12h 05m · 43m · <1m (whole minutes, rounded down)."""
+    if sec is None:
+        return "—"
+    mins = int(sec) // 60
+    if mins < 1:
+        return "<1m"
+    d, h, m = mins // 1440, (mins % 1440) // 60, mins % 60
+    if d:
+        return f"{d}d {h}h {m:02d}m"
+    if h:
+        return f"{h}h {m:02d}m"
+    return f"{m}m"
+
+
 def _ts(v) -> datetime | None:
     """ISO string or datetime → aware UTC (naive values are UTC, as Mongo stores them)."""
     if not v:
@@ -203,12 +218,21 @@ def task_timeline(task: dict, holidays: frozenset = frozenset(), now: datetime |
                  update is used instead and flagged `completed_estimated`
       took       the task timer's tracked time (timing.total_seconds — the number the
                  Overview averages), else the raw sum of its intervals
-      late       WORKING seconds (11:00–20:30 IST, Mon–Sat, company holidays off)
-                 from the end of the due day (IST) to completion —
-                 or to now for a task that is still open ("so far")
+      handed_in  when the assignee handed the work in: the submission for review that
+                 the (last) approval belongs to — after a reedit, the resubmission —
+                 else the approval itself (no submission recorded); for a task still
+                 awaiting approval, its latest submission
+      late       CLOCK seconds (every hour — nights, Sundays and holidays count) from the
+                 end of the due day (midnight IST after it) to handed_in — or to now for
+                 work still with the assignee ("so far"). Due 9 Oct, handed in 11 Oct
+                 12:43 → 1d 12h 43m; anything handed in on the due day is on time. It is
+                 the assignee's lateness, so time the work sat with a leader (a
+                 submission until it was sent back) is NOT counted — that is the
+                 approver's turnaround on the Performance report.
+    `holidays` is kept for callers; clock time doesn't use it.
     """
-    from app.services.worktime import working_seconds
-    from datetime import time as _time, timezone as _tz
+    from app.services.performance_service import _submission_before, _submissions
+    from datetime import time as _time, timedelta as _td, timezone as _tz
     now = now or datetime.now(_tz.utc)
     hist = [(h.get("action"), _ts(h.get("timestamp"))) for h in task.get("history") or []]
     hist = [(a, t_) for a, t_ in hist if t_]
@@ -238,19 +262,46 @@ def task_timeline(task: dict, holidays: frozenset = frozenset(), now: datetime |
         took = sum(((i["ended_at"] or now) - i["started_at"]).total_seconds()
                    for i in intervals if i["started_at"])
 
+    subs = _submissions(task)
+    if completed:
+        handed_in = _submission_before(subs, completed) or completed
+    elif task.get("status") == "pending_review":
+        # Waiting on a leader. Tasks moved to review by an old status migration have
+        # no submission row: their last timer stop / update stands in for it.
+        handed_in = subs[-1] if subs else (ended or _ts(task.get("updated_at")))
+    else:
+        handed_in = None
+
+    # Spells the work spent with a leader (a submission until it was sent back /
+    # approved). Late by is the assignee's, so these are taken out of it — a task
+    # handed in on time, left in review for days, then sent back for a small fix
+    # is late only by the time the fix took.
+    review: list[tuple[datetime, datetime]] = []
+    pending_since = None
+    for a, t_ in sorted(((a, t_) for a, t_ in hist if a in ("pending_review", "reedit", "approved")),
+                        key=lambda x: x[1]):
+        if a == "pending_review":
+            pending_since = pending_since or t_
+        elif pending_since:
+            review.append((pending_since, t_))
+            pending_since = None
+
     due = _parse_day(_due_key(task))
     late = None
     late_open = False
     if due:
-        due_end = datetime.combine(due, _time.max, tzinfo=IST)
-        until = completed or (None if task.get("status") == "approved" else now)
-        if until and until > due_end:
-            late = working_seconds(due_end, until, holidays)
-            late_open = completed is None
+        due_end = datetime.combine(due + _td(days=1), _time(0), tzinfo=IST)   # midnight after the due day
+        until = handed_in or (None if task.get("status") == "approved" else now)
+        if until and until >= due_end:            # same instant Performance calls late
+            late = (until - due_end).total_seconds() - sum(
+                (min(b, until) - max(a, due_end)).total_seconds()
+                for a, b in review if b > due_end and a < until)
+            late = max(late, 0.0)
+            late_open = handed_in is None
     return {
         "assigned": last("assigned", "transferred") or _ts(task.get("created_at")),
         "due": due, "started": started, "ended": ended, "running": running, "completed": completed,
-        "completed_estimated": completed_estimated,
+        "completed_estimated": completed_estimated, "handed_in": handed_in,
         "took": took, "late": late, "late_open": late_open,
     }
 
@@ -531,7 +582,8 @@ def build_pdf(*, tasks: list[dict], heading: str, scope_line: str, period_label:
 
     story += [NextPageTemplate("landscape"), PageBreak(),
               Paragraph(f"All tasks <font size='8.5' color='#6B7280'>({total}, newest first · times in IST · "
-                        f"Late by = working hours past the due day, 11:00–20:30 Mon–Sat)</font>", s_h2)]
+                        f"Late by = time from the end of the due day to when the work was handed in "
+                        f"(submitted for approval) — waiting for approval is not counted)</font>", s_h2)]
     heads = [("", s_head), ("Task", s_head), ("Assignee", s_head), ("Assigned", s_head_r), ("Due", s_head_r),
              ("Started", s_head_r), ("Ended", s_head_r), ("Completed", s_head_r), ("Time took", s_head_r),
              ("Late by", s_head_r)]
@@ -542,9 +594,9 @@ def build_pdf(*, tasks: list[dict], heading: str, scope_line: str, period_label:
         estimated += tl["completed_estimated"]
         status = _STATUS_LABEL.get(x_.get("status"), x_.get("status") or "")
         if tl["late"] is not None:
-            late = (f"<font color='#DC2626'><b>{fmt_duration(tl['late'])}</b></font>"
+            late = (f"<font color='#DC2626'><b>{fmt_late(tl['late'])}</b></font>"
                     + ("<br/><font size='6.5' color='#9CA3AF'>so far</font>" if tl["late_open"] else ""))
-        elif tl["completed"] and tl["due"]:
+        elif tl["handed_in"] and tl["due"]:
             late = "<font color='#16A34A'>On time</font>"
         else:
             late = GREY.format("—")
@@ -570,7 +622,8 @@ def build_pdf(*, tasks: list[dict], heading: str, scope_line: str, period_label:
     if estimated:
         story += [Spacer(1, 4), Paragraph(
             f"* {estimated} older task{'s were' if estimated > 1 else ' was'} approved before approval times were "
-            "recorded — the task's last update is shown as Completed (and used for Late by).", s_cell_m)]
+            "recorded — the task's last update is shown as Completed (and used for Late by when no "
+            "submission was recorded either).", s_cell_m)]
 
     doc.build(story, canvasmaker=NumberedCanvas)
     return buf.getvalue()

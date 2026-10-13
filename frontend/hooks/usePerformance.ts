@@ -14,8 +14,8 @@ export interface MemberPerf {
   avg_seconds: number | null;            // average hands-on time per task
   median_seconds: number | null;
   worst_seconds: number | null;
-  avg_turnaround_seconds: number | null; // first start → approved, wall clock
-  on_time_rate: number | null;           // % finished by the due date
+  avg_turnaround_seconds: number | null; // first start → approved, working hours
+  on_time_rate: number | null;           // % handed in (submitted) by the end of the due day, IST — approval wait not counted
   rank: number | null;
   ranked: boolean;
 }

@@ -19,13 +19,14 @@ near zero. Submissions are matched on `action == "pending_review"` instead —
 the action says what happened, the status only says where it landed.
 """
 from collections import defaultdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, time, timezone, timedelta
 from statistics import mean, median
 from typing import Any
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.utils.timezone import IST
 from app.services.worktime import (
     load_holidays,
     working_seconds,
@@ -42,8 +43,17 @@ REEDIT_ACTION = "reedit"
 MIN_SAMPLE_FOR_RANK = 3
 
 
-def _aware(dt: datetime | None) -> datetime | None:
-    """Mongo hands back naive UTC; comparisons need a tz to avoid TypeError."""
+def _aware(dt: datetime | str | None) -> datetime | None:
+    """
+    Mongo hands back naive UTC; comparisons need a tz to avoid TypeError.
+    Also reads ISO strings: tasks that went through the API serializer (as the
+    Overview PDF's do) carry their history timestamps as text.
+    """
+    if isinstance(dt, str) and dt:
+        try:
+            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except ValueError:
+            return None
     if not isinstance(dt, datetime):
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -69,6 +79,27 @@ def _submission_before(subs: list[datetime], when: datetime) -> datetime | None:
     """
     prior = [s for s in subs if s <= when]
     return prior[-1] if prior else None
+
+
+def handed_in_at(task: dict, approved_at: datetime) -> datetime:
+    """
+    When the assignee handed the work in — the submission this approval belongs to
+    (after a reedit, the resubmission), else the approval itself when no
+    submission was recorded. On-time / lateness is the assignee's, so the time a
+    submission then waits for sign-off is not held against them; it is measured
+    as the approver's turnaround instead.
+    """
+    return _submission_before(_submissions(task), approved_at) or approved_at
+
+
+def due_day_end(task: dict) -> datetime | None:
+    """The end of the task's due day in IST (due dates are company — IST — days)."""
+    raw = (task.get("due_date") or "")[:10]
+    try:
+        day = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return datetime.combine(day, time.max, tzinfo=IST)
 
 
 class _Stat:
@@ -198,9 +229,9 @@ async def build_performance_report(
                 if first_start:
                     m.extra["turnaround_total"] += int(working_seconds(first_start, done_at, holidays))
                     m.extra["turnaround_n"] += 1
-                due = _parse_day(task.get("due_date") or "", end_of_day=True)
+                due = due_day_end(task)
                 if due:
-                    m.extra["on_time" if done_at <= due else "late"] += 1
+                    m.extra["on_time" if handed_in_at(task, done_at) <= due else "late"] += 1
             # Work sent back is the clearest signal of quality, so it is counted
             # against the person who did it regardless of when it finished.
             for h in task.get("history") or []:
@@ -426,14 +457,14 @@ async def list_performance_tasks(
             if not secs and timing.get("total_seconds"):
                 secs = float(timing["total_seconds"])
             first_start = _first_action(task, "started")
-            due = _parse_day(task.get("due_date") or "", end_of_day=True)
+            due = due_day_end(task)
             rows.append({
                 **base,
                 "seconds": round(secs) if secs else None,
                 "turnaround_seconds": round(working_seconds(first_start, done_at, holidays))
                                       if first_start else None,
                 "at": done_at.isoformat(),
-                "on_time": (done_at <= due) if due else None,
+                "on_time": (handed_in_at(task, done_at) <= due) if due else None,
             })
 
         elif role == "approver":

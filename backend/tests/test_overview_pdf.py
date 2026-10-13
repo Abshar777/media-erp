@@ -88,49 +88,51 @@ def test_summarize_matches_overview_formulas():
 def test_task_table_matches_the_team_report():
     """
     The two rows below are copied from the team's own task report (the layout
-    the PDF table follows); the PDF must produce the same numbers.
-      Late by   = WORKING time (11:00–20:30 IST, Mon–Sat) from the end of the due day
+    the PDF table follows).
+      Late by   = CLOCK time from the end of the due day (midnight IST after it) to the
+                  hand-in (agreed 2026-10-13; these rows have no submission recorded,
+                  so the approval stands in) — see tests/test_late_by.py
       Time took = the timer's tracked time (raw, as on the Overview)
     """
     U = lambda *a: datetime(*a, tzinfo=timezone.utc).isoformat()
-    # "Review all campaigns…": due 3 Oct, done 8 Oct 13:03 IST, 8s → Late by 30h 33m.
+    # "Review all campaigns…": due 3 Oct, done 8 Oct 13:03 IST, 8s → 4 Oct 00:00 → 8 Oct 13:03 = 4d 13h 03m.
     r = svc.task_timeline({"status": "approved", "due_date": "2026-10-03",
                            "history": [{"action": "started", "timestamp": U(2026, 10, 7, 16, 23)},
                                        {"action": "approved", "timestamp": U(2026, 10, 8, 7, 33)}],
                            "timing": {"total_seconds": 8, "intervals": [
                                {"started_at": U(2026, 10, 7, 16, 23), "ended_at": U(2026, 10, 7, 16, 23, 8)}]}})
-    assert (svc.fmt_duration(r["late"]), svc.fmt_duration(r["took"])) == ("30h 33m", "8s")
+    assert (svc.fmt_late(r["late"]), svc.fmt_duration(r["took"])) == ("4d 13h 03m", "8s")
     assert r["started"].isoformat() == U(2026, 10, 7, 16, 23) and r["ended"].isoformat() == U(2026, 10, 7, 16, 23, 8)
     assert r["completed"].isoformat() == U(2026, 10, 8, 7, 33) and not r["late_open"]
-    # "Boot Camp Payment Report": due 14 Sep, done 18 Sep 19:33 IST, 11h 18m → 37h 03m.
+    # "Boot Camp Payment Report": due 14 Sep, done 18 Sep 19:33 IST, 11h 18m → 15 Sep 00:00 → 3d 19h 33m.
     r = svc.task_timeline({"status": "approved", "due_date": "2026-09-14",
                            "history": [{"action": "approved", "timestamp": U(2026, 9, 18, 14, 3)}],
                            "timing": {"total_seconds": 40680}})
-    assert (svc.fmt_duration(r["late"]), svc.fmt_duration(r["took"])) == ("37h 03m", "11h 18m")
-    # A holiday on 15 Sep takes its 9h 30m out of "Late by".
+    assert (svc.fmt_late(r["late"]), svc.fmt_duration(r["took"])) == ("3d 19h 33m", "11h 18m")
+    # Clock time: a holiday on 15 Sep changes nothing.
     r2 = svc.task_timeline({"status": "approved", "due_date": "2026-09-14",
                             "history": [{"action": "approved", "timestamp": U(2026, 9, 18, 14, 3)}]},
                            holidays=frozenset({date(2026, 9, 15)}))
-    assert svc.fmt_duration(r2["late"]) == "27h 33m"
+    assert svc.fmt_late(r2["late"]) == "3d 19h 33m"
     # Done before the due day ends → not late; open and past due → late "so far".
     assert svc.task_timeline({"status": "approved", "due_date": "2026-10-08",
                               "history": [{"action": "approved", "timestamp": U(2026, 10, 8, 10, 0)}]})["late"] is None
     now = datetime(2026, 10, 9, 8, 30, tzinfo=timezone.utc)            # 9 Oct 14:00 IST
     r = svc.task_timeline({"status": "started", "due_date": "2026-10-08",
                            "timing": {"intervals": [{"started_at": U(2026, 10, 9, 6, 0), "ended_at": None}]}}, now=now)
-    assert r["late_open"] and svc.fmt_duration(r["late"]) == "3h 00m" and r["running"] and r["ended"] is None
+    assert r["late_open"] and svc.fmt_late(r["late"]) == "14h 00m" and r["running"] and r["ended"] is None  # 9 Oct 00:00 → 14:00
     assert svc.fmt_duration(r["took"]) == "2h 30m", "a running timer counts up to now"
     # Approved, sent back for a reedit, approved again: Completed is the LAST approval.
     r = svc.task_timeline({"status": "approved", "due_date": "2026-10-05",
                            "history": [{"action": "approved", "timestamp": U(2026, 10, 5, 6, 0)},
                                        {"action": "reedit", "timestamp": U(2026, 10, 6, 6, 0)},
                                        {"action": "approved", "timestamp": U(2026, 10, 7, 6, 30)}]})
-    assert r["completed"].isoformat() == U(2026, 10, 7, 6, 30) and svc.fmt_duration(r["late"]) == "10h 30m"
+    assert r["completed"].isoformat() == U(2026, 10, 7, 6, 30) and svc.fmt_late(r["late"]) == "1d 12h 00m"  # 6 Oct 00:00 → 7 Oct 12:00 IST
     # Approved before history was kept: no "approved" entry → the last update, flagged.
     r = svc.task_timeline({"status": "approved", "due_date": "2026-07-13", "history": [],
                            "updated_at": U(2026, 7, 14, 12, 20)})
     assert r["completed"].isoformat() == U(2026, 7, 14, 12, 20) and r["completed_estimated"]
-    assert svc.fmt_duration(r["late"]) == "6h 50m"          # 14 Jul 11:00 → 17:50 IST
+    assert svc.fmt_late(r["late"]) == "17h 50m"             # 14 Jul 00:00 → 17:50 IST
     assert not svc.task_timeline({"status": "approved", "history": [{"action": "approved", "timestamp": U(2026, 7, 14, 6, 0)}],
                                   "updated_at": U(2026, 7, 20, 6, 0)})["completed_estimated"]
     assert svc.task_timeline({"status": "pending", "updated_at": U(2026, 7, 14, 6, 0)})["completed"] is None
@@ -153,7 +155,7 @@ def test_task_table_is_on_landscape_pages():
     sizes = re.findall(rb"/MediaBox \[ 0 0 ([\d.]+) ([\d.]+) \]", pdf)
     assert [tuple(round(float(v)) for v in sz) for sz in sizes] == [(595, 842), (842, 595)], "portrait, then landscape"
     text = pdf_strings(pdf)
-    for needle in ("Sara", "03 Oct", "08 Oct 13:03", "8s", "30h 33m", "Late by"):
+    for needle in ("Sara", "03 Oct", "08 Oct 13:03", "8s", "4d 13h 03m", "Late by"):
         assert needle in text, needle
 
     # No stored name: the person's current name — and never a raw id.

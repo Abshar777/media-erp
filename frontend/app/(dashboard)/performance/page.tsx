@@ -24,6 +24,9 @@ import {
 import { cn } from "@/lib/utils";
 import { SelectField } from "@/components/ui/select-field";
 
+// What "On time" means everywhere on this page (and in the Overview PDF).
+const ON_TIME_HINT = "Handed in (submitted for approval) by the end of the due day, IST. Time waiting for a leader to approve isn't counted against the assignee.";
+
 const RANGES = [
   { id: "",      label: "All time" },
   { id: "30",    label: "Last 30 days" },
@@ -201,7 +204,7 @@ function DrillDownModal({ target, dateFrom, onClose }: {
                   <th className="px-3 py-2 text-left font-medium">Task</th>
                   <th className="px-3 py-2 text-right font-medium">{copy.column}</th>
                   {target.role === "member" && <th className="px-3 py-2 text-right font-medium">Turnaround</th>}
-                  {target.role === "member" && <th className="px-3 py-2 text-right font-medium">On time</th>}
+                  {target.role === "member" && <th className="px-3 py-2 text-right font-medium" title={ON_TIME_HINT}>On time</th>}
                   {target.role === "verifier" && <th className="px-3 py-2 text-right font-medium">Verdict</th>}
                   <th className="px-3 py-2 text-right font-medium">When</th>
                 </tr>
@@ -334,7 +337,7 @@ function MemberTable({ rows, onOpen }: {
             <th className="px-3 py-2 text-right font-medium">Median</th>
             <th className="px-3 py-2 text-right font-medium">Turnaround</th>
             <th className="px-3 py-2 text-right font-medium">Done</th>
-            <th className="px-3 py-2 text-right font-medium">On time</th>
+            <th className="px-3 py-2 text-right font-medium" title={ON_TIME_HINT}>On time</th>
             <th className="px-3 py-2 text-right font-medium">Sent back</th>
           </tr>
         </thead>
