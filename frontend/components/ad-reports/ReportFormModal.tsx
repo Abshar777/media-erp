@@ -65,6 +65,11 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
   // Teams you may put a report in: the ones you lead (admin roles: all).
   const myTeams = useMemo(() => teams.filter((t) => isElevated || t.my_role === "leader"), [teams, isElevated]);
   const mine = useMemo(() => new Set(myTeams.map((t) => t.id)), [myTeams]);
+  // Someone who looks after an account (not a leader of its teams) adding or editing
+  // an ad in it: the account and its teams stay fixed, people come from those teams.
+  const presetAcc = !report && defaultAccountId ? all.find((x) => x.id === defaultAccountId) ?? null : null;
+  const keeper = !isElevated && (report ? report.kind === "ad" && !report.can_manage : !!presetAcc && !presetAcc.can_manage);
+  const keptAccount = keeper ? (presetAcc ?? all.find((x) => x.id === report?.account_id) ?? null) : null;
 
   const [kind, setKind] = useState<AdReportKind>("ad");
   const [name, setName] = useState("");
@@ -89,7 +94,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
     setName(report?.name ?? "");
     setTeamIds(
       report ? (report.team_ids?.length ? report.team_ids : [report.team_id])
-        : preset ? (preset.team_ids ?? [preset.team_id]).filter((t) => mine.has(t))
+        : preset ? (preset.team_ids ?? [preset.team_id]).filter((t) => keeper || mine.has(t))
         : myTeams.length === 1 ? [myTeams[0].id] : [],
     );
     setAccountId(report?.account_id ?? preset?.id ?? "");
@@ -122,7 +127,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
   const removable = (id: string) =>
     !locked(id) && (!editing || (teamIds.length > 1 && (isElevated || ownLeft > 1)));
   const addable = myTeams.filter((t) => !teamIds.includes(t.id));
-  const canAddTeam = addable.length > 0 && teamIds.length < MAX_TEAMS;
+  const canAddTeam = !keeper && addable.length > 0 && teamIds.length < MAX_TEAMS;
   // Team first: with none chosen yet the list is simply open.
   const teamPickerOpen = teamsOpen || teamIds.length === 0;
   const removeTeam = (id: string) => setTeamIds((ts) => ts.filter((t) => t !== id));
@@ -147,7 +152,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
   }, [teams, teamIds]);
   const pool: AssignableUser[] = useMemo(() => {
     const active = directory.filter((u) => u.status !== "inactive");
-    if (everyone) return active;
+    if (everyone && !keeper) return active;
     const fromDir = active.filter((u) => memberIds.has(u.id));
     // Members missing from the directory still show (the team list has their names).
     const seen = new Set(fromDir.map((u) => u.id));
@@ -160,8 +165,14 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
         extra.push({ id: m.user_id, name: m.name, email: m.email, designation: m.designation, status: "active" });
       }
     }
+    // The account's own people may always be chosen for its ads.
+    for (const a of keptAccount?.assignees ?? []) {
+      if (seen.has(a.id)) continue;
+      seen.add(a.id);
+      extra.push({ id: a.id, name: a.name, email: "", designation: "", status: "active" });
+    }
     return [...fromDir, ...extra].sort((a, b) => a.name.localeCompare(b.name));
-  }, [directory, everyone, memberIds, teams, teamIds]);
+  }, [directory, everyone, keeper, keptAccount, memberIds, teams, teamIds]);
   const nameOf = (id: string) =>
     directory.find((u) => u.id === id)?.name ?? report?.assignees.find((a) => a.id === id)?.name
     ?? all.flatMap((x) => x.assignees).find((a) => a.id === id)?.name ?? "…";
@@ -227,7 +238,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
       icon={editing ? <Settings2 className="size-4" /> : isAccount ? <Building2 className="size-4" /> : <BarChart3 className="size-4" />}>
 
       {/* What are you tracking? — only when creating */}
-      {!editing && (
+      {!editing && !keeper && (
         <div className="space-y-1.5">
           <span className={label}>What are you tracking?</span>
           <div role="radiogroup" aria-label="What are you tracking?" className="grid grid-cols-2 gap-2">
@@ -307,7 +318,8 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
             onDone={teamIds.length ? () => setTeamsOpen(false) : undefined} />
         )}
         <p className="text-[11px] text-muted-foreground">
-          {teamIds.length === 0 ? "Pick the team this is for — then choose people from it."
+          {keeper ? "The account's teams — only a team leader can change them."
+            : teamIds.length === 0 ? "Pick the team this is for — then choose people from it."
             : teamIds.length > 1 ? "Leaders of every team here can see and manage it. ★ sets the main team."
             : "Add another team to share it with that team's leader."}
         </p>
@@ -322,13 +334,13 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
       ) : (
         <div className="space-y-1">
           <label className={label} htmlFor="ar-account">Account</label>
-          <SelectField id="ar-account" value={accountId} onValueChange={chooseAccount} disabled={!teamIds.length}
+          <SelectField id="ar-account" value={accountId} onValueChange={chooseAccount} disabled={!teamIds.length || keeper}
             options={[
               { value: "", label: "None" },
               ...accounts.map((x) => ({ value: x.id, label: x.name, icon: <Building2 />, description: x.ad_account_ref || undefined })),
             ]} />
           <p className="text-[11px] text-muted-foreground">
-            {!teamIds.length ? "Choose a team first." : accounts.length ? "Its numbers will also add up in that account." : "These teams have no ad accounts yet — None is fine."}
+            {keeper ? "You look after this account — the ad stays in it." : !teamIds.length ? "Choose a team first." : accounts.length ? "Its numbers will also add up in that account." : "These teams have no ad accounts yet — None is fine."}
           </p>
         </div>
       )}
@@ -389,10 +401,12 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
             <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
               <span className="truncate">{everyone ? "Everyone in the company" : `Members of ${teamIds.map(teamName).join(", ")}`}</span>
               <div className="flex shrink-0 items-center gap-3">
+                {!keeper && (
                 <label className="flex cursor-pointer items-center gap-1.5">
                   <input type="checkbox" checked={everyone} onChange={(e) => setEveryone(e.target.checked)} className="size-3.5 accent-primary" />
                   Show everyone
                 </label>
+                )}
                 {assignees.length > 0 && (
                   <button type="button" onClick={() => setPicking(false)} className="font-medium text-primary hover:underline">Done</button>
                 )}

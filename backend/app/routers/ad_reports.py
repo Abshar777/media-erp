@@ -118,10 +118,17 @@ async def create_report(
         team_ids = await ar.validate_teams(db, body.team_ids or [body.team_id])
     except ar.AdReportError as exc:
         return _err(exc)
+    keeper_of = None          # the account, when an account's own person adds an ad to it
     for t in team_ids:
         if not await workflow.can_assign_to_others(current_user, t, db):
-            return error_response("Only a team leader can create ad reports." if len(team_ids) == 1
-                                  else "You can only choose teams you lead.", status_code=403)
+            keeper_of = (await ar.keeps_account(db, str(current_user["_id"]), body.account_id)
+                         if body.kind == "ad" and body.account_id else None)
+            if not keeper_of:
+                return error_response("Only a team leader can create ad reports." if len(team_ids) == 1
+                                      else "You can only choose teams you lead.", status_code=403)
+            break
+    if keeper_of and not set(team_ids) <= set(ar.teams_of(keeper_of)):
+        return error_response("An ad you add to this account stays in the account's teams.", status_code=403)
 
     now = datetime.now(timezone.utc)
     if body.kind == "account":
@@ -151,6 +158,8 @@ async def create_report(
             return bad
     try:
         assignees, _ = await ar.validate_assignees(db, body.assignees)
+        if keeper_of and not set(assignees) <= await ar.keeper_people(db, keeper_of, team_ids):
+            return error_response("Choose people from the account's teams.", status_code=403)
         start = ar.parse_day(body.start_date or "", "start_date")
         end = ar.parse_day(body.end_date, "end_date") if body.end_date else None
         ar.validate_times(body.reminder_due, body.reminder_escalate)
@@ -249,8 +258,21 @@ async def update_report(
     r = await _load(db, report_id, current_user)
     if not r:
         return error_response(NOT_FOUND, status_code=404)
-    if not await ar.can_manage(db, current_user, r):
+    manager = await ar.can_manage(db, current_user, r)
+    if not manager and not await ar.can_run(db, current_user, r):
         return error_response("Only the team leader can change this report.", status_code=403)
+    if not manager:
+        # The account's own people run its ads, but its teams and which account it
+        # sits in stay with the team leader (moving it out would also lock them out).
+        if body.team_ids is not None and list(dict.fromkeys(body.team_ids)) != ar.teams_of(r):
+            return error_response("Only a team leader can change an ad's teams.", status_code=403)
+        if body.clear_account or (body.account_id and body.account_id != r.get("account_id")):
+            return error_response("Only a team leader can move an ad to another account.", status_code=403)
+        if body.assignees is not None:
+            acc = await ar.keeps_account(db, str(current_user["_id"]), r.get("account_id"))
+            pool = (await ar.keeper_people(db, acc, ar.teams_of(r)) if acc else set()) | set(r.get("assignees", []))
+            if not set(body.assignees) <= pool:
+                return error_response("Choose people from the account's teams.", status_code=403)
 
     today = today_ist()
     yesterday = today - timedelta(days=1)
@@ -386,7 +408,7 @@ async def delete_report(
     r = await _load(db, report_id, current_user)
     if not r:
         return error_response(NOT_FOUND, status_code=404)
-    if not await ar.can_manage(db, current_user, r):
+    if not await ar.can_run(db, current_user, r):
         return error_response("Only the team leader can delete this report.", status_code=403)
     try:
         data = await ar.delete_report(db, current_user, r, with_ads)
@@ -540,7 +562,7 @@ async def remind_now(
     r = await _load(db, report_id, current_user)
     if not r:
         return error_response(NOT_FOUND, status_code=404)
-    if not await ar.can_manage(db, current_user, r):
+    if not await ar.can_run(db, current_user, r):
         return error_response("Only the team leader can send a reminder.", status_code=403)
     if ar.is_account(r):
         return error_response("Remind the people on the ads inside this account.", status_code=409)
@@ -575,7 +597,7 @@ async def _creative_target(db, report_id: str, user: dict):
     r = await _load(db, report_id, user)
     if not r:
         return None, error_response(NOT_FOUND, status_code=404)
-    if r.get("status") == "ended" and not await ar.can_manage(db, user, r):
+    if r.get("status") == "ended" and not await ar.can_run(db, user, r):
         return None, error_response("This report has ended — ask your team leader.", status_code=409)
     return r, None
 
@@ -648,7 +670,7 @@ async def remove_creative(
     pick = next((c for c in r.get("creatives", []) if c.get("id") == creative_id), None)
     if not pick:
         return error_response("Creative not found.", status_code=404)
-    if pick.get("uploaded_by") != str(current_user["_id"]) and not await ar.can_manage(db, current_user, r):
+    if pick.get("uploaded_by") != str(current_user["_id"]) and not await ar.can_run(db, current_user, r):
         return error_response("Only the person who added it or the team leader can remove it.", status_code=403)
     await db[ar.REPORTS].update_one({"_id": r["_id"]}, {"$pull": {"creatives": {"id": creative_id}},
                                                         "$set": {"updated_at": datetime.now(timezone.utc)}})

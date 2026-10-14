@@ -45,7 +45,7 @@ export function AccountView({ account, today, onOpenAd, onAddAd, onEdit, onResto
               Add the ads that run from this Meta ad account. Their daily numbers add up here automatically.
             </p>
           </div>
-          {account.can_manage && account.status !== "ended" && (
+          {account.can_add_ads && (
             <button type="button" onClick={onAddAd}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">
               <Plus className="size-4" /> Add an ad
@@ -106,13 +106,15 @@ function AccountHero({ account, today, onAddAd, onEdit, onRestored }: {
               </div>
             ))}
           </dl>
-          {account.can_manage && (
+          {(account.can_manage || account.can_add_ads) && (
             <div className="flex flex-wrap items-center gap-2">
-              {manage && <>
+              {account.can_add_ads && (
               <button type="button" onClick={onAddAd}
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90">
                 <Plus className="size-4" /> Add ad
               </button>
+              )}
+              {manage && <>
               <button type="button" className={btn} onClick={onEdit}><Settings2 className="size-4" /> Edit</button>
               {confirmEnd ? (
                 <span className="inline-flex items-center gap-1.5 text-xs">
@@ -125,11 +127,15 @@ function AccountHero({ account, today, onAddAd, onEdit, onRestored }: {
                 <button type="button" className={btn} onClick={() => setConfirmEnd(true)}><Flag className="size-4" /> End</button>
               )}
               </>}
+              {account.can_manage ? <>
               <button type="button" onClick={() => setDeleteOpen(true)} aria-label="Delete account" title="Delete account"
                 className={cn(btn, "px-2.5 text-muted-foreground hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-600 dark:hover:text-red-400")}>
                 <Trash2 className="size-4" />
               </button>
               <DeleteReportDialog report={account} open={deleteOpen} onClose={() => setDeleteOpen(false)} today={today} onRestored={onRestored} />
+              </> : (
+                <p className="text-xs text-muted-foreground">You look after this account — add its ads and run them. The account itself stays with the team leader.</p>
+              )}
             </div>
           )}
         </div>

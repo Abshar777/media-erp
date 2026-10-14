@@ -266,6 +266,33 @@ async def looks_after_account(db, user_id: str, report: dict) -> bool:
     return bool(await db[REPORTS].find_one({"_id": ObjectId(acc_id), "assignees": user_id}, {"_id": 1}))
 
 
+async def keeps_account(db, user_id: str, account_id) -> dict | None:
+    """The account, when this user looks after it (is one of its people)."""
+    if not account_id or not ObjectId.is_valid(str(account_id)):
+        return None
+    acc = await db[REPORTS].find_one({"_id": ObjectId(str(account_id)), "kind": "account", "assignees": user_id})
+    return acc
+
+
+async def can_run(db, user: dict, report: dict) -> bool:
+    """
+    Run an AD — edit it, pause / resume / end, delete, remind, remove creatives:
+    everyone who can manage it, plus the people who look after the account it
+    sits in (2026-10-14). The account itself, an ad's teams and moving an ad
+    between accounts stay with the team leader (can_manage).
+    """
+    if await can_manage(db, user, report):
+        return True
+    return not is_account(report) and await looks_after_account(db, str(user["_id"]), report)
+
+
+async def keeper_people(db, account: dict, team_ids) -> set[str]:
+    """Whom an account keeper may put on an ad: members of its teams and the account's own people."""
+    ids = [ObjectId(t) for t in team_ids if t and ObjectId.is_valid(t)]
+    teams = await db["teams"].find({"_id": {"$in": ids}}, {"members": 1}).to_list(len(ids) or 1) if ids else []
+    return {m["user_id"] for t in teams for m in t.get("members", []) if m.get("user_id")} | set(account.get("assignees", []))
+
+
 async def can_enter(db, user: dict, report: dict) -> bool:
     uid = str(user["_id"])
     return (uid in report.get("assignees", []) or await can_manage(db, user, report)
@@ -645,8 +672,13 @@ async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[
     if user is not None:
         uid = str(user["_id"])
         out["can_manage"] = await can_manage(db, user, r)
-        out["can_enter"] = (out["can_manage"] or uid in r.get("assignees", [])
-                            or uid in (account_people or {}).get(r.get("account_id") or "", []))
+        keeper = (not acct) and uid in (account_people or {}).get(r.get("account_id") or "", [])
+        out["can_enter"] = out["can_manage"] or uid in r.get("assignees", []) or keeper
+        # Run the ad (edit / pause / end / delete / remind): leaders, plus the account's people.
+        out["can_run"] = out["can_manage"] or keeper
+        # "+ Add ad" on an account: its leaders, and the people who look after it.
+        out["can_add_ads"] = bool(acct) and r.get("status") != "ended" and (
+            out["can_manage"] or uid in r.get("assignees", []))
     return out
 
 

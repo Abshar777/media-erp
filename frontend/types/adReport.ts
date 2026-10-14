@@ -81,6 +81,10 @@ export interface AdReport {
   updated_at: string;
   can_manage?: boolean;
   can_enter?: boolean;
+  /** Ads: edit / pause / end / delete / remind — leaders, and the people who look after its account. */
+  can_run?: boolean;
+  /** Accounts: "+ Add ad" — leaders, and the people who look after it. */
+  can_add_ads?: boolean;
   /** Ads: an open "Ad not performing" flag, else one closed in the last 14 days. */
   flag?: AdFlagSummary | null;
 }

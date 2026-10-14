@@ -99,8 +99,8 @@ export function CreativeShowcase({ report, meId, className }: Props) {
 
   const idx = Math.max(0, items.findIndex((c) => c.id === selectedId));
   const current = items[idx];
-  const canUpload = !!report.can_enter && (report.status !== "ended" || !!report.can_manage);
-  const canRemove = !!current && canUpload && (report.can_manage || current.uploaded_by === meId);
+  const canUpload = !!report.can_enter && (report.status !== "ended" || !!report.can_run || !!report.can_manage);
+  const canRemove = !!current && canUpload && (report.can_run || report.can_manage || current.uploaded_by === meId);
   const refetch = () => qc.invalidateQueries({ queryKey: ["ad-reports"] });
   const busy = progress !== null;
 

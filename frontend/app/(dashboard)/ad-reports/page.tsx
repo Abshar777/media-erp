@@ -345,12 +345,12 @@ function ReportHero({ r, meId, today, onEntry, onEdit, onOpenAccount, onRestored
                 )}
               </button>
             )}
-            {r.can_manage && r.status === "active" && r.missing.length > 0 && (
+            {r.can_run && r.status === "active" && r.missing.length > 0 && (
               <button type="button" className={btn} disabled={remind.isPending} onClick={() => remind.mutate(r.id)}>
                 <BellRing className="size-4" /> Remind
               </button>
             )}
-            {r.can_manage && r.status !== "ended" && (
+            {r.can_run && r.status !== "ended" && (
               <>
                 <button type="button" className={btn} onClick={onEdit}><Settings2 className="size-4" /> Edit</button>
                 <button type="button" className={btn} disabled={update.isPending}
@@ -371,7 +371,7 @@ function ReportHero({ r, meId, today, onEntry, onEdit, onOpenAccount, onRestored
             )}
             {/* Quiet on purpose: the destructive action is one deliberate click
                 away, behind a dialog that says what goes (and offers Undo). */}
-            {r.can_manage && (
+            {r.can_run && (
               <button type="button" onClick={() => setDeleteOpen(true)} aria-label="Delete report" title="Delete report"
                 className={cn(btn, "px-2.5 text-muted-foreground hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-600 dark:hover:text-red-400")}>
                 <Trash2 className="size-4" />
@@ -387,7 +387,7 @@ function ReportHero({ r, meId, today, onEntry, onEdit, onOpenAccount, onRestored
             )}
           </div>
           {canFlag && <FlagAdModal report={r} open={flagOpen} onClose={() => setFlagOpen(false)} />}
-          {r.can_manage && (
+          {r.can_run && (
             <DeleteReportDialog report={r} open={deleteOpen} onClose={() => setDeleteOpen(false)} today={today} onRestored={onRestored} />
           )}
         </div>
