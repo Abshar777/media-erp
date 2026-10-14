@@ -146,6 +146,19 @@ async def _fire_notifications(
                 if m.get("role") == "leader" and m["user_id"] != actor_id
             ]
 
+    # Stand-ins of this team's away leaders: new work always, reviews if allowed.
+    standin_ids: list[str] = []
+    standin_review_ids: list[str] = []
+    if team_id:
+        from app.services.standin_service import live_for_team as _live_for_team
+        for _sd in await _live_for_team(db, str(team_id)):
+            sid = _sd["standin_id"]
+            if sid == actor_id or sid in leader_ids or sid in standin_ids:
+                continue
+            standin_ids.append(sid)
+            if _sd.get("can_review"):
+                standin_review_ids.append(sid)
+
     leader_notif = {
         "created":        ("team_task_assigned", "New task in your team",
                            f'A new task "{task_title}" was added to your team.'),
@@ -160,12 +173,15 @@ async def _fire_notifications(
         ntype, ntitle, nmsg = leader_notif[event]
         for lid in leader_ids:
             await push_notification(db, lid, ntype, ntitle, nmsg, meta)
+        for sid in (standin_ids if event == "created" else standin_review_ids if event == "pending_review" else []):
+            if sid != assigned_to:
+                await push_notification(db, sid, ntype, ntitle, nmsg, meta)
 
     # A named approver may be an ordinary member, so they are not in leader_ids
     # and would otherwise never hear that work is waiting on them.
     if event == "pending_review":
         approver_id = task.get("approver_id") or ""
-        if approver_id and approver_id != actor_id and approver_id not in leader_ids:
+        if approver_id and approver_id != actor_id and approver_id not in leader_ids and approver_id not in standin_review_ids:
             await push_notification(
                 db, approver_id, "pending_review", "Task awaiting your approval",
                 f'{assigned_name} submitted "{task_title}" for your approval.', meta,
@@ -200,7 +216,7 @@ async def _fire_notifications(
             ntype, ntitle, nmsg = elevated_notif[event]
             for u in elevated_users:
                 uid = str(u["_id"])
-                if uid in (actor_id, assigned_to) or uid in leader_ids:
+                if uid in (actor_id, assigned_to) or uid in leader_ids or uid in standin_ids:
                     continue  # avoid duplicate / self-notify
                 # Coordinators only oversee the teams they belong to; Admin and
                 # Super Admin stay global (company-wide oversight).
@@ -812,13 +828,29 @@ async def leader_queue(
             {"members": {"$elemMatch": {"user_id": uid, "role": "leader"}}}
         ).to_list(500)
 
+    # Teams this user is standing in for (a leader away handed them the desk).
+    from app.services import standin_service as _standin
+    standin_pairs = [] if is_elevated else await _standin.live_pairs_for_standin(db, uid)
+    standin_live: dict = {}
+    for _t, _d in standin_pairs:          # per team, the hand-over that grants the most
+        if _t not in standin_live or (_d.get("can_review") and not standin_live[_t].get("can_review")):
+            standin_live[_t] = _d
+    led_ids = {str(t["_id"]) for t in teams}
+    standin_only = [t for t in standin_live if t not in led_ids]
+    if standin_only:
+        teams = teams + await db["teams"].find(
+            {"_id": {"$in": [ObjectId(t) for t in standin_only]}}).to_list(50)
+
     if not teams:
         return success_response(
-            data={"is_leader": is_elevated, "review": [], "incoming": [], "reedit": [], "teams": []},
+            data={"is_leader": is_elevated, "review": [], "incoming": [], "reedit": [], "teams": [],
+                  "standin": [], "led_team_ids": []},
             message="Leader queue",
         )
 
     team_ids = [str(t["_id"]) for t in teams]
+    # Pending Reviews: teams you lead, plus teams you stand in for with review rights.
+    review_team_ids = [t for t in team_ids if t in led_ids or (t in standin_live and standin_live[t].get("can_review"))]
 
     # Resolve member names for the assign dropdown
     member_ids = {m["user_id"] for t in teams for m in t.get("members", [])}
@@ -885,7 +917,7 @@ async def leader_queue(
     # spreading one instance into all three desks would let an append in the
     # second leak into the third.
 
-    def _in_scope(q: dict) -> dict:
+    def _in_scope(q: dict, ids: list[str] | None = None) -> dict:
         """
         Restrict a desk to the teams in view — plus, for elevated roles, work
         that belongs to no team at all.
@@ -900,7 +932,7 @@ async def leader_queue(
         owns a top-level $or for `search`, and a second one would silently drop
         the search terms.
         """
-        scope: dict = {"team_id": {"$in": team_ids}}
+        scope: dict = {"team_id": {"$in": ids if ids is not None else team_ids}}
         if is_elevated:
             scope = {"$or": [
                 {"team_id": {"$in": team_ids}},
@@ -910,9 +942,13 @@ async def leader_queue(
         q.setdefault("$and", []).append(scope)
         return q
 
-    review = await db["project_tasks"].find(
-        _in_scope({"status": "pending_review", **_filters()})
-    ).sort("updated_at", -1).to_list(500)
+    review_q = _in_scope({"status": "pending_review", **_filters()}, None if is_elevated else review_team_ids)
+    # Teams you review only as a stand-in: never your own submissions (a leader approves those).
+    standin_review_teams = [t for t in review_team_ids if t not in led_ids] if not is_elevated else []
+    if standin_review_teams:
+        review_q.setdefault("$and", []).append(
+            {"$or": [{"team_id": {"$nin": standin_review_teams}}, {"assigned_to": {"$ne": uid}}]})
+    review = await db["project_tasks"].find(review_q).sort("updated_at", -1).to_list(500)
 
     # Only work that is still UNASSIGNED belongs in the "Assign Work" queue.
     # Once a leader assigns a task — including to themselves — it is distributed
@@ -947,6 +983,15 @@ async def leader_queue(
             "incoming": [_serialize(t) for t in incoming],
             "reedit":   [_serialize(t) for t in reedit],
             "teams":    teams_out,
+            # Teams on this desk only because you stand in for their leader.
+            # One row per (team, away leader) — a person may stand in for two leaders.
+            "standin": [{
+                "team_id": t, "team_name": next((x.get("name", "") for x in teams if str(x["_id"]) == t), ""),
+                "leader_name": d.get("leader_name", ""),
+                "end_date": d.get("end_date"),
+                "can_review": bool(d.get("can_review")),
+            } for t, d in standin_pairs if t in standin_only],
+            "led_team_ids": sorted(led_ids) if not is_elevated else team_ids,
         },
         message="Leader queue",
     )
@@ -1081,6 +1126,11 @@ async def edit_task(
         # Approve / send-to-reedit (leaving pending_review) is leader/admin only
         if cur_status in workflow.LEADER_ONLY_FROM:
             if not await workflow.can_approve(current_user, current, db):
+                if current.get("assigned_to") == str(current_user["_id"]):
+                    from app.services.standin_service import standing_in_for as _standing_in_for
+                    if await _standing_in_for(db, str(current_user["_id"]), current.get("team_id"), review=True):
+                        return error_response(
+                            "You can't approve or send back your own work — a team leader will.", status_code=403)
                 return error_response(
                     "Only a team leader can approve a task or send it to reedit.",
                     status_code=403,
@@ -1148,7 +1198,9 @@ async def edit_task(
     if new_status == "reedit" and current.get("origin_team_id"):
         origin_team_id = current.get("origin_team_id") or ""
         if origin_team_id and origin_team_id != current.get("team_id"):
-            if not await workflow.can_approve(current_user, current, db):
+            from app.services.standin_service import standing_in_for as _standing_in_for
+            if not (await workflow.can_approve(current_user, current, db)
+                    or await _standing_in_for(db, str(current_user["_id"]), current.get("team_id"))):
                 return error_response(
                     "Only a team leader can send a task back to reedit.",
                     status_code=403,
@@ -1351,6 +1403,19 @@ async def edit_task(
     if acting_team_id and ObjectId.is_valid(acting_team_id):
         _t = await db["teams"].find_one({"_id": ObjectId(acting_team_id)}, {"name": 1})
         acting_team_name = (_t or {}).get("name", "")
+    # Acting for an away leader? Say so in the history.
+    _as_standin = ""
+    if (acting_team_id and ObjectId.is_valid(acting_team_id) and not current_user.get("_auto_approval")
+            and (current_user.get("_role") or {}).get("role_name", "") not in _ELEVATED_ROLES
+            and ((new_status and new_status != cur_status and new_status in ("approved", "reedit"))
+                 or (updates.get("assigned_to") and updates["assigned_to"] != actor_id
+                     and updates["assigned_to"] != current.get("assigned_to")))):
+        if not await db["teams"].find_one({"_id": ObjectId(acting_team_id),
+                                           "members": {"$elemMatch": {"user_id": actor_id, "role": "leader"}}}, {"_id": 1}):
+            from app.services.standin_service import standing_in_for as _standing_in_for
+            _sd = await _standing_in_for(db, actor_id, acting_team_id)
+            _as_standin = (_sd or {}).get("leader_name", "")
+    _sfx = f" · as stand-in for {_as_standin}" if _as_standin else ""
     _hist: list[dict] = []
     if new_status and new_status != cur_status:
         _hist.append({
@@ -1360,8 +1425,9 @@ async def edit_task(
             "timestamp":   _dtm.now(_tz.utc),
             "from_status": cur_status,
             "to_status":   new_status,
-            "note":        ((updates.get("reedit_reason") or None) if new_status == "reedit"
-                            else ("Auto-approved" if current_user.get("_auto_approval") else None)),
+            "note":        ((((updates.get("reedit_reason") or "") + _sfx) or None) if new_status == "reedit"
+                            else ("Auto-approved" if current_user.get("_auto_approval")
+                                  else (f"As stand-in for {_as_standin}" if _as_standin else None))),
             # Set by auto_approve_service when it approves in a leader's name; the
             # Performance report leaves these out of the leader's "time to approve".
             **({"auto": True} if current_user.get("_auto_approval") and new_status == "approved" else {}),
@@ -1380,7 +1446,7 @@ async def edit_task(
             "timestamp":   _dtm.now(_tz.utc),
             "from_status": None,
             "to_status":   None,
-            "note":        f"Assigned to {updates.get('assigned_to_name') or updates['assigned_to']}",
+            "note":        f"Assigned to {updates.get('assigned_to_name') or updates['assigned_to']}{_sfx}",
             "team_id":     acting_team_id,
             "team_name":   acting_team_name,
         })
@@ -1471,9 +1537,19 @@ async def edit_task(
             next_approver_id, next_approver_name = None, None
 
         root_task_id = str(current.get("root_task_id") or current["_id"])
+        # The leader it was sent to is away: their stand-in gets it instead.
+        _standin_for_id = _standin_for_name = ""
+        if next_leader_id:
+            from app.services.standin_service import redirect_target as _redirect_target
+            _sd = await _redirect_target(db, next_leader_id, destination_team_id)
+            if _sd:
+                _standin_for_id, _standin_for_name = next_leader_id, (next_leader_name or _sd.get("leader_name", ""))
+                next_leader_id, next_leader_name = _sd["standin_id"], _sd.get("standin_name", "")
         _received_note = f"Received from {former_team_name}" if former_team_name else "Received via routing"
         if next_leader_name:
             _received_note += f" · assigned to {next_leader_name}"
+            if _standin_for_name:
+                _received_note += f" (standing in for {_standin_for_name})"
         routed_result = await db["project_tasks"].insert_one({
             "title": task["title"],
             "description": task.get("description", ""),
@@ -1481,6 +1557,7 @@ async def edit_task(
             "status": "pending",
             "assigned_to": next_leader_id or "",
             "assigned_to_name": next_leader_name or "",
+            **({"standin_for_id": _standin_for_id, "standin_for_name": _standin_for_name} if _standin_for_id else {}),
             # Who may approve the routed copy once it comes back for review.
             # Validated below against the destination team's member list.
             "approver_id": next_approver_id or "",
@@ -1532,7 +1609,8 @@ async def edit_task(
                 await push_notification(
                     db, next_leader_id, "task_assigned",
                     "Task assigned to you",
-                    f'"{task["title"]}" has been approved and assigned to you.',
+                    f'"{task["title"]}" has been approved and assigned to you'
+                    + (f" — you're standing in for {_standin_for_name}." if _standin_for_name else "."),
                     {"task_id": str(routed_result.inserted_id), "task_title": task["title"]},
                 )
 

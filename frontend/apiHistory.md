@@ -107,3 +107,10 @@
 - **Endpoint:** GET /auto-approve · PUT /auto-approve · POST /auto-approve/hold/{task_id}
 - **Query key:** `["auto-approve"]`
 - **Purpose:** The leader's own auto-approve switch + delay. Save writes the reply into the cache and refreshes `["projects"]` when turned off (that removes this leader's timers from waiting cards). Hold refreshes `["projects"]`. Also exports `delayLabel(min)` ("Instantly", "30 min", "1 h 30 min").
+
+### useStandin / useHandOver / useEndStandin (2026-10-14)
+- **File:** `hooks/useStandin.ts`
+- **Type:** useQuery / useMutation / useMutation
+- **Endpoint:** GET /standin · PUT /standin · DELETE /standin
+- **Query key:** `["standin"]`
+- **Purpose:** A leader's hand-over of their Leader Desk to a teammate while away, and where the current user stands in. Also exports `standinDay(iso)` ("Tue 20 Oct").

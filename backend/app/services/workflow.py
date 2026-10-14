@@ -108,10 +108,19 @@ async def can_approve(current_user: dict, task: dict, db: AsyncIOMotorDatabase) 
         team = None
     if not team:
         return False
-    return any(
+    if any(
         m.get("user_id") == uid and m.get("role") == "leader"
         for m in team.get("members", [])
-    )
+    ):
+        return True
+    # A leader's stand-in who was allowed to review — but never their own work:
+    # they are a teammate, not a leader, so the leaders' self-approval exemption
+    # does not apply to them.
+    if task.get("assigned_to") != uid:
+        from app.services.standin_service import standing_in_for
+        if await standing_in_for(db, uid, str(team_id), review=True):
+            return True
+    return False
 
 
 async def can_assign_to_others(current_user: dict, team_id, db: AsyncIOMotorDatabase) -> bool:

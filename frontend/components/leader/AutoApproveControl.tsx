@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePopoverSide } from "@/hooks/usePopoverSide";
 import { delayLabel, useAutoApprove, useSaveAutoApprove } from "@/hooks/useAutoApprove";
 
 const PRESETS = [0, 15, 30, 60, 120, 240];
@@ -20,6 +21,7 @@ export function AutoApproveControl() {
   const [amount, setAmount] = useState("45");
   const [unit, setUnit] = useState<"min" | "h">("min");
   const ref = useRef<HTMLDivElement>(null);
+  const side = usePopoverSide(ref, open, 368);
 
   useEffect(() => {
     if (!open) return;
@@ -67,7 +69,8 @@ export function AutoApproveControl() {
         <div
           role="dialog"
           aria-label="Auto-approve settings"
-          className="fixed inset-x-3 top-24 z-50 rounded-2xl border bg-card p-4 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[23rem]"
+          className={cn("fixed inset-x-3 top-24 z-50 rounded-2xl border bg-card p-4 shadow-xl sm:absolute sm:inset-x-auto sm:top-full sm:mt-2 sm:w-[23rem]",
+            side === "right" ? "sm:right-0" : "sm:left-0")}
         >
           {/* Switch */}
           <div className="flex items-start gap-3">

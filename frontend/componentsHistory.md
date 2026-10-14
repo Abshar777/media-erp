@@ -550,3 +550,9 @@ end-to-end, not just "the socket reconnects."
 - **`CreativeShowcase`:** remove / upload-on-ended use `can_run`.
 - **`ReportFormModal` keeper mode** (a non-leader adding/editing an ad in an account they look after): no kind picker, the account's teams locked and no "Add team", the Account field locked, no "Show everyone", and the account's own people are always choosable.
 - **Types:** `AdReport.can_run?`, `AdReport.can_add_ads?`.
+
+### Stand-in (2026-10-14)
+- **`components/leader/StandinControl.tsx`:** pill on the Leader Desk header next to Auto-approve ("Stand-in · Off" / violet "Mira · until 20 Oct" / "· from 20 Oct"). Card: searchable teammate list (their teams under each name), "For how long" chips 3 / 7 / 10 / 30 days + Custom with From / Until, covered-team chips (teams they're not in are disabled), "Also review submissions" switch with the leader's auto-approve status, a one-sentence summary and **Hand over**; when set: summary with **Change** and **End now — I'm back** / **Cancel it**.
+- **`components/leader/StandinBanner.tsx`:** violet banner on the Leader Desk for someone who is there only as a stand-in (whose desk, teams, until when, what they may do). The page shows them only Assign Work and Reedit (+ Pending Reviews if allowed); the sidebar shows Leader Desk while a stand-in is live.
+- **`hooks/usePopoverSide.ts`:** header cards open toward the side with room (the Auto-approve and Stand-in cards ran off the left of the screen when the header wrapped at mid widths).
+- **Also:** `hooks/useStandin.ts`; `LeaderQueue.standin` / `led_team_ids`; notification types `standin_assigned` / `standin_team` / `standin_ended` (violet icon; desktop alert for `standin_assigned`); `TaskDetailModal` note "Sent to Lena — handed to Mira while Lena is away".

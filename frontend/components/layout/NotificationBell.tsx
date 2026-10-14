@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  UserRoundCheck,
   BellRing,
   ShieldCheck,
   ShieldAlert,
@@ -65,6 +66,10 @@ function typeConfig(type: string): { icon: React.ReactNode; bg: string } {
       return { icon: <ShieldCheck className="size-3.5 text-muted-foreground" />, bg: "bg-muted" };
     case "verify_rejected":
       return { icon: <ShieldAlert className="size-3.5 text-rose-500" />,     bg: "bg-rose-100 dark:bg-rose-900/30" };
+    case "standin_assigned":
+    case "standin_team":
+    case "standin_ended":
+      return { icon: <UserRoundCheck className="size-3.5 text-violet-500" />, bg: "bg-violet-100 dark:bg-violet-900/30" };
     case "task_transferred":
       return { icon: <ArrowLeftRight className="size-3.5 text-sky-500" />,   bg: "bg-sky-100 dark:bg-sky-900/30" };
     case "mention":
@@ -115,6 +120,8 @@ function destination(item: Notification): string | null {
     const link = (item.metadata as { link?: string })?.link;
     return link && (link.startsWith("/leader") || link.startsWith("/ad-reports")) ? link : "/leader?tab=ads";
   }
+  if (item.type === "standin_assigned") return "/leader";
+  if (item.type === "standin_team" || item.type === "standin_ended") return "/projects";
   if (item.type === "verify_requested") {
     const taskId = (item.metadata as { task_id?: string })?.task_id;
     return taskId ? `/verify/${taskId}` : null;

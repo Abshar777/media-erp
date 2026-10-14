@@ -20,6 +20,8 @@ import {
 import { TaskDetailModal } from "@/components/projects/TaskDetailModal";
 import { AdFlagCard } from "@/components/leader/AdFlagCard";
 import { AutoApproveControl } from "@/components/leader/AutoApproveControl";
+import { StandinControl } from "@/components/leader/StandinControl";
+import { StandinBanner } from "@/components/leader/StandinBanner";
 import { AutoApproveStrip } from "@/components/leader/AutoApproveStrip";
 import { useAdFlagInbox } from "@/hooks/useAdFlags";
 import type { AdFlagScope } from "@/types/adFlag";
@@ -491,13 +493,18 @@ export default function LeaderPage() {
     );
   }
 
-  const tabs: { id: Tab; icon: React.ReactNode; label: string; count: number; danger?: boolean }[] = [
+  // Here only as someone's stand-in: Assign Work and Reedit, plus reviews if allowed.
+  const standinOnly = !(data.led_team_ids?.length) && (data.standin?.length ?? 0) > 0;
+  const standinReviews = (data.standin ?? []).some((s) => s.can_review);
+  const tabs = ([
     { id: "review", icon: <ClipboardCheck className="size-4" />, label: "Pending Reviews", count: review.length },
     { id: "assign", icon: <Inbox className="size-4" />, label: "Assign Work",     count: incoming.length },
     { id: "reedit", icon: <RotateCcw className="size-4" />, label: "Reedit",       count: reeditList.length, danger: true },
     // The badge counts what's waiting on *you*.
     { id: "ads",    icon: <TrendingDown className="size-4" />, label: "Ads to redo", count: adFlags?.counts.to_me ?? 0, danger: true },
-  ];
+  ] as { id: Tab; icon: React.ReactNode; label: string; count: number; danger?: boolean }[])
+    .filter((t) => !standinOnly || t.id === "assign" || t.id === "reedit" || (t.id === "review" && standinReviews));
+  const activeTab: Tab = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
 
   return (
     <div className="flex flex-col gap-5 pb-6">
@@ -511,9 +518,13 @@ export default function LeaderPage() {
             Review your team&apos;s submissions and distribute new work.
           </p>
         </div>
-        {/* The leader's own switch — sits where approvals happen. */}
-        <AutoApproveControl />
+        {/* The leader's own switches — stand-in for leave, auto-approve for reviews. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <StandinControl />
+          <AutoApproveControl />
+        </div>
       </div>
+      <StandinBanner items={data.standin ?? []} />
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl bg-muted/50 p-1 border w-fit max-w-full overflow-x-auto">
@@ -522,7 +533,7 @@ export default function LeaderPage() {
             key={id} onClick={() => setTab(id)}
             className={cn(
               "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-all sm:px-4",
-              tab === id ? "bg-card text-foreground shadow-sm border" : "text-muted-foreground hover:text-foreground"
+              activeTab === id ? "bg-card text-foreground shadow-sm border" : "text-muted-foreground hover:text-foreground"
             )}
           >
             {icon} {label}
@@ -530,8 +541,8 @@ export default function LeaderPage() {
               <span className={cn(
                 "flex h-5 min-w-5 px-1 items-center justify-center rounded-full text-[10px] font-bold",
                 danger && count > 0
-                  ? tab === id ? "bg-rose-500/20 text-rose-600" : "bg-rose-500/15 text-rose-500"
-                  : tab === id ? "bg-primary/15 text-primary" : "bg-muted-foreground/15"
+                  ? activeTab === id ? "bg-rose-500/20 text-rose-600" : "bg-rose-500/15 text-rose-500"
+                  : activeTab === id ? "bg-primary/15 text-primary" : "bg-muted-foreground/15"
               )}>
                 {count}
               </span>
@@ -543,7 +554,7 @@ export default function LeaderPage() {
       {/* Filters — applied server-side across the three task desks, so a search
           or date range means the same thing whichever of them you are on.
           (Ads to redo is a short list of its own; the filters don't apply.) */}
-      {tab !== "ads" && (
+      {activeTab !== "ads" && (
       <div className="flex flex-col gap-3 rounded-xl border bg-card p-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[200px] flex-1">
@@ -572,7 +583,7 @@ export default function LeaderPage() {
           {/* Only meaningful on Assign Work, and only while "Assigned to me" is
               off — that scope already means assigned, so offering
               "Unassigned only" alongside it just contradicts itself. */}
-          {tab === "assign" && qFilters.scope !== "assigned_to_me" && (
+          {activeTab === "assign" && qFilters.scope !== "assigned_to_me" && (
             <SelectField
               aria-label="Assignment"
               value={qFilters.assigned ?? ""}
@@ -650,7 +661,7 @@ export default function LeaderPage() {
       )}
 
       {/* Team filter (review tab) */}
-      {tab === "review" && teamsList.length > 1 && (
+      {activeTab === "review" && teamsList.length > 1 && (
         <div className="flex items-center gap-2.5">
           <span id="leader-team-filter-label" className="text-sm text-muted-foreground shrink-0">Team</span>
           <SelectField
@@ -676,7 +687,7 @@ export default function LeaderPage() {
       )}
 
       {/* Review tab */}
-      {tab === "review" && (
+      {activeTab === "review" && (
         review.length === 0 ? (
           <Empty
             icon={<CheckCircle2 className="size-10" />}
@@ -699,7 +710,7 @@ export default function LeaderPage() {
       )}
 
       {/* Assign tab */}
-      {tab === "assign" && (
+      {activeTab === "assign" && (
         incoming.length === 0 ? (
           <Empty
             icon={<Inbox className="size-10" />}
@@ -716,7 +727,7 @@ export default function LeaderPage() {
       )}
 
       {/* Reedit tab */}
-      {tab === "reedit" && (
+      {activeTab === "reedit" && (
         reeditList.length === 0 ? (
           <Empty
             icon={<RotateCcw className="size-10" />}
@@ -739,7 +750,7 @@ export default function LeaderPage() {
       )}
 
       {/* Ads to redo — ads marked as not performing: sent to me / by me / all */}
-      {tab === "ads" && (
+      {activeTab === "ads" && (
         <>
           {adFlags && adFlags.scopes.length > 1 && (
             <div className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-lg border bg-muted/40 p-1" role="group" aria-label="Which ads">

@@ -8,6 +8,9 @@ export type NotificationType =
   | "task_reedit"         // task sent back for revision
   | "team_task_assigned"  // new task added to your team (→ leader)
   | "task_transferred"    // a task was handed to (or away from) you
+  | "standin_assigned"    // a leader made you their stand-in
+  | "standin_team"        // a teammate is standing in for your leader
+  | "standin_ended"       // your stand-in ended / was cancelled
   | "verify_requested"    // you were asked to verify a task
   | "verify_rejected"     // a verifier asked for changes on your task
   | "verify_passed"       // every verifier signed your task off

@@ -74,7 +74,10 @@ async def hold_task(task_id: str, body: HoldRequest,
         if task.get("team_id") and ObjectId.is_valid(task["team_id"]) else None
     leads = bool(team) and any(m.get("user_id") == uid and m.get("role") == "leader" for m in team.get("members") or [])
     if role not in _ELEVATED and not leads:
-        return error_response("Only this team's leaders can hold auto-approval.", status_code=403)
+        # A leader's stand-in who reviews submissions may hold them too.
+        from app.services.standin_service import standing_in_for
+        if not (task.get("team_id") and await standing_in_for(db, uid, task["team_id"], review=True)):
+            return error_response("Only this team's leaders can hold auto-approval.", status_code=403)
     if task.get("status") != "pending_review":
         return error_response("This task isn't waiting for approval.", status_code=409)
     await svc.set_hold(db, task_id, current_user, body.hold)

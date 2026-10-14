@@ -1,5 +1,6 @@
 "use client";
 
+import { useStandin } from "@/hooks/useStandin";
 import { useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
@@ -180,7 +181,10 @@ function SidebarContent({
   // Leader Desk is for Super Admins and anyone who leads a team
   const { data: teams = [] } = useTeams();
   const isSuperAdmin = !!(user?.role?.is_system_role && user?.role?.role_name === "Super Admin");
-  const showLeaderDesk = isSuperAdmin || teams.some((t) => t.my_role === "leader");
+  // …and anyone standing in for an away leader right now.
+  const { data: standin } = useStandin();
+  const standingIn = !!standin?.standing_in.some((h) => h.state === "active");
+  const showLeaderDesk = isSuperAdmin || teams.some((t) => t.my_role === "leader") || standingIn;
 
   // Performance ranks named colleagues against each other, so it matches the
   // server gate in routers/performance.py: elevated roles, or a team leader.

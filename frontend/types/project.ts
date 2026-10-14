@@ -123,6 +123,9 @@ export interface Task {
   auto_approve_submitted_at?: string;
   /** A leader stopped auto-approval for this task — it waits for a manual decision. */
   auto_approve_hold?: { by: string; by_name: string; at: string } | null;
+  /** Routed to a leader who is away: handed to their stand-in (this task's assignee). */
+  standin_for_id?: string;
+  standin_for_name?: string;
   /** Screenshots handed in with the submission note, kept apart from
       `attachments` so the approver sees what this round of review is about. */
   submission_attachments?: Attachment[];

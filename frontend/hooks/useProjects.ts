@@ -31,6 +31,10 @@ export interface LeaderQueue {
   incoming: Task[];
   reedit: Task[];
   teams: LeaderTeam[];
+  /** Teams on this desk only because you stand in for their (away) leader. */
+  standin?: { team_id: string; team_name: string; leader_name: string; end_date: string; can_review: boolean }[];
+  /** Teams you lead yourself (admins: every team). */
+  led_team_ids?: string[];
 }
 
 export function useTaskDetail(id: string | null) {

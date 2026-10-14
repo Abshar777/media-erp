@@ -71,6 +71,7 @@ from app.routers import ad_flags as ad_flags_router
 from app.routers import task_presets as task_presets_router
 from app.routers import task_projects as task_projects_router
 from app.routers import auto_approve as auto_approve_router
+from app.routers import standin as standin_router
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.utils.response import success_response
 
@@ -125,6 +126,11 @@ async def lifespan(app: FastAPI):
     import asyncio as _asyncio
     from app.services.auto_approve_service import run_forever as _auto_run_forever
     auto_approve_task = _asyncio.create_task(_auto_run_forever(_get_db()))
+    try:
+        from app.services.standin_service import ensure_indexes as _standin_indexes
+        await _standin_indexes(_get_db())
+    except Exception as exc:
+        print(f"[standin] index: {exc!r}", flush=True)
 
     # Fund requests: hand pending ones to finance, collect decisions (every 60 s)
     from app.services.fund_request_service import start_fund_request_worker
@@ -211,6 +217,7 @@ app.include_router(ad_flags_router.router)
 app.include_router(task_presets_router.router)
 app.include_router(task_projects_router.router)
 app.include_router(auto_approve_router.router)
+app.include_router(standin_router.router)
 
 # Serve uploaded files at /uploads/<filename>
 # These are publicly reachable via ngrok so Instagram can fetch images.

@@ -351,6 +351,15 @@ Platforms with `auth`/`callback` pairs: `google_ads`, `ga4`, `facebook_ads`, `fa
 | PUT | `/auto-approve` | JWT (team leader) | `{enabled, delay_minutes}`; turning off removes your timers from waiting work |
 | POST | `/auto-approve/hold/{task_id}` | JWT (team leader / elevated) | `{hold}`: stop / resume auto-approval for one task waiting in review |
 
+## Stand-in — `/api/v1/standin`
+**Used by:** `useStandin` / `useHandOver` / `useEndStandin` → Leader Desk (`StandinControl`, `StandinBanner`), Sidebar.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/standin` | JWT | My hand-over as a leader (`mine`), where I stand in (`standing_in`), `can_use`, led teams |
+| PUT | `/standin` | JWT (team leader) | `{standin_id, start_date, end_date, team_ids?, can_review, note?}` — hand over (replaces an open one) |
+| DELETE | `/standin` | JWT | End it now ("I'm back") / cancel a scheduled one |
+
 ## Notification prefs — `/api/v1/notification-prefs`
 **Used by:** `useNotificationPrefs` → settings.
 

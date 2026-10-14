@@ -25,6 +25,7 @@ const ALERT_TYPES = new Set<string>([
   "ad_report_due",    // today's ad numbers are missing
   "ad_report_overdue",
   "ad_flagged",       // an ad was sent to you to recreate
+  "standin_assigned", // you're covering for a leader from now
 ]);
 
 const PREF_KEY = "notify:desktop";
