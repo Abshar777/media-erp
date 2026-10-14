@@ -120,3 +120,33 @@ If a mistake is listed here, do NOT repeat it.
 **How to avoid:** Never hardcode a port in any production Dockerfile. Always use `${PORT:-default}` pattern or read from env.
 
 ---
+
+### 2026-10-13 · Auto-approve · background approver in its own thread / event loop
+
+**Bug:** The first version ran the auto-approve poller in a daemon thread with `asyncio.new_event_loop()`. Approving goes through `edit_task`, which pushes live-socket notifications, and those sockets belong to the web server's loop, so sends from another loop can hang or fail. Separately, a live QA run looked like "the background approver never runs". The real cause was the QA script itself: it toggled the leader off/on between submit and fire, and by design that drops pending timers.
+
+**Fix:** `run_forever(db)` is started with `asyncio.create_task` from `main.py`'s lifespan (same loop as the requests) and cancelled on shutdown. Failures are printed as `[auto-approve] ...`.
+
+**How to avoid:** Never run code that touches request-loop resources (websockets, Motor client, notification pushers) on a second event loop. Use a lifespan task. When a scheduled job "doesn't run", first check whether the test setup itself cancelled the schedule.
+
+---
+
+### 2026-10-13 · Auto-approve · stale promises after switching off / in the submit reply
+
+**Bug:** (1) Turning the switch off left the leader's timers on waiting tasks. The approver skipped them correctly, but the Leader Desk card and the employee's task detail still said "Auto-approves in 24 min" until the timer ran out. (2) The submit reply was serialized before the timers were written, so the employee didn't see "approved around H:MM" until a refetch.
+
+**Fix:** `save_settings(enabled=False)` `$pull`s that leader's entries from waiting tasks, and the frontend invalidates `["projects"]`. `edit_task` re-reads the task whenever timers were scheduled. Both are covered by tests that fail without the fix.
+
+**How to avoid:** When state is enforced lazily ("checked at fire time"), make sure nothing in the UI displays the stale state as a promise. Clean it eagerly or hide it.
+
+---
+
+### 2026-10-14 · Auto-approve · deactivated check used the wrong field; own work auto-approved
+
+**Bug:** (1) `_still_eligible` treated a leader as active unless `status != "active"`, but sign-in (`middleware/auth.py`) uses `is_active`. A leader deactivated with only `is_active: false` kept auto-approving. (2) Leaders may approve their own work by hand (a deliberate exemption), so a leader's own auto-approve silently approved their own submissions: no second pair of eyes and no deliberate act.
+
+**Fix:** `_is_active(user)` checks both fields, at scheduling and at fire time. A leader's own submissions get no timer from their own switch.
+
+**How to avoid:** When checking whether a user is active, use the same field the auth middleware uses (or both). When automating an action someone does by hand, re-ask whether every manual exemption still makes sense once nobody actively decides.
+
+---

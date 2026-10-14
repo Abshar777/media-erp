@@ -45,6 +45,14 @@ def _serialize(doc: dict) -> dict:
         out["created_at"] = _dt_to_utc_iso(out["created_at"])
     if "updated_at" in out:
         out["updated_at"] = _dt_to_utc_iso(out["updated_at"])
+    # Auto-approve schedule / hold (auto_approve_service) — UTC ISO for the UI's countdown.
+    if out.get("auto_approvals"):
+        out["auto_approvals"] = [{**e, "at": _dt_to_utc_iso(e.get("at"))} for e in out["auto_approvals"]]
+    if "auto_approve_submitted_at" in out:
+        out["auto_approve_submitted_at"] = _dt_to_utc_iso(out["auto_approve_submitted_at"])
+    if out.get("auto_approve_hold"):
+        out["auto_approve_hold"] = {**out["auto_approve_hold"], "at": _dt_to_utc_iso(out["auto_approve_hold"].get("at"))}
+    out.pop("auto_approve_claim", None)
     # Serialize nested datetime objects inside timing intervals
     if out.get("timing"):
         timing = out["timing"]
@@ -138,6 +146,8 @@ async def get_chain_history(db: AsyncIOMotorDatabase, doc: dict) -> tuple[list[d
                 "note":        e.get("note"),
                 "team_id":     tid,
                 "team_name":   e.get("team_name") or name_map.get(tid, ""),
+                # Approved by a leader's auto-approve (auto_approve_service).
+                **({"auto": True} if e.get("auto") else {}),
             })
     merged.sort(key=lambda x: x.get("timestamp") or "")
 

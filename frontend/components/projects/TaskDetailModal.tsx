@@ -14,6 +14,7 @@ import {
   Copy,
   Check,
   FolderKanban,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUpdateTask, useTaskDetail } from "@/hooks/useProjects";
@@ -712,6 +713,22 @@ export function TaskDetailModal({
                     )}
                   </div>
                 )}
+
+                {/* A leader's auto-approve covers this submission: say when (or that it's held). */}
+                {task.status === "pending_review" && (task.auto_approvals?.length || task.auto_approve_hold) ? (() => {
+                  const next = [...(task.auto_approvals ?? [])].sort((x, y) => Date.parse(x.at) - Date.parse(y.at))[0];
+                  const waiting = (task.verifications ?? []).some((v) => v.status !== "passed");
+                  return (
+                    <p className="flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-300">
+                      <Zap className="size-3.5 shrink-0 fill-current" />
+                      {task.auto_approve_hold
+                        ? "A team leader will approve this by hand."
+                        : waiting
+                          ? "Will be approved automatically once the verifiers sign off."
+                          : `Will be approved automatically around ${new Date(next!.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`}
+                    </p>
+                  );
+                })() : null}
 
                 {/* Submission note */}
                 {(task.caption || (task.submission_attachments?.length ?? 0) > 0) && (

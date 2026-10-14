@@ -117,6 +117,12 @@ export interface Task {
   verify_instructions?: string;
   /** Resolved sign-off list, present once the task has entered review. */
   verifications?: TaskVerification[];
+  // A leader's auto-approve (backend auto_approve_service): one timer per leader with
+  // the switch on; the first due approves. Present only while the task waits in review.
+  auto_approvals?: { leader_id: string; leader_name: string; delay_minutes: number; at: string }[];
+  auto_approve_submitted_at?: string;
+  /** A leader stopped auto-approval for this task — it waits for a manual decision. */
+  auto_approve_hold?: { by: string; by_name: string; at: string } | null;
   /** Screenshots handed in with the submission note, kept apart from
       `attachments` so the approver sees what this round of review is about. */
   submission_attachments?: Attachment[];

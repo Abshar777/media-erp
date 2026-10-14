@@ -342,6 +342,15 @@ Platforms with `auth`/`callback` pairs: `google_ads`, `ga4`, `facebook_ads`, `fa
 | PUT | `/settings/email-smtp` | Super Admin | Update SMTP config |
 | POST | `/settings/email-smtp/test` | Super Admin | Send SMTP test email |
 
+## Auto-approve — `/api/v1/auto-approve`
+**Used by:** `useAutoApprove` / `useSaveAutoApprove` / `useHoldAutoApprove` → Leader Desk (`AutoApproveControl`, `AutoApproveStrip`).
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/auto-approve` | JWT | Your switch + delay, `can_use` (you lead a team), `teams`, `max_delay_minutes` |
+| PUT | `/auto-approve` | JWT (team leader) | `{enabled, delay_minutes}`; turning off removes your timers from waiting work |
+| POST | `/auto-approve/hold/{task_id}` | JWT (team leader / elevated) | `{hold}`: stop / resume auto-approval for one task waiting in review |
+
 ## Notification prefs — `/api/v1/notification-prefs`
 **Used by:** `useNotificationPrefs` → settings.
 

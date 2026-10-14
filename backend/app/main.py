@@ -70,6 +70,7 @@ from app.routers import ad_reports as ad_reports_router
 from app.routers import ad_flags as ad_flags_router
 from app.routers import task_presets as task_presets_router
 from app.routers import task_projects as task_projects_router
+from app.routers import auto_approve as auto_approve_router
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.utils.response import success_response
 
@@ -118,6 +119,13 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=start_recurring_scheduler, daemon=True, name="recurring-task-scheduler").start()
     logger.info("Recurring-task scheduler started")
 
+    # Leaders' auto-approve: approves due submissions every 30 s. A task in THIS
+    # event loop (not a thread): it approves through the request handler, whose
+    # live-socket notifications belong to this loop.
+    import asyncio as _asyncio
+    from app.services.auto_approve_service import run_forever as _auto_run_forever
+    auto_approve_task = _asyncio.create_task(_auto_run_forever(_get_db()))
+
     # Fund requests: hand pending ones to finance, collect decisions (every 60 s)
     from app.services.fund_request_service import start_fund_request_worker
     threading.Thread(target=start_fund_request_worker, daemon=True, name="fund-request-worker").start()
@@ -130,6 +138,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=start_ad_report_scheduler, daemon=True, name="ad-report-scheduler").start()
     logger.info("Ad report reminder scheduler started")
     yield
+    auto_approve_task.cancel()
     await close_db()
 
 
@@ -201,6 +210,7 @@ app.include_router(ad_reports_router.router)
 app.include_router(ad_flags_router.router)
 app.include_router(task_presets_router.router)
 app.include_router(task_projects_router.router)
+app.include_router(auto_approve_router.router)
 
 # Serve uploaded files at /uploads/<filename>
 # These are publicly reachable via ngrok so Instagram can fetch images.

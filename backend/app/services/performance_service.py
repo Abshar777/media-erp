@@ -241,7 +241,8 @@ async def build_performance_report(
 
         # ── The person approving ─────────────────────────────────────────────
         for h in task.get("history") or []:
-            if h.get("action") != APPROVE_ACTION:
+            # Auto-approvals (a leader's switch) are not review work: left out.
+            if h.get("action") != APPROVE_ACTION or h.get("auto"):
                 continue
             ts = _aware(h.get("timestamp"))
             actor = h.get("actor_id") or ""
@@ -427,7 +428,7 @@ async def list_performance_tasks(
         query["assigned_to"] = user_id
         query["status"] = "approved"
     elif role == "approver":
-        query["history"] = {"$elemMatch": {"action": APPROVE_ACTION, "actor_id": user_id}}
+        query["history"] = {"$elemMatch": {"action": APPROVE_ACTION, "actor_id": user_id, "auto": {"$ne": True}}}
     elif role == "verifier":
         query["verifications"] = {"$elemMatch": {"user_id": user_id}}
     else:
@@ -469,7 +470,7 @@ async def list_performance_tasks(
 
         elif role == "approver":
             for h in task.get("history") or []:
-                if h.get("action") != APPROVE_ACTION or h.get("actor_id") != user_id:
+                if h.get("action") != APPROVE_ACTION or h.get("actor_id") != user_id or h.get("auto"):
                     continue
                 ts = _aware(h.get("timestamp"))
                 if not ts or not in_window(ts):

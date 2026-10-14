@@ -1360,7 +1360,11 @@ async def edit_task(
             "timestamp":   _dtm.now(_tz.utc),
             "from_status": cur_status,
             "to_status":   new_status,
-            "note":        (updates.get("reedit_reason") or None) if new_status == "reedit" else None,
+            "note":        ((updates.get("reedit_reason") or None) if new_status == "reedit"
+                            else ("Auto-approved" if current_user.get("_auto_approval") else None)),
+            # Set by auto_approve_service when it approves in a leader's name; the
+            # Performance report leaves these out of the leader's "time to approve".
+            **({"auto": True} if current_user.get("_auto_approval") and new_status == "approved" else {}),
             "team_id":     acting_team_id,
             "team_name":   acting_team_name,
         })
@@ -1531,6 +1535,23 @@ async def edit_task(
                     f'"{task["title"]}" has been approved and assigned to you.',
                     {"task_id": str(routed_result.inserted_id), "task_title": task["title"]},
                 )
+
+    # ── Auto-approve (a leader's own switch) ─────────────────────────────────
+    # Entering review schedules it for the team's leaders who turned it on; leaving
+    # review (approved / sent back) ends it. A 0-minute delay approves right away.
+    if new_status and new_status != cur_status:
+        from app.services import auto_approve_service as _auto
+        if new_status == "pending_review":
+            entries = await _auto.schedule_on_submit(db, task_id)
+            if entries:
+                # Re-read so the reply carries the new timers (or the instant approval).
+                if entries[0]["delay_minutes"] == 0:
+                    await _auto.try_auto_approve(db, task_id)
+                from app.services.project_service import _serialize as _ser
+                _fresh = await db["project_tasks"].find_one({"_id": ObjectId(task_id)})
+                task = _ser(_fresh) if _fresh else task
+        elif cur_status == "pending_review":
+            await _auto.clear(db, task_id)
 
     return success_response(data=task, message="Task updated")
 

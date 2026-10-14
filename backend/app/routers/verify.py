@@ -263,6 +263,17 @@ async def submit_verification(
     except Exception as exc:
         print(f"[verify] notify failed: {exc}", flush=True)
 
+    # Auto-approve (a leader's switch) waits for verifiers: the last sign-off lets a
+    # due one go through now; a rejection sends the work back, ending the schedule.
+    from app.services import auto_approve_service as _auto
+    try:
+        if not body.passed:
+            await _auto.clear(db, task_id)
+        elif workflow.all_verified(updated or {}) and await _auto.try_auto_approve(db, task_id):
+            updated = await db["project_tasks"].find_one({"_id": task["_id"]}, {"status": 1}) or updated
+    except Exception as exc:
+        print(f"[verify] auto-approve failed: {exc}", flush=True)
+
     return success_response(
         data={"verifications": _out(verifications), "status": (updated or {}).get("status")},
         message="Verification recorded",

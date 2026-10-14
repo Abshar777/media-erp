@@ -19,6 +19,8 @@ import {
 } from "@/hooks/useProjects";
 import { TaskDetailModal } from "@/components/projects/TaskDetailModal";
 import { AdFlagCard } from "@/components/leader/AdFlagCard";
+import { AutoApproveControl } from "@/components/leader/AutoApproveControl";
+import { AutoApproveStrip } from "@/components/leader/AutoApproveStrip";
 import { useAdFlagInbox } from "@/hooks/useAdFlags";
 import type { AdFlagScope } from "@/types/adFlag";
 
@@ -135,6 +137,8 @@ function ReviewCard({
             )}
           </div>
         </button>
+
+        <AutoApproveStrip task={task} />
 
         <div className="border-t px-4 py-3 flex gap-2">
           <Button
@@ -498,13 +502,17 @@ export default function LeaderPage() {
   return (
     <div className="flex flex-col gap-5 pb-6">
       {urlWatcher}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <ClipboardCheck className="size-6 text-primary" /> Leader Desk
-        </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Review your team&apos;s submissions and distribute new work.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <ClipboardCheck className="size-6 text-primary" /> Leader Desk
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Review your team&apos;s submissions and distribute new work.
+          </p>
+        </div>
+        {/* The leader's own switch — sits where approvals happen. */}
+        <AutoApproveControl />
       </div>
 
       {/* Tabs */}
