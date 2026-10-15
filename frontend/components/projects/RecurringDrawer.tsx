@@ -164,7 +164,7 @@ function SeriesCard({ s, focused }: { s: RecurringSeries; focused: boolean }) {
           {s.assignees.length > 3 ? ` +${s.assignees.length - 3}` : ""}
         </span>
         <span>·</span>
-        <span>{describePattern(s.frequency, s.anchor_date, s.month_day, s.weekdays)}</span>
+        <span>{describePattern(s.frequency, s.anchor_date, s.month_day, s.weekdays, s.skip_sundays)}</span>
         {s.status === "active" && <><span>·</span><span>next: <b className="font-medium text-foreground">{nextLabel(s.next_date)}</b></span></>}
       </div>
 
@@ -252,10 +252,14 @@ function EditForm({ s, onDone }: { s: RecurringSeries; onDone: () => void }) {
   const [priority, setPriority] = useState<TaskPriority>(s.priority);
   const [due, setDue] = useState(s.due_offset_days);
   const [people, setPeople] = useState<string[]>(s.assignees.map((a) => a.id));
+  const [skipSun, setSkipSun] = useState(!!s.skip_sundays);
 
   const save = async () => {
     if (!title.trim() || people.length === 0) return;
-    await update.mutateAsync({ id: s.id, title: title.trim(), priority, due_offset_days: due, assignees: people });
+    await update.mutateAsync({
+      id: s.id, title: title.trim(), priority, due_offset_days: due, assignees: people,
+      ...(s.frequency === "daily" && skipSun !== !!s.skip_sundays ? { skip_sundays: skipSun } : {}),
+    });
     onDone();
   };
 
@@ -276,6 +280,16 @@ function EditForm({ s, onDone }: { s: RecurringSeries; onDone: () => void }) {
           className="h-auto px-2.5 py-1.5"
           options={DUE_OFFSET_OPTIONS.map((o) => ({ value: o.value, label: `Due: ${o.label.toLowerCase()}` }))} />
       </div>
+      {s.frequency === "daily" && (
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-2.5 py-1.5 text-sm select-none">
+          <span>
+            Skip Sundays
+            <span className="block text-[11px] text-muted-foreground">{skipSun ? "Monday to Saturday" : "Every day, Sundays included"}</span>
+          </span>
+          <input type="checkbox" checked={skipSun} onChange={(e) => setSkipSun(e.target.checked)}
+            aria-label="Skip Sundays" className="size-4 shrink-0 rounded border accent-primary" />
+        </label>
+      )}
       <UserPicker
         users={directory}
         selectedIds={people}

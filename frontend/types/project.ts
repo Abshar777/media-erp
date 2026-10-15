@@ -185,6 +185,8 @@ export interface TaskRecurrence {
   total: number | null;
   /** This copy's date, YYYY-MM-DD (IST). */
   date: string;
+  /** Daily that skips Sundays (Mon–Sat). */
+  skip_sundays?: boolean;
 }
 
 export interface RepeatSpec {
@@ -198,6 +200,8 @@ export interface RepeatSpec {
   weekdays?: number[] | null;
   /** Monthly: 1–31 (shorter months use their last day). Omitted = today's date. */
   month_day?: number | null;
+  /** Daily: skip Sundays (Mon–Sat). Omitted = the default, which is to skip them. */
+  skip_sundays?: boolean;
 }
 
 /** POST /projects/batch — one task for several people, optionally repeating. */
@@ -227,6 +231,10 @@ export interface RecurringSeries {
   weekday?: number | null;
   /** Weekly: every chosen day (older one-day series: just their weekday). */
   weekdays?: number[] | null;
+  /** Daily: skips Sundays (Mon–Sat). */
+  skip_sundays?: boolean;
+  /** The series' original first day (the anchor may move when Sundays are switched). */
+  started_on?: string;
   next_date: string | null;
   occurrences_total: number | null;
   occurrences_done: number;
@@ -248,6 +256,8 @@ export interface UpdateRecurringPayload {
   priority?: TaskPriority;
   assignees?: string[];
   due_offset_days?: number;
+  /** Daily only: skip Sundays from the next copy on. */
+  skip_sundays?: boolean;
 }
 
 export interface UpdateTaskPayload {

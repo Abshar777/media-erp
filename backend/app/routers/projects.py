@@ -585,7 +585,10 @@ async def add_task_batch(
     # ── Repeating ─────────────────────────────────────────────────────────────
     if body.repeat:
         r = body.repeat
-        msg = rec.validate_repeat(r.frequency, r.count, r.due_offset_days, r.weekday, r.month_day, r.weekdays)
+        # Daily skips Sundays unless the leader says otherwise.
+        skip_sundays = r.frequency == "daily" and (r.skip_sundays is not False)
+        msg = rec.validate_repeat(r.frequency, r.count, r.due_offset_days, r.weekday, r.month_day, r.weekdays,
+                                  r.skip_sundays)
         if msg:
             return error_response(msg, status_code=422)
         if not (template.get("title") or "").strip():
@@ -594,7 +597,7 @@ async def add_task_batch(
             return error_response("Only a team leader can set up repeating tasks.", status_code=403)
 
         today = rec.today_ist()
-        starts = rec.first_date(r.frequency, today, r.weekday, r.month_day, r.weekdays)
+        starts = rec.first_date(r.frequency, today, r.weekday, r.month_day, r.weekdays, skip_sundays)
         if starts > today:
             # Nothing is created today, so check now what the first copy would
             # trip over later (raise_task's approver rule) rather than letting the
@@ -609,7 +612,7 @@ async def add_task_batch(
 
         series, result = await rec.create_series(
             db, template, assignees, r.frequency, r.count, r.due_offset_days, current_user,
-            weekday=r.weekday, month_day=r.month_day, weekdays=r.weekdays,
+            weekday=r.weekday, month_day=r.month_day, weekdays=r.weekdays, skip_sundays=skip_sundays,
         )
         if not result["created"] and starts > today:
             return success_response(
@@ -758,12 +761,22 @@ async def update_recurring(
             return error_response(err, status_code=422)
         updates["assignees"] = ids
 
-    if updates:
+    if body.skip_sundays is not None and s.get("frequency") != "daily":
+        return error_response("Skipping Sundays is for a daily task.", status_code=422)
+
+    if updates or (body.skip_sundays is not None and body.skip_sundays != rec.skips_sundays(s)):
         if ended:
             return error_response("This repeating task has ended and can't be edited.", status_code=409)
+    if updates:
         updates["updated_at"] = datetime.now(timezone.utc)
         await db["recurring_tasks"].update_one({"_id": s["_id"]}, {"$set": updates})
         s = await db["recurring_tasks"].find_one({"_id": s["_id"]})
+    if body.skip_sundays is not None and body.skip_sundays != rec.skips_sundays(s):
+        if not await rec.set_skip_sundays(db, s, body.skip_sundays):
+            return error_response("This repeating task just changed — refresh and try again.", status_code=409)
+        s = await db["recurring_tasks"].find_one({"_id": s["_id"]})
+        if s.get("status") == "active":
+            await rec.advance_series(db, s["_id"])      # today's copy now, if today is a day again
 
     if body.action == "pause":
         if s["status"] != "active":

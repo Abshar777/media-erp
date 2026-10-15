@@ -1,5 +1,5 @@
 from typing import Literal, Optional
-from pydantic import BaseModel, StrictInt
+from pydantic import BaseModel, StrictBool, StrictInt
 
 
 class Attachment(BaseModel):
@@ -49,6 +49,8 @@ class RepeatSpec(BaseModel):
     # Weekly on several days (Mon 0 … Sun 6), e.g. [0, 1, 4, 6]. Wins over `weekday`.
     weekdays: Optional[list[StrictInt]] = None
     month_day: Optional[StrictInt] = None
+    # Daily: skip Sundays (Mon–Sat). None = the default, which is to skip them.
+    skip_sundays: Optional[StrictBool] = None
 
 
 class BatchCreateRequest(CreateTaskRequest):
@@ -72,6 +74,8 @@ class UpdateRecurringRequest(BaseModel):
     priority: Optional[str] = None
     assignees: Optional[list[str]] = None
     due_offset_days: Optional[int] = None
+    # Daily only: skip Sundays from the next copy on (or stop skipping them).
+    skip_sundays: Optional[StrictBool] = None
 
 
 class UpdateTaskRequest(BaseModel):

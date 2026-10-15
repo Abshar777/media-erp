@@ -16,6 +16,11 @@ Series document
   anchor_date         "YYYY-MM-DD" (IST)          ← fixes the weekday / day-of-month
   weekdays            [0..6] (weekly; Mon 0)       ← several days a week; absent on older
                                                      series = just the anchor's weekday
+  skip_sundays        bool (daily)                 ← every day except Sunday (2026-10-15);
+                                                     the default for new daily series. Uses
+                                                     the same arithmetic as weekly on Mon–Sat,
+                                                     so the anchor is never a Sunday.
+  started_on          the original first day, kept when a series is re-anchored
   next_index          anchor-relative index of the next occurrence
   next_date           its date, or None once finished
   occurrences_total   N, or None = until stopped
@@ -63,6 +68,8 @@ MAX_COUNT = {"daily": 365, "weekly": 104, "monthly": 36}
 MAX_ASSIGNEES = 25
 MAX_DUE_OFFSET_DAYS = 60
 CATCHUP_CAP = 31          # most missed copies one series creates in one run
+MON_TO_SAT = [0, 1, 2, 3, 4, 5]   # a daily series that skips Sundays (Python: Monday 0 … Sunday 6)
+SUNDAY = 6
 POLL_SECONDS = 60
 ELEVATED_ROLES = ("Super Admin", "Admin", "Coordinator")
 
@@ -91,7 +98,13 @@ def week_offsets(anchor: date, weekdays) -> list[int] | None:
     return sorted((d - anchor.weekday()) % 7 for d in days)
 
 
+def skips_sundays(s: dict) -> bool:
+    return s.get("frequency") == "daily" and bool(s.get("skip_sundays"))
+
+
 def series_offsets(s: dict) -> list[int] | None:
+    if skips_sundays(s):
+        return week_offsets(date.fromisoformat(s["anchor_date"]), MON_TO_SAT)
     if s.get("frequency") != "weekly" or not s.get("weekdays"):
         return None
     return week_offsets(date.fromisoformat(s["anchor_date"]), s["weekdays"])
@@ -111,6 +124,10 @@ def occurrence_date(frequency: str, anchor: date, index: int, month_day: int | N
     and without it every later month would land on the 28th too.
     """
     if frequency == "daily":
+        # Skipping Sundays: Mon–Sat, by the weekly arithmetic below (offsets from the anchor).
+        if offsets:
+            k = len(offsets)
+            return anchor + timedelta(weeks=index // k, days=offsets[index % k])
         return anchor + timedelta(days=index)
     if frequency == "weekly":
         # Several days a week: copy i is in week i // k, on the (i % k)-th chosen day.
@@ -125,11 +142,14 @@ def occurrence_date(frequency: str, anchor: date, index: int, month_day: int | N
 
 
 def first_date(frequency: str, today: date, weekday: int | None = None, month_day: int | None = None,
-               weekdays: list[int] | None = None) -> date:
+               weekdays: list[int] | None = None, skip_sundays: bool = False) -> date:
     """
     The series' first day: today, or the next chosen weekday (the soonest of
     several) / day of the month. Weekdays use Python's numbering (Monday 0 … Sunday 6).
+    A daily series that skips Sundays and is set up on a Sunday starts on Monday.
     """
+    if frequency == "daily" and skip_sundays and today.weekday() == SUNDAY:
+        return today + timedelta(days=1)
     if frequency == "weekly" and weekdays:
         return min(today + timedelta(days=(d - today.weekday()) % 7) for d in weekdays)
     if frequency == "weekly" and weekday is not None:
@@ -144,11 +164,12 @@ def first_index_on_or_after(frequency: str, anchor: date, start: int, target: da
                             month_day: int | None = None, offsets: list[int] | None = None) -> int:
     """Smallest index >= `start` whose date is on or after `target` (used on resume)."""
     days = (target - anchor).days
-    if frequency == "daily":
+    if frequency == "daily" and not offsets:
         return max(start, days)
     if frequency == "weekly" and not offsets:
         return max(start, -(-days // 7))          # ceiling division
-    if frequency == "weekly":                     # jump to the target's week, then step (≤ 7 steps)
+    if offsets:                                   # weekly on several days, or daily without Sundays:
+                                                  # jump to the target's week, then step (≤ 7 steps)
         i = max(start, (max(days, 0) // 7) * len(offsets))
         while occurrence_date(frequency, anchor, i, month_day, offsets) < target:
             i += 1
@@ -250,9 +271,12 @@ async def validate_assignees(db: AsyncIOMotorDatabase, assignees) -> tuple[list[
     return ids, {a: users[a].get("name", "") for a in ids}, ""
 
 
-def validate_repeat(frequency: str, count, due_offset_days, weekday=None, month_day=None, weekdays=None) -> str:
+def validate_repeat(frequency: str, count, due_offset_days, weekday=None, month_day=None, weekdays=None,
+                    skip_sundays=None) -> str:
     if frequency not in FREQUENCIES:
         return "Choose daily, weekly or monthly."
+    if skip_sundays and frequency != "daily":
+        return "Skipping Sundays is for a daily task — for weekly, choose the days."
     if weekday is not None and (frequency != "weekly" or isinstance(weekday, bool) or not 0 <= weekday <= 6):
         return "Choose a day of the week for a weekly task."
     if weekdays is not None:
@@ -302,6 +326,7 @@ async def _spawn_occurrence(db, series: dict, copy_number: int, occ: date, actor
             "recurrence": {
                 "id": str(series["_id"]),
                 "frequency": series["frequency"],
+                **({"skip_sundays": True} if skips_sundays(series) else {}),
                 "index": copy_number,
                 "total": series.get("occurrences_total"),
                 "date": occ.isoformat(),
@@ -391,14 +416,15 @@ async def _pause(db, series: dict, reason: str) -> None:
 async def create_series(db: AsyncIOMotorDatabase, template: dict, assignees: list[str],
                         frequency: str, count, due_offset_days: int, creator: dict,
                         weekday: int | None = None, month_day: int | None = None,
-                        weekdays: list[int] | None = None) -> tuple[dict, dict]:
+                        weekdays: list[int] | None = None, skip_sundays: bool = False) -> tuple[dict, dict]:
     """
     Insert a series anchored on its first day — today, or the chosen weekday /
     day of the month — and create today's copy now when the first day is today.
     """
     today = today_ist()
     days = sorted(set(weekdays)) if (frequency == "weekly" and weekdays) else None
-    anchor = first_date(frequency, today, weekday, month_day, days)
+    skip = frequency == "daily" and bool(skip_sundays)
+    anchor = first_date(frequency, today, weekday, month_day, days, skip)
     now = datetime.now(timezone.utc)
     doc = {k: template.get(k) for k in TEMPLATE_FIELDS}
     doc.update({
@@ -409,6 +435,8 @@ async def create_series(db: AsyncIOMotorDatabase, template: dict, assignees: lis
         "weekday": anchor.weekday() if frequency == "weekly" else None,
         # Only stored for several days; one day keeps the older shape (anchor's weekday).
         **({"weekdays": days} if days and len(days) > 1 else {}),
+        **({"skip_sundays": skip} if frequency == "daily" else {}),
+        "started_on": anchor.isoformat(),
         "next_index": 0,
         "next_date": anchor.isoformat(),
         "occurrences_total": count,
@@ -448,6 +476,64 @@ async def resume_series(db: AsyncIOMotorDatabase, series: dict) -> dict:
     return await db["recurring_tasks"].find_one({"_id": series["_id"]})
 
 
+async def set_skip_sundays(db: AsyncIOMotorDatabase, series: dict, skip: bool) -> bool:
+    """
+    Turn "skip Sundays" on or off for a daily series from its NEXT copy on.
+    Copies already created never change. The series is re-anchored on its next
+    day (a Sunday moves to Monday when skipping), so the Mon–Sat arithmetic
+    always has a non-Sunday anchor. Compare-and-set on next_index / status, so a
+    scheduler run in between can't be undone (or a stale write redo a day).
+    Returns True when this call made the change.
+    """
+    if series.get("frequency") != "daily":
+        return False
+    if series.get("status") not in ("active", "paused") or not series.get("next_date"):
+        # Over (or nothing left to create): just record the choice.
+        res = await db["recurring_tasks"].update_one(
+            {"_id": series["_id"], "next_index": series.get("next_index")}, {"$set": {"skip_sundays": skip}})
+        return bool(res.modified_count)
+    nxt = date.fromisoformat(series["next_date"])
+    if skip and nxt.weekday() == SUNDAY:
+        nxt += timedelta(days=1)
+    today = today_ist()
+    sunday = nxt - timedelta(days=1)
+    if (not skip and nxt.weekday() == 0 and sunday >= today
+            and not await db["project_tasks"].find_one(
+                {"recurrence.id": str(series["_id"]), "recurrence.date": sunday.isoformat()}, {"_id": 1})):
+        # Sundays back on: a next copy on Monday only because Sunday was skipped
+        # comes back to that Sunday (today, or this coming one) — unless its copy
+        # already exists (switched off and on again the same Sunday): re-aiming at
+        # it would count the day twice and cut a counted series short.
+        nxt = sunday
+    now = datetime.now(timezone.utc)
+    res = await db["recurring_tasks"].update_one(
+        {"_id": series["_id"], "status": series["status"], "next_index": series.get("next_index")},
+        {"$set": {"skip_sundays": skip, "anchor_date": nxt.isoformat(), "next_index": 0,
+                  "next_date": nxt.isoformat(), "updated_at": now,
+                  "started_on": series.get("started_on") or series.get("anchor_date")}},
+    )
+    return bool(res.modified_count)
+
+
+async def migrate_daily_skip_sundays(db: AsyncIOMotorDatabase) -> int:
+    """
+    One-off, idempotent (2026-10-15): daily series made before "skip Sundays"
+    existed get it on from their next copy — Sunday copies already created stay.
+    Series that have ended are only marked as not skipping (that's what they did).
+    Safe from several workers at once (set_skip_sundays compares-and-sets).
+    """
+    changed = 0
+    async for s in db["recurring_tasks"].find({"frequency": "daily", "skip_sundays": {"$exists": False}}):
+        if s.get("status") in ("active", "paused") and s.get("next_date"):
+            changed += await set_skip_sundays(db, s, True)
+        else:
+            await db["recurring_tasks"].update_one(
+                {"_id": s["_id"], "skip_sundays": {"$exists": False}}, {"$set": {"skip_sundays": False}})
+    if changed:
+        logger.info("Daily repeating tasks now skip Sundays: %d series updated", changed)
+    return changed
+
+
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     """Idempotent. The unique index is what makes concurrent workers safe."""
     await db["recurring_tasks"].create_index([("status", 1), ("next_date", 1)])
@@ -477,6 +563,8 @@ def serialize_series(s: dict, names: dict[str, str]) -> dict:
         "weekday": s.get("weekday"),
         # Every chosen day (older one-day series: just their weekday).
         "weekdays": s.get("weekdays") or ([s["weekday"]] if s.get("weekday") is not None else None),
+        "skip_sundays": skips_sundays(s),
+        "started_on": s.get("started_on") or s.get("anchor_date"),
         "next_date": s.get("next_date"),
         "occurrences_total": s.get("occurrences_total"),
         "occurrences_done": s.get("occurrences_done", 0),
@@ -516,6 +604,10 @@ def start_recurring_scheduler() -> None:
         client = AsyncIOMotorClient(settings.mongodb_url)
         db = client[settings.mongodb_db_name]
         await ensure_indexes(db)
+        try:
+            await migrate_daily_skip_sundays(db)
+        except Exception as exc:                        # never blocks the scheduler
+            logger.error("Skip-Sundays migration failed: %s", exc)
         while True:
             try:
                 made = await run_due(db)

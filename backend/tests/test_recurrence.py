@@ -224,7 +224,10 @@ async def test_single_create_unchanged_no_new_fields(world):
 async def start(w, who="lead", **repeat):
     r = await w["call"]("POST", "/api/v1/projects/batch", who,
                         json=body(w, assignees=repeat.pop("assignees", [w["s"]["asha"], w["s"]["mira"]]),
-                                  repeat={"frequency": "daily", "count": 3, "due_offset_days": 0, **repeat}))
+                                  # These tests are about calendar-day arithmetic, so daily keeps its
+                                  # Sundays here; skipping them is tested in test_recurrence_sundays.py.
+                                  repeat={"frequency": "daily", "count": 3, "due_offset_days": 0,
+                                          "skip_sundays": False, **repeat}))
     return r
 
 

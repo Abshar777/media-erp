@@ -14,9 +14,10 @@ export function RepeatBadge({ task, className }: { task: Task; className?: strin
   const r = task.recurrence;
   if (!r) return null;
   const progress = r.total ? `${r.index}/${r.total}` : `#${r.index}`;
+  const freq = `${FREQ_LABEL[r.frequency]}${r.skip_sundays ? " (Mon–Sat)" : ""}`;
   const tip = r.total
-    ? `Repeats ${FREQ_LABEL[r.frequency]} · copy ${r.index} of ${r.total}`
-    : `Repeats ${FREQ_LABEL[r.frequency]} until stopped · copy ${r.index}`;
+    ? `Repeats ${freq} · copy ${r.index} of ${r.total}`
+    : `Repeats ${freq} until stopped · copy ${r.index}`;
   return (
     <span
       title={tip}

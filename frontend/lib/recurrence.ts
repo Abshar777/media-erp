@@ -58,8 +58,9 @@ export function weekOffsets(anchorISO: string, weekdays?: number[] | null): numb
 export function occurrenceDate(frequency: RepeatFrequency, anchorISO: string, index: number, monthDay?: number | null,
                                offsets?: number[] | null): string {
   const a = parse(anchorISO);
-  if (frequency === "daily") return toISO(new Date(a.getTime() + index * DAY_MS));
-  if (frequency === "weekly" && offsets?.length) {
+  // Daily with offsets = skipping Sundays: the same Mon–Sat arithmetic as weekly.
+  if (frequency === "daily" && !offsets?.length) return toISO(new Date(a.getTime() + index * DAY_MS));
+  if ((frequency === "weekly" || frequency === "daily") && offsets?.length) {
     const k = offsets.length;
     return toISO(new Date(a.getTime() + (Math.floor(index / k) * 7 + offsets[index % k]) * DAY_MS));
   }
@@ -74,7 +75,9 @@ export function serverWeekday(iso: string): number {
 
 /** The series' first day: today, or the soonest chosen weekday / the day of month. Mirrors first_date(). */
 export function firstDate(frequency: RepeatFrequency, todayISO: string, weekday?: number | null, monthDay?: number | null,
-                          weekdays?: number[] | null): string {
+                          weekdays?: number[] | null, skipSundays = false): string {
+  // A daily series that skips Sundays and is set up on a Sunday starts on Monday.
+  if (frequency === "daily" && skipSundays && serverWeekday(todayISO) === 6) return addDays(todayISO, 1);
   if (frequency === "weekly" && weekdays?.length) {
     const t = serverWeekday(todayISO);
     return addDays(todayISO, Math.min(...weekdays.map((d) => (((d - t) % 7) + 7) % 7)));
@@ -87,6 +90,14 @@ export function firstDate(frequency: RepeatFrequency, todayISO: string, weekday?
     return thisMonth >= todayISO ? thisMonth : addMonths(todayISO, 1, monthDay);
   }
   return todayISO;
+}
+
+/** A daily series that skips Sundays repeats on these (server weekdays, Mon 0 … Sat 5). */
+export const MON_TO_SAT = [0, 1, 2, 3, 4, 5];
+
+/** Offsets for a daily series: Mon–Sat when it skips Sundays, else none (every day). Mirrors series_offsets(). */
+export function dailyOffsets(anchorISO: string, skipSundays?: boolean | null): number[] | null {
+  return skipSundays ? weekOffsets(anchorISO, MON_TO_SAT) : null;
 }
 
 /** Monday-first labels, indexed by server weekday. */
@@ -113,9 +124,9 @@ export function weekdayList(weekdays: number[]): string {
 
 /** "Every day" · "Every Friday" · "Every Mon, Tue & Fri" · "Every weekday" · "Every month on the 10th". */
 export function describePattern(frequency: RepeatFrequency, anchorISO: string, monthDay?: number | null,
-                                weekdays?: number[] | null): string {
+                                weekdays?: number[] | null, skipSundays?: boolean | null): string {
   const a = parse(anchorISO);
-  if (frequency === "daily") return "Every day";
+  if (frequency === "daily") return skipSundays ? "Every day except Sunday" : "Every day";
   if (frequency === "weekly") {
     const days = [...new Set(weekdays ?? [])].sort((x, y) => x - y);
     if (days.length === 7) return "Every day of the week";

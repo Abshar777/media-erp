@@ -23,7 +23,7 @@ import { CalendarClock, Info, Repeat } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SelectField } from "@/components/ui/select-field";
 import {
-  DUE_OFFSET_OPTIONS, MAX_COUNT, WEEKDAY_LONG, WEEKDAY_SHORT, addDays, describePattern, firstDate,
+  DUE_OFFSET_OPTIONS, MAX_COUNT, WEEKDAY_LONG, WEEKDAY_SHORT, addDays, dailyOffsets, describePattern, firstDate,
   needsMonthEndNote, occurrenceDate, ordinal, serverWeekday, shortDate, shortDateFrom, shortDateWithDay, unitFor, weekOffsets,
 } from "@/lib/recurrence";
 import type { RepeatFrequency, RepeatSpec } from "@/types/project";
@@ -39,10 +39,12 @@ export interface RepeatValue {
   weekdays: number[] | null;
   /** Monthly: 1–31. null = today's date. */
   monthDay: number | null;
+  /** Daily: skip Sundays (Mon–Sat). On by default. */
+  skipSundays: boolean;
 }
 
 export const REPEAT_DEFAULT: RepeatValue = {
-  frequency: "once", count: 5, untilStopped: false, dueOffset: 0, weekdays: null, monthDay: null,
+  frequency: "once", count: 5, untilStopped: false, dueOffset: 0, weekdays: null, monthDay: null, skipSundays: true,
 };
 
 /** Weekly: the chosen days (sorted), or today's weekday when none was picked. */
@@ -64,6 +66,7 @@ export function toRepeatSpec(value: RepeatValue, todayISO: string): RepeatSpec |
     due_offset_days: value.dueOffset,
     ...(days ? { weekdays: days } : {}),
     ...(frequency === "monthly" && value.monthDay != null ? { month_day: value.monthDay } : {}),
+    ...(frequency === "daily" ? { skip_sundays: value.skipSundays !== false } : {}),
   };
 }
 
@@ -97,10 +100,11 @@ export function RepeatField({ value, onChange, anchorISO, assigneeCount }: Props
   const todayISO = anchorISO;
   const days = chosenWeekdays(value, todayISO);
   const monthDay = value.monthDay ?? Number(todayISO.slice(8, 10));
-  const startISO = firstDate(freq, todayISO, null, freq === "monthly" ? monthDay : null, freq === "weekly" ? days : null);
+  const skipSun = freq === "daily" && value.skipSundays !== false;
+  const startISO = firstDate(freq, todayISO, null, freq === "monthly" ? monthDay : null, freq === "weekly" ? days : null, skipSun);
   const md = freq === "monthly" ? monthDay : null;
   const startsToday = startISO === todayISO;
-  const offsets = freq === "weekly" ? weekOffsets(startISO, days) : null;
+  const offsets = freq === "weekly" ? weekOffsets(startISO, days) : freq === "daily" ? dailyOffsets(startISO, skipSun) : null;
   // Weekly counts weeks; copies = weeks × days a week.
   const perWeek = freq === "weekly" ? days.length : 1;
   const copies = count * perWeek;
@@ -159,6 +163,25 @@ export function RepeatField({ value, onChange, anchorISO, assigneeCount }: Props
             className="overflow-hidden"
           >
             <div className="space-y-3 pt-1">
+              {/* Daily: skip Sundays (on by default) */}
+              {freq === "daily" && (
+                <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border bg-background px-3 py-2 text-sm select-none">
+                  <span>
+                    <span className="font-medium">Skip Sundays</span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      {skipSun ? "Monday to Saturday — no task on Sundays" : "Every day, Sundays included"}
+                    </span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={skipSun}
+                    onChange={(e) => set({ skipSundays: e.target.checked })}
+                    aria-label="Skip Sundays"
+                    className="size-4 shrink-0 rounded border accent-primary"
+                  />
+                </label>
+              )}
+
               {/* Weekly: which day */}
               {freq === "weekly" && (
                 <div className="space-y-1.5">
@@ -276,7 +299,7 @@ export function RepeatField({ value, onChange, anchorISO, assigneeCount }: Props
               <div className="rounded-xl border border-primary/25 bg-primary/5 px-3.5 py-3" aria-live="polite">
                 <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                   <CalendarClock className="size-4 shrink-0 text-primary" />
-                  {describePattern(freq, startISO, md, freq === "weekly" ? days : null)}
+                  {describePattern(freq, startISO, md, freq === "weekly" ? days : null, skipSun)}
                   <span className="text-muted-foreground">·</span>
                   {value.untilStopped ? "until you stop it"
                     : freq === "weekly" ? `${count} ${count === 1 ? "week" : "weeks"}`

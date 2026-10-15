@@ -563,3 +563,8 @@ end-to-end, not just "the socket reconnects."
 - **`AccountView`:** Edit / End / Delete for the employee who made it (`can_own`), with "You made this account — only you are on it…".
 - **Bell:** `ad_self_created` opens the report (`metadata.link`). Types: `AdReport.can_own`, `self_made`; `AdToday.can_create_own`.
 - **QA fix (same day):** a leader who is also a plain member of another team now sees that team when making a report; picking a team they don't lead makes it theirs alone ("A team you don't lead makes it yours alone…", only them on it).
+
+### Repeating tasks — Skip Sundays (2026-10-15)
+- **`RepeatField`:** Daily shows a "Skip Sundays" switch (on by default — "Monday to Saturday — no task on Sundays"); the summary reads "Every day except Sunday" and its dates skip Sundays. `RepeatValue.skipSundays`, sent as `repeat.skip_sundays`.
+- **`lib/recurrence.ts`:** mirrors the server — `MON_TO_SAT`, `dailyOffsets`, `occurrenceDate` daily-with-offsets, `firstDate(..., skipSundays)`, `describePattern(..., skipSundays)`.
+- **`RecurringDrawer`:** pattern text uses it; the series Edit form has the same switch (daily only). **`RepeatBadge`:** "Repeats daily (Mon–Sat)".
