@@ -70,16 +70,16 @@ async def test_what_a_keeper_cannot_create(world):
     acc = await keeper_world(w)
     other_acc = (await make_account(w, name="Not hers")).json()["data"]["id"]
     r = await w["call"]("POST", B, "mira", json={"name": "Loose ad", "team_id": w["t1"],
-                                                  "assignees": [s["mira"]], "start_date": START})
-    assert r.status_code == 403, "not outside an account"
+                                                  "assignees": [s["asha"]], "start_date": START})
+    assert r.status_code == 403, "outside an account only for herself (self-service, 2026-10-15)"
     assert (await add_ad(w, other_acc)).status_code == 403, "not in an account she doesn't look after"
     assert (await add_ad(w, acc, team_ids=[w["t1"], w["t2"]])).status_code == 403, "not into other teams"
     assert (await add_ad(w, acc, team_id=w["t2"])).status_code == 403
     r = await add_ad(w, acc, assignees=[s["out"]])
     assert r.status_code == 403 and "account's teams" in r.json()["message"], "only people from the account's teams"
     assert (await add_ad(w, acc, assignees=[s["lead2"]])).status_code == 403
-    assert (await w["call"]("POST", B, "mira", json={"kind": "account", "name": "Mine", "team_id": w["t1"]})).status_code == 403, \
-        "she can't create accounts"
+    assert (await w["call"]("POST", B, "mira", json={"kind": "account", "name": "Mine", "team_id": w["t2"]})).status_code == 403, \
+        "not an account in a team she isn't in"
     assert (await add_ad(w, acc, who="asha")).status_code == 403, "a team member who doesn't look after it can't"
     await w["call"]("PATCH", f"{B}/{acc}", "lead", json={"action": "end"})
     assert (await add_ad(w, acc)).status_code == 422, "not into an ended account"
@@ -124,7 +124,8 @@ async def test_what_stays_with_the_team_leader(world):
     w, s = world, world["s"]
     acc = await keeper_world(w)
     acc2 = (await make_account(w, name="Second", assignees=[s["mira"]])).json()["data"]["id"]
-    ad = (await add_ad(w, acc)).json()["data"]["id"]
+    ad = await rid_of(w, account_id=acc, assignees=[s["mira"]])       # made by the leader
+    own_ad = (await add_ad(w, acc)).json()["data"]["id"]                # made by mira herself
     call = w["call"]
     # The account itself.
     for body in ({"name": "x"}, {"assignees": [s["mira"], s["asha"]]}, {"ad_account_ref": "act_1"}, {"action": "end"}):
@@ -137,6 +138,11 @@ async def test_what_stays_with_the_team_leader(world):
     # People from outside the account's teams.
     r = await call("PATCH", f"{B}/{ad}", "mira", json={"assignees": [s["out"]]})
     assert r.status_code == 403
+    # …but an ad she made herself is hers (self-service, 2026-10-15): she may move it
+    # between accounts she looks after, or take it out.
+    assert (await call("PATCH", f"{B}/{own_ad}", "mira", json={"account_id": acc2})).status_code == 200
+    assert (await call("PATCH", f"{B}/{own_ad}", "mira", json={"clear_account": True})).status_code == 200
+    assert (await call("PATCH", f"{B}/{own_ad}", "mira", json={"team_ids": [w["t1"], w["t2"]]})).status_code == 403,         "still only her own teams"
     # Numbers older than OWNER_EDIT_DAYS.
     assert (await put(w, ad, "2026-10-12", who="mira")).status_code == 201
     w["clock"].today = WED + timedelta(days=ar.OWNER_EDIT_DAYS + 2)

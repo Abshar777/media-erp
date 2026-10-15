@@ -174,7 +174,12 @@ async def test_who_can_create(world):
     w = world
     assert (await make(w, "lead")).status_code == 201
     assert (await make(w, "sa")).status_code == 201
-    assert (await make(w, "asha")).status_code == 403, "an employee can't create one"
+    # Self-service (2026-10-15): an employee may make one for themselves, in their own team.
+    r = await make(w, "asha")
+    assert r.status_code == 201 and r.json()["data"]["self_made"] is True
+    assert [a["id"] for a in r.json()["data"]["assignees"]] == [w["s"]["asha"]]
+    assert (await make(w, "asha", assignees=[w["s"]["mira"]])).status_code == 403, "but only for themselves"
+    assert (await make(w, "out")).status_code == 403, "not in a team they don't belong to"
     assert (await make(w, "lead2")).status_code == 403, "another team's leader can't either"
 
 
@@ -533,7 +538,10 @@ async def test_accounts_create_rules(world):
     d = r.json()["data"]
     assert d["kind"] == "account" and d["ad_account_ref"] == "act_1234567890"
     assert d["account"]["ads"] == 0 and d["assignees"] == []
-    assert (await make_account(w, "asha")).status_code == 403, "employees can't create accounts"
+    mine = await make_account(w, "asha")
+    assert mine.status_code == 201 and mine.json()["data"]["self_made"], "employees make their own (2026-10-15)"
+    assert [a["id"] for a in mine.json()["data"]["assignees"]] == [w["s"]["asha"]]
+    assert (await make_account(w, "out")).status_code == 403, "only in their own teams"
     assert (await make_account(w, "lead2")).status_code == 403, "nor another team's leader"
     assert (await make_account(w, ad_account_ref="x" * 61)).status_code == 422
     plain = (await make(w)).json()["data"]

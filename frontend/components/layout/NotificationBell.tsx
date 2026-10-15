@@ -76,6 +76,7 @@ function typeConfig(type: string): { icon: React.ReactNode; bg: string } {
       return { icon: <AtSign className="size-3.5 text-sky-500" />,            bg: "bg-sky-100 dark:bg-sky-900/30" };
     case "sync_success":
       return { icon: <Wifi className="size-3.5 text-emerald-500" />,          bg: "bg-emerald-100 dark:bg-emerald-900/30" };
+    case "ad_self_created":
     case "ad_report_due":
       return { icon: <BarChart3 className="size-3.5 text-teal-600" />,        bg: "bg-teal-100 dark:bg-teal-900/30" };
     case "ad_report_overdue":
@@ -110,7 +111,7 @@ const TASK_TYPES = new Set([
 function destination(item: Notification): string | null {
   if (item.type === "fund_request") return "/fund-requests";
   // Ad report reminders open the report with the entry form ready.
-  if (item.type === "ad_report_due" || item.type === "ad_report_overdue") {
+  if (item.type === "ad_report_due" || item.type === "ad_report_overdue" || item.type === "ad_self_created") {
     const link = (item.metadata as { link?: string })?.link;
     return link && link.startsWith("/ad-reports") ? link : "/ad-reports";
   }

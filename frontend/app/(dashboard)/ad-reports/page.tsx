@@ -428,6 +428,9 @@ function AdReportsInner() {
   const meId = useAuthStore((st) => st.user?.id ?? "");
   const { data: todayInfo } = useAdToday();
   const canCreate = !!todayInfo?.can_create;
+  // Employees make their own (their teams, only themselves on it).
+  const canCreateOwn = !!todayInfo?.can_create_own;
+  const canNew = canCreate || canCreateOwn;
   const { data: reports = [], isLoading, isFetching } = useAdReports(scope);
 
   const selected = useMemo(
@@ -473,8 +476,9 @@ function AdReportsInner() {
               ))}
             </div>
           )}
-          {canCreate && (
+          {canNew && (
             <button type="button" onClick={() => { setFormPreset({ kind: "ad", accountId: null }); setForm("new"); }}
+              title={canCreateOwn ? "Your own ad account or campaign — only you are on it, and your team leader is told" : undefined}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">
               <Plus className="size-4" /> New report
             </button>
@@ -494,16 +498,18 @@ function AdReportsInner() {
             <p className="mt-1 max-w-sm text-sm text-muted-foreground">
               {canCreate
                 ? "Create one per Meta campaign, choose who updates it, and the numbers will build into a chart day by day."
-                : "When your team leader assigns you a campaign, it will appear here."}
+                : canCreateOwn
+                  ? "Add your own ad account or campaign — you update it yourself, and your team leader is told."
+                  : "When your team leader assigns you a campaign, it will appear here."}
             </p>
           </div>
-          {canCreate && (
-            <button type="button" onClick={() => setForm("new")}
+          {canNew && (
+            <button type="button" onClick={() => { setFormPreset({ kind: "ad", accountId: null }); setForm("new"); }}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90">
               <Plus className="size-4" /> New report
             </button>
           )}
-          {!canCreate && <Link href="/dashboard" className="text-sm font-medium text-primary hover:underline">Back to Overview</Link>}
+          {!canNew && <Link href="/dashboard" className="text-sm font-medium text-primary hover:underline">Back to Overview</Link>}
         </div>
       ) : (
         <div className="grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">

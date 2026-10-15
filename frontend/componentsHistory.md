@@ -556,3 +556,10 @@ end-to-end, not just "the socket reconnects."
 - **`components/leader/StandinBanner.tsx`:** violet banner on the Leader Desk for someone who is there only as a stand-in (whose desk, teams, until when, what they may do). The page shows them only Assign Work and Reedit (+ Pending Reviews if allowed); the sidebar shows Leader Desk while a stand-in is live.
 - **`hooks/usePopoverSide.ts`:** header cards open toward the side with room (the Auto-approve and Stand-in cards ran off the left of the screen when the header wrapped at mid widths).
 - **Also:** `hooks/useStandin.ts`; `LeaderQueue.standin` / `led_team_ids`; notification types `standin_assigned` / `standin_team` / `standin_ended` (violet icon; desktop alert for `standin_assigned`); `TaskDetailModal` note "Sent to Lena — handed to Mira while Lena is away".
+
+### Ad Reports — employees create their own (2026-10-15)
+- **Page:** "+ New report" for employees too (`can_create_own`); empty state explains it.
+- **`ReportFormModal` own mode** (an employee creating, or editing what they made): their own teams only, the kind picker (ad or account), the person fixed to "You" (no picker, no remove), accounts limited to ones they look after; a leader's account they look after still allows teammates. Keeper mode in their own account: only themselves.
+- **`AccountView`:** Edit / End / Delete for the employee who made it (`can_own`), with "You made this account — only you are on it…".
+- **Bell:** `ad_self_created` opens the report (`metadata.link`). Types: `AdReport.can_own`, `self_made`; `AdToday.can_create_own`.
+- **QA fix (same day):** a leader who is also a plain member of another team now sees that team when making a report; picking a team they don't lead makes it theirs alone ("A team you don't lead makes it yours alone…", only them on it).

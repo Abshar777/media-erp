@@ -139,8 +139,9 @@ def expected(role, action):
         "edit_account": 200 if manage else (403 if sees_acc else 404),
         "end_account": 200 if manage else (403 if sees_acc else 404),
         "delete_account": 200 if manage else (403 if sees_acc else 404),
-        "create_account": 201 if manage else 403,
-        "create_loose_ad": 201 if manage else 403,
+        # Self-service (2026-10-15): any Media member may make their own (themselves only).
+        "create_account": 201 if (manage or role in T1_MEMBERS) else 403,
+        "create_loose_ad": 201 if (manage or role == "adteam") else 403,   # the new ad names adteam
         "add_to_acc2": 201 if (manage or role == "member") else 403,
         "add_to_accx": 201 if (role in ELEVATED or role in ("lead2", "xkeeper", "keeper")) else 403,
         "loose_pause": 200 if manage else (403 if role == "keeper" else 404),

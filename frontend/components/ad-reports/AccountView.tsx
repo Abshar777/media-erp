@@ -72,7 +72,8 @@ function AccountHero({ account, today, onAddAd, onEdit, onRestored }: {
   const [deleteOpen, setDeleteOpen] = useState(false);
   useEffect(() => { setConfirmEnd(false); setDeleteOpen(false); }, [account.id]);
   const a = account.account;
-  const manage = account.can_manage && account.status !== "ended";
+  // Leaders, and the employee who made it (self-service), manage the account itself.
+  const manage = (account.can_manage || account.can_own) && account.status !== "ended";
   const btn = "inline-flex h-9 items-center gap-1.5 rounded-lg border bg-background px-3 text-sm font-medium transition hover:bg-muted disabled:opacity-50";
   const facts: { label: string; value: React.ReactNode; icon?: React.ElementType }[] = [
     { label: account.teams?.length > 1 ? "Teams" : "Team", value: <TeamChips teams={account.teams} fallback={account.team_name} /> },
@@ -106,7 +107,7 @@ function AccountHero({ account, today, onAddAd, onEdit, onRestored }: {
               </div>
             ))}
           </dl>
-          {(account.can_manage || account.can_add_ads) && (
+          {(account.can_manage || account.can_own || account.can_add_ads) && (
             <div className="flex flex-wrap items-center gap-2">
               {account.can_add_ads && (
               <button type="button" onClick={onAddAd}
@@ -127,12 +128,15 @@ function AccountHero({ account, today, onAddAd, onEdit, onRestored }: {
                 <button type="button" className={btn} onClick={() => setConfirmEnd(true)}><Flag className="size-4" /> End</button>
               )}
               </>}
-              {account.can_manage ? <>
+              {account.can_manage || account.can_own ? <>
               <button type="button" onClick={() => setDeleteOpen(true)} aria-label="Delete account" title="Delete account"
                 className={cn(btn, "px-2.5 text-muted-foreground hover:border-red-500/40 hover:bg-red-500/5 hover:text-red-600 dark:hover:text-red-400")}>
                 <Trash2 className="size-4" />
               </button>
               <DeleteReportDialog report={account} open={deleteOpen} onClose={() => setDeleteOpen(false)} today={today} onRestored={onRestored} />
+              {account.can_own && (
+                <p className="w-full text-xs text-muted-foreground">You made this account — only you are on it. Your team leader can see and manage it too.</p>
+              )}
               </> : (
                 <p className="text-xs text-muted-foreground">You look after this account — add its ads and run them. The account itself stays with the team leader.</p>
               )}

@@ -85,6 +85,10 @@ export interface AdReport {
   can_run?: boolean;
   /** Accounts: "+ Add ad" — leaders, and the people who look after it. */
   can_add_ads?: boolean;
+  /** You created it yourself (self-service) and still belong to its teams: you run it. */
+  can_own?: boolean;
+  /** Made by an employee for themselves (only they are on it). */
+  self_made?: boolean;
   /** Ads: an open "Ad not performing" flag, else one closed in the last 14 days. */
   flag?: AdFlagSummary | null;
 }
@@ -139,6 +143,8 @@ export interface AdSeries {
 export interface AdToday {
   visible: boolean;
   can_create: boolean;
+  /** In a team but leading none: may make their own account / ad (themselves only). */
+  can_create_own?: boolean;
   my_due: { id: string; name: string; missing: string[] }[];
   my_due_count: number;
   team: null | {

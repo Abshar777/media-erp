@@ -62,18 +62,37 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
   const create = useCreateAdReport();
   const update = useUpdateAdReport();
 
-  // Teams you may put a report in: the ones you lead (admin roles: all).
-  const myTeams = useMemo(() => teams.filter((t) => isElevated || t.my_role === "leader"), [teams, isElevated]);
-  const mine = useMemo(() => new Set(myTeams.map((t) => t.id)), [myTeams]);
+  const [teamIds, setTeamIds] = useState<string[]>([]);
+  // Teams you lead (admin roles: all), and teams you're in.
+  const ledTeams = useMemo(() => teams.filter((t) => isElevated || t.my_role === "leader"), [teams, isElevated]);
+  const ledIds = useMemo(() => new Set(ledTeams.map((t) => t.id)), [ledTeams]);
+  const memberTeams = useMemo(() => teams.filter((t) => t.members.some((m) => m.user_id === me?.id)), [teams, me?.id]);
   // Someone who looks after an account (not a leader of its teams) adding or editing
   // an ad in it: the account and its teams stay fixed, people come from those teams.
   const presetAcc = !report && defaultAccountId ? all.find((x) => x.id === defaultAccountId) ?? null : null;
-  const keeper = !isElevated && (report ? report.kind === "ad" && !report.can_manage : !!presetAcc && !presetAcc.can_manage);
+  // Self-service (2026-10-15): editing your own account / ad, or making one in a team you
+  // don't lead (an employee — or a leader who is a plain member of another team): only you on it.
+  const ownEdit = !isElevated && !!report && !!report.can_own && !report.can_manage;
+  const ownCreate = !isElevated && !report && !presetAcc && (ledTeams.length === 0 || teamIds.some((t) => !ledIds.has(t)));
+  const ownMode = ownEdit || ownCreate;
+  const keeper = !isElevated && !ownEdit && (report ? report.kind === "ad" && !report.can_manage : !!presetAcc && !presetAcc.can_manage);
   const keptAccount = keeper ? (presetAcc ?? all.find((x) => x.id === report?.account_id) ?? null) : null;
+  // Your own: only you — unless it sits in a leader's account you look after (then its teams' people too).
+  const ownAcc = ownMode && report?.account_id ? all.find((x) => x.id === report.account_id) ?? null : null;
+  const inLeadersAccount = !!ownAcc && !ownAcc.self_made && ownAcc.assignees.some((a) => a.id === me?.id);
+  const selfOnly = (ownMode && !inLeadersAccount) || (keeper && !!keptAccount?.self_made);
+  // Teams you may put a report in: the ones you lead; making one, also the ones you're in
+  // (those make it yours alone); editing your own, the ones you're in.
+  const myTeams = useMemo(() => {
+    if (isElevated) return ledTeams;
+    if (ownEdit) return memberTeams;
+    if (!report && !presetAcc) return [...ledTeams, ...memberTeams.filter((t) => !ledIds.has(t.id))];
+    return ledTeams;
+  }, [isElevated, ownEdit, report, presetAcc, ledTeams, memberTeams, ledIds]);
+  const mine = useMemo(() => new Set(myTeams.map((t) => t.id)), [myTeams]);
 
   const [kind, setKind] = useState<AdReportKind>("ad");
   const [name, setName] = useState("");
-  const [teamIds, setTeamIds] = useState<string[]>([]);
   const [accountId, setAccountId] = useState<string>("");
   const [adRef, setAdRef] = useState("");
   const [assignees, setAssignees] = useState<string[]>([]);
@@ -99,19 +118,27 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
     );
     setAccountId(report?.account_id ?? preset?.id ?? "");
     setAdRef(report?.ad_account_ref ?? "");
-    // A new ad inside an account starts with the account's people.
-    setAssignees(report?.assignees.map((a) => a.id) ?? preset?.assignees.map((a) => a.id) ?? []);
+    // A new ad inside an account starts with the account's people; your own: just you.
+    setAssignees(report?.assignees.map((a) => a.id)
+      ?? (selfOnly && me?.id ? [me.id] : preset?.assignees.map((a) => a.id)) ?? []);
     setStart(report?.start_date ?? today);
     setUntilEnded(!report?.end_date);
     setEnd(report?.end_date ?? "");
     setExtras(report?.extra_metrics ?? []);
     setDue(report?.reminder_due ?? "12:00");
     setEscalate(report?.reminder_escalate ?? "17:00");
-    setPicking(!report);
+    setPicking(!report && !selfOnly);
     setEveryone(false);
     setTeamsOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, report?.id, defaultAccountId, defaultKind]);
+
+  // Picking a team you don't lead turns a new one into yours alone: only you on it.
+  useEffect(() => {
+    if (!open || editing || !selfOnly || !me?.id) return;
+    setAssignees([me.id]);
+    setPicking(false);
+  }, [open, editing, selfOnly, me?.id]);
 
   const isAccount = kind === "account";
 
@@ -136,8 +163,9 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
   // Accounts an ad may join: open, and sharing one of its teams.
   const accounts = useMemo(
     () => all.filter((x) => x.kind === "account" && x.status !== "ended"
-      && (x.team_ids?.length ? x.team_ids : [x.team_id]).some((t) => teamIds.includes(t))),
-    [all, teamIds],
+      && (x.team_ids?.length ? x.team_ids : [x.team_id]).some((t) => teamIds.includes(t))
+      && (!ownMode || x.id === report?.account_id || x.assignees.some((a) => a.id === me?.id))),
+    [all, teamIds, ownMode, report?.account_id, me?.id],
   );
   // A team change can leave an account from another team selected.
   useEffect(() => {
@@ -318,7 +346,10 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
             onDone={teamIds.length ? () => setTeamsOpen(false) : undefined} />
         )}
         <p className="text-[11px] text-muted-foreground">
-          {keeper ? "The account's teams — only a team leader can change them."
+          {ownMode ? (ownCreate && ledTeams.length
+              ? "A team you don't lead makes it yours alone — only you on it, and that team's leader is told."
+              : "Your own teams — only you are on it, and your team leader is told.")
+            : keeper ? "The account's teams — only a team leader can change them."
             : teamIds.length === 0 ? "Pick the team this is for — then choose people from it."
             : teamIds.length > 1 ? "Leaders of every team here can see and manage it. ★ sets the main team."
             : "Add another team to share it with that team's leader."}
@@ -376,12 +407,14 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
                     </button>
                   )}
                   {outside(id) && <span className="text-[10px] font-normal text-muted-foreground" title="Not a member of the teams above">· other team</span>}
-                  <button type="button" aria-label={`Remove ${n}`} onClick={() => setAssignees((a) => a.filter((x) => x !== id))}
-                    className="-my-1 rounded-full p-1 hover:bg-muted"><X className="size-3" /></button>
+                  {!(selfOnly && id === me?.id) && (
+                    <button type="button" aria-label={`Remove ${n}`} onClick={() => setAssignees((a) => a.filter((x) => x !== id))}
+                      className="-my-1 rounded-full p-1 hover:bg-muted"><X className="size-3" /></button>
+                  )}
                 </li>
               );
             })}
-            {!picking && !full && (
+            {!picking && !full && !selfOnly && (
               <li>
                 <button type="button" onClick={() => setPicking(true)}
                   className="inline-flex h-8 items-center gap-1 rounded-full border border-dashed px-3 text-xs font-medium text-muted-foreground transition hover:border-primary/50 hover:text-foreground">
@@ -392,11 +425,11 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
           </ul>
         )}
 
-        {!teamIds.length ? (
+        {selfOnly ? null : !teamIds.length ? (
           <div className="flex items-center gap-2 rounded-xl border border-dashed px-3 py-3 text-xs text-muted-foreground">
             <Users className="size-4 shrink-0" /> Pick a team first — then choose people from it.
           </div>
-        ) : (picking || assignees.length === 0) && !full ? (
+        ) : selfOnly ? null : (picking || assignees.length === 0) && !full ? (
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
               <span className="truncate">{everyone ? "Everyone in the company" : `Members of ${teamIds.map(teamName).join(", ")}`}</span>
@@ -418,9 +451,11 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
         ) : null}
 
         <p className="text-[11px] leading-snug text-muted-foreground">
-          {isAccount
-            ? "They see this account and every ad in it, and can update those ads' numbers. Reminders stay with each ad's own people."
-            : "The first person is the owner. Everyone here can add the numbers and gets the reminders."}
+          {selfOnly
+            ? "Only you — your team leader can add others."
+            : isAccount
+              ? "They see this account and every ad in it, and can update those ads' numbers. Reminders stay with each ad's own people."
+              : "The first person is the owner. Everyone here can add the numbers and gets the reminders."}
           {full && " · Six people at most."}
         </p>
       </div>

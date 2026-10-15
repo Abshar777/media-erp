@@ -274,6 +274,27 @@ async def keeps_account(db, user_id: str, account_id) -> dict | None:
     return acc
 
 
+async def member_team_ids(db, user_id: str) -> list[str]:
+    """Teams this user belongs to (leader or member)."""
+    rows = await db["teams"].find({"members.user_id": user_id}, {"_id": 1}).to_list(500)
+    return [str(t["_id"]) for t in rows]
+
+
+async def owns(db, user: dict, report: dict) -> bool:
+    """
+    Self-service (2026-10-15): an employee who created this account / ad
+    themselves runs it — while they still belong to one of its teams. Reports a
+    leader or admin created are never "owned" this way.
+    """
+    uid = str(user["_id"])
+    if not report.get("self_made") or report.get("created_by") != uid:
+        return False
+    mine = user.get("_member_team_ids")
+    if mine is None:
+        mine = await member_team_ids(db, uid)
+    return bool(set(teams_of(report)) & set(mine))
+
+
 async def can_run(db, user: dict, report: dict) -> bool:
     """
     Run an AD — edit it, pause / resume / end, delete, remind, remove creatives:
@@ -281,13 +302,16 @@ async def can_run(db, user: dict, report: dict) -> bool:
     sits in (2026-10-14). The account itself, an ad's teams and moving an ad
     between accounts stay with the team leader (can_manage).
     """
-    if await can_manage(db, user, report):
+    if await can_manage(db, user, report) or await owns(db, user, report):
         return True
     return not is_account(report) and await looks_after_account(db, str(user["_id"]), report)
 
 
-async def keeper_people(db, account: dict, team_ids) -> set[str]:
-    """Whom an account keeper may put on an ad: members of its teams and the account's own people."""
+async def keeper_people(db, account: dict, team_ids, actor_id: str | None = None) -> set[str]:
+    """Whom an account keeper may put on an ad: members of its teams and the account's own people.
+    In an account an employee made for themselves: only that person."""
+    if account.get("self_made") and actor_id:
+        return {actor_id}
     ids = [ObjectId(t) for t in team_ids if t and ObjectId.is_valid(t)]
     teams = await db["teams"].find({"_id": {"$in": ids}}, {"members": 1}).to_list(len(ids) or 1) if ids else []
     return {m["user_id"] for t in teams for m in t.get("members", []) if m.get("user_id")} | set(account.get("assignees", []))
@@ -666,6 +690,7 @@ async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[
         "sparkline": [have.get(d.isoformat()) for d in days_between(spark_lo, today - timedelta(days=1))],
         "created_by": r.get("created_by"),
         "created_by_name": r.get("created_by_name", ""),
+        "self_made": bool(r.get("self_made")),
         "created_at": utc_iso(r.get("created_at")),
         "updated_at": utc_iso(r.get("updated_at")),
     }
@@ -673,9 +698,11 @@ async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[
         uid = str(user["_id"])
         out["can_manage"] = await can_manage(db, user, r)
         keeper = (not acct) and uid in (account_people or {}).get(r.get("account_id") or "", [])
-        out["can_enter"] = out["can_manage"] or uid in r.get("assignees", []) or keeper
-        # Run the ad (edit / pause / end / delete / remind): leaders, plus the account's people.
-        out["can_run"] = out["can_manage"] or keeper
+        # Made it yourself (self-service): you run it, account or ad.
+        out["can_own"] = (not out["can_manage"]) and await owns(db, user, r)
+        out["can_enter"] = out["can_manage"] or uid in r.get("assignees", []) or keeper or out["can_own"]
+        # Run the ad (edit / pause / end / delete / remind): leaders, the account's people, the creator.
+        out["can_run"] = out["can_manage"] or keeper or out["can_own"]
         # "+ Add ad" on an account: its leaders, and the people who look after it.
         out["can_add_ads"] = bool(acct) and r.get("status") != "ended" and (
             out["can_manage"] or uid in r.get("assignees", []))
@@ -829,7 +856,7 @@ async def delete_report(db, user: dict, report: dict, with_ads: bool = False) ->
         kids = await children_of(db, report)
         if with_ads:
             for k in kids:
-                if not await can_manage(db, user, k):
+                if not await can_run(db, user, k):
                     raise AdReportError(
                         f"“{k.get('name', 'An ad')}” belongs to a team you don't lead — keep the ads instead.", 403)
             targets += kids

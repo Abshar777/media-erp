@@ -39,6 +39,8 @@ async def _team_names(db, team_ids) -> dict[str, str]:
 
 
 async def _serialize_many(db, docs: list[dict], user: dict) -> list[dict]:
+    if "_member_team_ids" not in user:
+        user = {**user, "_member_team_ids": await ar.member_team_ids(db, str(user["_id"]))}
     names = await ar.names_for(db, [a for d in docs for a in d.get("assignees", [])])
     teams = await _team_names(db, [t for d in docs for t in ar.teams_of(d)])
     acc_ids = {d.get("account_id") for d in docs if d.get("account_id") and ObjectId.is_valid(d["account_id"])}
@@ -77,6 +79,23 @@ async def _load(db, report_id: str, user: dict) -> dict | None:
     if not r or not await ar.can_enter(db, user, r):
         return None
     return r
+
+
+async def _tell_leaders_self_made(db, doc: dict, user: dict) -> None:
+    """An employee made their own account / ad: their team leaders hear about it."""
+    kind = "ad account" if ar.is_account(doc) else "ad"
+    names = await _team_names(db, ar.teams_of(doc))
+    teams = ", ".join(n for n in (names.get(t, "") for t in ar.teams_of(doc)) if n) or "your team"
+    who = user.get("name", "") or "A team member"
+    for lid in await ar.teams_leader_ids(db, ar.teams_of(doc)):
+        if lid == str(user["_id"]):
+            continue
+        try:
+            await ar.deliver(db, lid, "ad_self_created", f"New {kind} by {who}",
+                             f"{who} created the {kind} “{doc.get('name', '')}” in {teams}.",
+                             {"report_id": str(doc["_id"]), "link": f"/ad-reports?report={doc['_id']}"})
+        except Exception as exc:
+            print(f"[ad-reports] leader notify failed: {exc!r}", flush=True)
 
 
 async def _leads_any_team(db, uid: str) -> bool:
@@ -118,17 +137,33 @@ async def create_report(
         team_ids = await ar.validate_teams(db, body.team_ids or [body.team_id])
     except ar.AdReportError as exc:
         return _err(exc)
+    uid = str(current_user["_id"])
     keeper_of = None          # the account, when an account's own person adds an ad to it
+    own = False               # self-service: an employee making their own account / ad
     for t in team_ids:
         if not await workflow.can_assign_to_others(current_user, t, db):
-            keeper_of = (await ar.keeps_account(db, str(current_user["_id"]), body.account_id)
+            keeper_of = (await ar.keeps_account(db, uid, body.account_id)
                          if body.kind == "ad" and body.account_id else None)
             if not keeper_of:
-                return error_response("Only a team leader can create ad reports." if len(team_ids) == 1
-                                      else "You can only choose teams you lead.", status_code=403)
+                if body.kind == "ad" and body.account_id:
+                    return error_response("You can only add ads to an account you look after.", status_code=403)
+                if not set(team_ids) <= set(await ar.member_team_ids(db, uid)):
+                    return error_response("You can only choose your own teams.", status_code=403)
+                own = True
             break
     if keeper_of and not set(team_ids) <= set(ar.teams_of(keeper_of)):
         return error_response("An ad you add to this account stays in the account's teams.", status_code=403)
+    if keeper_of and keeper_of.get("self_made") and not body.assignees:
+        body.assignees = [uid]           # your own account: nobody named means you
+    if own:
+        # Their own: they are the only person on it.
+        wanted = list(dict.fromkeys(str(a) for a in (body.assignees or []) if a))
+        if wanted and wanted != [uid]:
+            return error_response("You can only put yourself on it — ask your team leader to add others.",
+                                  status_code=403)
+        body.assignees = [uid]
+    # Anything an employee makes (on their own, or inside an account they look after) is theirs.
+    self_made = own or bool(keeper_of)
 
     now = datetime.now(timezone.utc)
     if body.kind == "account":
@@ -146,9 +181,12 @@ async def create_report(
             "extra_metrics": [], "currency": "INR", "status": "active", "pauses": [],
             "created_by": str(current_user["_id"]), "created_by_name": current_user.get("name", ""),
             "created_at": now, "updated_at": now,
+            **({"self_made": True} if own else {}),
         }
         res = await db[ar.REPORTS].insert_one(doc)
         doc["_id"] = res.inserted_id
+        if own:
+            await _tell_leaders_self_made(db, doc, current_user)
         return success_response(data=(await _serialize_many(db, [doc], current_user))[0],
                                 message="Ad account created", status_code=201)
 
@@ -158,8 +196,9 @@ async def create_report(
             return bad
     try:
         assignees, _ = await ar.validate_assignees(db, body.assignees)
-        if keeper_of and not set(assignees) <= await ar.keeper_people(db, keeper_of, team_ids):
-            return error_response("Choose people from the account's teams.", status_code=403)
+        if keeper_of and not set(assignees) <= await ar.keeper_people(db, keeper_of, team_ids, uid):
+            return error_response("You can only put yourself on ads in your own account." if keeper_of.get("self_made")
+                                  else "Choose people from the account's teams.", status_code=403)
         start = ar.parse_day(body.start_date or "", "start_date")
         end = ar.parse_day(body.end_date, "end_date") if body.end_date else None
         ar.validate_times(body.reminder_due, body.reminder_escalate)
@@ -180,9 +219,12 @@ async def create_report(
         "status": "active", "pauses": [],
         "created_by": str(current_user["_id"]), "created_by_name": current_user.get("name", ""),
         "created_at": now, "updated_at": now,
+        **({"self_made": True} if self_made else {}),
     }
     res = await db[ar.REPORTS].insert_one(doc)
     doc["_id"] = res.inserted_id
+    if self_made:
+        await _tell_leaders_self_made(db, doc, current_user)
     data = (await _serialize_many(db, [doc], current_user))[0]
     return success_response(data=data, message="Ad report created", status_code=201)
 
@@ -196,6 +238,8 @@ async def today_summary(
     uid = str(current_user["_id"])
     today = today_ist()
     can_create = ar.is_elevated(current_user) or await _leads_any_team(db, uid)
+    # Self-service: anyone in a team may make their own account / ad (themselves only).
+    can_create_own = (not can_create) and bool(await ar.member_team_ids(db, uid))
 
     mine = await db[ar.REPORTS].find({"assignees": uid, "status": "active", **ar.AD_ONLY}).to_list(200)
     my_due = []
@@ -226,8 +270,9 @@ async def today_summary(
         team = {"active": started, "updated": started - len(missing_list), "missing": missing_list}
 
     return success_response(data={
-        "visible": can_create or has_any,
+        "visible": can_create or can_create_own or has_any,
         "can_create": can_create,
+        "can_create_own": can_create_own,
         "my_due": my_due,
         "my_due_count": len(my_due),
         "team": team,
@@ -259,20 +304,30 @@ async def update_report(
     if not r:
         return error_response(NOT_FOUND, status_code=404)
     manager = await ar.can_manage(db, current_user, r)
-    if not manager and not await ar.can_run(db, current_user, r):
+    owner = (not manager) and await ar.owns(db, current_user, r)
+    if not manager and not owner and not await ar.can_run(db, current_user, r):
         return error_response("Only the team leader can change this report.", status_code=403)
     if not manager:
-        # The account's own people run its ads, but its teams and which account it
-        # sits in stay with the team leader (moving it out would also lock them out).
+        uid = str(current_user["_id"])
         if body.team_ids is not None and list(dict.fromkeys(body.team_ids)) != ar.teams_of(r):
-            return error_response("Only a team leader can change an ad's teams.", status_code=403)
+            # The creator moves their own between their own teams; a keeper can't.
+            if not owner:
+                return error_response("Only a team leader can change an ad's teams.", status_code=403)
+            if not set(body.team_ids) <= set(await ar.member_team_ids(db, uid)):
+                return error_response("You can only choose your own teams.", status_code=403)
         if body.clear_account or (body.account_id and body.account_id != r.get("account_id")):
-            return error_response("Only a team leader can move an ad to another account.", status_code=403)
+            if not owner:
+                return error_response("Only a team leader can move an ad to another account.", status_code=403)
+            if body.account_id and not await ar.keeps_account(db, uid, body.account_id):
+                return error_response("You can only move it into an account you look after.", status_code=403)
         if body.assignees is not None:
-            acc = await ar.keeps_account(db, str(current_user["_id"]), r.get("account_id"))
-            pool = (await ar.keeper_people(db, acc, ar.teams_of(r)) if acc else set()) | set(r.get("assignees", []))
+            acc = None if ar.is_account(r) else await ar.keeps_account(db, uid, r.get("account_id"))
+            keeper_pool = await ar.keeper_people(db, acc, ar.teams_of(r), uid) if acc else set()
+            pool = ({uid} if owner else set()) | keeper_pool | set(r.get("assignees", []))
+            self_only = not (keeper_pool - {uid})
             if not set(body.assignees) <= pool:
-                return error_response("Choose people from the account's teams.", status_code=403)
+                return error_response("You can only put yourself on it — ask your team leader to add others." if self_only
+                                      else "Choose people from the account's teams.", status_code=403)
 
     today = today_ist()
     yesterday = today - timedelta(days=1)
@@ -298,7 +353,7 @@ async def update_report(
         except ar.AdReportError as exc:
             return _err(exc)
         if new_teams != old_teams:
-            if not ar.is_elevated(current_user):
+            if not ar.is_elevated(current_user) and not owner:
                 led = set(await ar.led_team_ids(db, str(current_user["_id"])))
                 if any(t not in led for t in set(new_teams) ^ set(old_teams)):
                     return error_response("You can only add or remove teams you lead.", status_code=403)

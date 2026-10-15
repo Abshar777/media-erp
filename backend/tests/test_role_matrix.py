@@ -255,7 +255,9 @@ async def test_ad_reports_by_role(w):
         "start_date": today_ist().isoformat()})
     got = {k: (await mk(k)).status_code for k in ("SA", "ADMIN", "COORD", "TL", "OTHERTL", "PIA", "EMP", "CUSTOM")}
     check(got, {"SA": 201, "ADMIN": 201, "COORD": 201, "TL": 201,
-                "OTHERTL": 403, "PIA": 403, "EMP": 403, "CUSTOM": 403}, "create a Marketing ad report")
+                "OTHERTL": 403, "PIA": 403, "EMP": 201, "CUSTOM": 403}, "create a Marketing ad report")
+    # EMP is in Marketing and named only themselves: self-service (2026-10-15). Not for someone else:
+    assert (await mk("EMP", "mkt", ("EMP", "TL"))).status_code == 403
     assert (await mk("PIA", "media", ("EMP2",))).status_code == 201, "an Employee-role leader manages their own team's ads"
     # Who sees the "Open Day Reel" ad (Marketing, on EMP).
     sees = {k: any(r["id"] == R for r in (await call("GET", "/api/v1/ad-reports", k)).json()["data"]) for k in EVERYONE}
