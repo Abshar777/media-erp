@@ -25,6 +25,8 @@ from app.utils.timezone import IST
 
 WED = date(2026, 10, 14)          # "today" for most tests (a Wednesday)
 START = "2026-10-10"              # a Saturday: owed days are 10, 11, 12, 13 Oct
+# These tests keep Sundays owed (skip_sundays False — still a supported setting);
+# skipping Sundays, the default, is tested in test_ad_reports_sundays.py.
 
 
 def at(d: date, hh: int, mm: int = 0) -> datetime:
@@ -54,12 +56,12 @@ def test_cost_per_lead_is_total_over_total():
 
 
 def test_expected_days_respect_start_end_and_pauses():
-    r = {"start_date": START, "end_date": None, "pauses": []}
+    r = {"start_date": START, "end_date": None, "pauses": [], "skip_sundays": False}
     assert [d.isoformat() for d in ar.expected_days(r, WED - timedelta(days=1))] == \
         ["2026-10-10", "2026-10-11", "2026-10-12", "2026-10-13"]
     r["end_date"] = "2026-10-11"
     assert len(ar.expected_days(r, WED)) == 2
-    r = {"start_date": START, "end_date": None, "pauses": [{"from": "2026-10-11", "to": "2026-10-12"}]}
+    r = {"start_date": START, "end_date": None, "pauses": [{"from": "2026-10-11", "to": "2026-10-12"}], "skip_sundays": False}
     assert [d.day for d in ar.expected_days(r, WED - timedelta(days=1))] == [10, 13]
     r["pauses"] = [{"from": "2026-10-12", "to": None}]          # still paused
     assert [d.day for d in ar.expected_days(r, WED - timedelta(days=1))] == [10, 11]
@@ -145,7 +147,7 @@ B = "/api/v1/ad-reports"
 
 async def make(w, who="lead", **kw):
     body = {"name": "Delta Admissions – Oct", "team_id": w["t1"], "assignees": [w["s"]["asha"]],
-            "start_date": START, **kw}
+            "start_date": START, "skip_sundays": False, **kw}
     return await w["call"]("POST", B, who, json=body)
 
 

@@ -167,6 +167,9 @@ export function EntryModal({ report, open, onClose, today, initialDate }: Props)
         <p className="text-sm font-medium">
           {dayLabelW(day || today)}
           {day === today && <span className="ml-2 text-xs font-normal text-amber-600 dark:text-amber-400">Today isn&apos;t over — Meta&apos;s numbers will still change</span>}
+          {day && report.skip_sundays !== false && new Date(`${day}T00:00:00Z`).getUTCDay() === 0 && !existing && (
+            <span className="ml-2 text-xs font-normal text-muted-foreground">Sunday is optional for this ad — add it if the ad spent</span>
+          )}
           {existing && <span className="ml-2 text-xs font-normal text-muted-foreground">Already entered by {existing.entered_by_name || "someone"} — saving updates it</span>}
         </p>
       </div>

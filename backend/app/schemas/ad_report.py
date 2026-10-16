@@ -1,7 +1,7 @@
 """Ad Reports — Meta-style performance numbers entered daily by the team."""
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool
 
 Extra = Literal["impressions", "reach", "clicks"]
 
@@ -25,6 +25,8 @@ class CreateAdReportRequest(BaseModel):
     extra_metrics: list[Extra] = []
     reminder_due: str = "12:00"           # stage 1, IST HH:MM — the assigned people
     reminder_escalate: str = "17:00"      # stage 2, IST HH:MM — they and the team leader(s)
+    # Ads: Sundays aren't owed (no "missing", no reminders); Sunday numbers stay optional.
+    skip_sundays: StrictBool = True
 
 
 class UpdateAdReportRequest(BaseModel):
@@ -40,6 +42,7 @@ class UpdateAdReportRequest(BaseModel):
     extra_metrics: Optional[list[Extra]] = None
     reminder_due: Optional[str] = None
     reminder_escalate: Optional[str] = None
+    skip_sundays: Optional[StrictBool] = None   # ads; off = Sundays owed from today on
 
 
 class EntryRequest(BaseModel):

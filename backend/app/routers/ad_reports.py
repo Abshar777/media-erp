@@ -216,6 +216,7 @@ async def create_report(
         "start_date": start.isoformat(), "end_date": end.isoformat() if end else None,
         "extra_metrics": [m for m in dict.fromkeys(body.extra_metrics)],
         "currency": "INR", "reminder_due": body.reminder_due, "reminder_escalate": body.reminder_escalate,
+        "skip_sundays": body.skip_sundays,
         "status": "active", "pauses": [],
         "created_by": str(current_user["_id"]), "created_by_name": current_user.get("name", ""),
         "created_at": now, "updated_at": now,
@@ -339,7 +340,7 @@ async def update_report(
         return error_response("Pause the ads inside the account instead.", status_code=409)
     if account and (body.extra_metrics is not None or body.end_date is not None
                     or body.reminder_due is not None or body.reminder_escalate is not None
-                    or body.account_id or body.clear_account):
+                    or body.skip_sundays is not None or body.account_id or body.clear_account):
         return error_response("An account has no dates, numbers or reminders of its own — edit its ads.", status_code=422)
 
     # Teams. A leader adds or removes only teams they lead (admins: any) and
@@ -403,6 +404,11 @@ async def update_report(
             esc = body.reminder_escalate or r.get("reminder_escalate", "17:00")
             ar.validate_times(due, esc)
             upd.update(reminder_due=due, reminder_escalate=esc)
+        if body.skip_sundays is not None and body.skip_sundays != ar.skips_sundays(r):
+            upd["skip_sundays"] = body.skip_sundays
+            if not body.skip_sundays:
+                # Sundays owed from today on — never a backlog of past Sundays.
+                upd["sundays_owed_from"] = today.isoformat()
         if body.clear_end_date:
             upd["end_date"] = None
         elif body.end_date is not None:

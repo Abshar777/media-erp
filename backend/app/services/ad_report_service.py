@@ -10,9 +10,17 @@ Rules worth knowing
 * **An entry records one full IST day.** Ads Manager's "today" is partial until
   midnight, so people enter *yesterday's* final numbers each morning. A day is
   "expected" from the start date up to yesterday (and never past the end date),
-  minus any days the report was paused. Sundays are expected too — ads run on
-  Sundays — but nobody is *reminded* on a Sunday or holiday; the next working
-  day asks for every missing day at once.
+  minus any days the report was paused. Nobody is *reminded* on a Sunday or
+  holiday; the next working day asks for every missing day at once.
+* **Sundays are skipped by default (2026-10-16).** An ad that skips Sundays
+  (`skip_sundays`, on unless switched off; older ads without the field skip
+  too) never owes a Sunday: it is never "missing", never reminded, never a red
+  gap. Sunday numbers can still be typed — Meta keeps spending on Sundays and a
+  total that silently drops them would undercount — they're just optional.
+  Switching it off owes Sundays only from that day on (`sundays_owed_from`), so
+  it never springs a backlog of old Sundays on anyone. With Sunday skipped,
+  Saturday's numbers are entered on Monday, so on Monday a missing Saturday is
+  "due", not "missing".
 * **Money is integer paise.** ₹16,200.32 is stored as 1620032, so sums never
   drift. Cost per lead (and CTR/CPM/CPC) is always computed — never typed — and
   for a week or month it is total ÷ total, not an average of daily averages.
@@ -165,6 +173,31 @@ def _paused_on(report: dict, d: date) -> bool:
     return False
 
 
+SUNDAY = 6                             # Python weekday(): Monday 0 … Sunday 6
+
+
+def skips_sundays(report: dict) -> bool:
+    """An ad skips Sundays unless switched off (older ads have no field: they skip)."""
+    return not is_account(report) and report.get("skip_sundays", True) is not False
+
+
+def skipped_sunday(report: dict, d: date) -> bool:
+    """A Sunday this ad doesn't owe: it skips Sundays, or Sundays were switched back on only later."""
+    if d.weekday() != SUNDAY:
+        return False
+    if skips_sundays(report):
+        return True
+    owed_from = report.get("sundays_owed_from")
+    return bool(owed_from) and d.isoformat() < owed_from
+
+
+def _running_on(report: dict, d: date) -> bool:
+    """Started, not past its end date, not paused that day."""
+    iso = d.isoformat()
+    return (report["start_date"] <= iso and not (report.get("end_date") and iso > report["end_date"])
+            and not _paused_on(report, d))
+
+
 def expected_days(report: dict, until: date) -> list[date]:
     """Days that should have numbers, from the start up to `until` (inclusive)."""
     if is_account(report):
@@ -174,7 +207,7 @@ def expected_days(report: dict, until: date) -> list[date]:
     last = min(until, end) if end else until
     if last < start:
         return []
-    return [d for d in days_between(start, last) if not _paused_on(report, d)]
+    return [d for d in days_between(start, last) if not _paused_on(report, d) and not skipped_sunday(report, d)]
 
 
 async def entered_dates(db, report_id: str, lo: date, hi: date) -> set[str]:
@@ -216,9 +249,15 @@ def day_status(report: dict, missing: list[str], now: datetime | None = None) ->
         return "not_started"
     if not missing:
         return "updated"
-    yesterday = (now.date() - timedelta(days=1)).isoformat()
-    if missing == [yesterday] and now.time() < _hhmm(report.get("reminder_escalate", "17:00")):
-        return "due"
+    # Due (not yet late): only the latest day is missing and today is the first
+    # day to enter it — yesterday's numbers, or on Monday Saturday's when the
+    # ad skips Sundays. After the leaders' reminder time it counts as missing.
+    if len(missing) == 1 and now.time() < _hhmm(report.get("reminder_escalate", "17:00")):
+        d = date.fromisoformat(missing[0]) + timedelta(days=1)
+        while d < now.date() and skipped_sunday(report, d):
+            d += timedelta(days=1)
+        if d == now.date():
+            return "due"
     return "missing"
 
 
@@ -560,7 +599,7 @@ async def series(db, report: dict, lo: date, hi: date, granularity: str, today: 
         key, b_lo, b_hi = _bucket(d, granularity)
         p = points.setdefault(key, {"key": key, "from": max(b_lo, lo).isoformat(),
                                     "to": min(b_hi, hi).isoformat(), "_rows": [], "_days": set(),
-                                    "missing": [], "edited": [], "off": []})
+                                    "missing": [], "edited": [], "off": [], "rest": []})
         iso = d.isoformat()
         day_rows = by_day.get(iso, [])
         if day_rows:
@@ -572,6 +611,9 @@ async def series(db, report: dict, lo: date, hi: date, granularity: str, today: 
                 p["off"].append(iso)
         if owed.get(iso, set()) - {r["report_id"] for r in day_rows}:
             p["missing"].append(iso)
+        elif (not day_rows and d <= yesterday and d.weekday() == SUNDAY
+              and any(_running_on(m, d) and skipped_sunday(m, d) for m in members)):
+            p["rest"].append(iso)          # a Sunday nobody owes: "Sunday — optional", not a gap
     out_points = []
     for p in points.values():
         reported = p.pop("_rows")
@@ -683,6 +725,7 @@ async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[
         "currency": r.get("currency", "INR"),
         "reminder_due": r.get("reminder_due", "12:00"),
         "reminder_escalate": r.get("reminder_escalate", "17:00"),
+        "skip_sundays": skips_sundays(r),             # ads; an account has no days of its own
         "status": r.get("status", "active"),
         "day_status": acct["rollup_status"] if acct else day_status(r, missing, now_on(today)),
         "creatives": serialize_creatives(r),       # first one is the cover

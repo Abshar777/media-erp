@@ -292,7 +292,7 @@ function ReportHero({ r, meId, today, onEntry, onEdit, onOpenAccount, onRestored
     { label: r.teams?.length > 1 ? "Teams" : "Team", value: <TeamChips teams={r.teams} fallback={r.team_name} /> },
     { label: "Updated by", value: peopleLabel(r.assignees) || "—" },
     { label: "Runs", value: <>{dayLabel(r.start_date)} → {r.end_date ? dayLabel(r.end_date) : "until ended"}</> },
-    { label: "Reminders", value: `${r.reminder_due} · ${r.reminder_escalate} IST` },
+    { label: "Reminders", value: <>{r.reminder_due} · {r.reminder_escalate} IST{r.skip_sundays !== false && <span className="text-muted-foreground"> · Mon–Sat</span>}</> },
   ];
   return (
     <section className="rounded-2xl border bg-card p-4 delta-shadow sm:p-5">

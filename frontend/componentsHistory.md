@@ -568,3 +568,11 @@ end-to-end, not just "the socket reconnects."
 - **`RepeatField`:** Daily shows a "Skip Sundays" switch (on by default — "Monday to Saturday — no task on Sundays"); the summary reads "Every day except Sunday" and its dates skip Sundays. `RepeatValue.skipSundays`, sent as `repeat.skip_sundays`.
 - **`lib/recurrence.ts`:** mirrors the server — `MON_TO_SAT`, `dailyOffsets`, `occurrenceDate` daily-with-offsets, `firstDate(..., skipSundays)`, `describePattern(..., skipSundays)`.
 - **`RecurringDrawer`:** pattern text uses it; the series Edit form has the same switch (daily only). **`RepeatBadge`:** "Repeats daily (Mon–Sat)".
+
+### Ad Reports — Skip Sundays (2026-10-16)
+- `ReportFormModal`: "Skip Sundays" switch (ads only, in the Reminders box; on by default; when switching off an existing ad it says Sundays are owed from today on). Sends `skip_sundays` on create, and on edit only when it changed.
+- `ad-reports/page.tsx`: the ad's Reminders fact adds "· Mon–Sat" when it skips Sundays.
+- `PerformanceOverview`: a skipped Sunday with no numbers reads "Sunday — optional, not tracked" in the chart tooltip (not "Not reported").
+- `EntryModal`: picking a Sunday on an ad that skips them shows "Sunday is optional for this ad — add it if the ad spent".
+- `types/adReport.ts`: `AdReport.skip_sundays`, `AdSeriesPoint.rest`, create / update `skip_sundays`.
+- QA pass (same day): `PerformanceOverview` draws a muted dash on a skipped Sunday with no numbers (`restMark`) and adds a "Sunday off" legend item when one is in range — without a point there the tooltip never showed.

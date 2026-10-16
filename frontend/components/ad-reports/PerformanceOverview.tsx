@@ -59,6 +59,8 @@ interface ChartRow {
   value: number | null;
   missingMark: number | null;
   editMark: number | null;
+  /** A skipped Sunday with no numbers — a muted dash, so its tooltip can say so. */
+  restMark: number | null;
   point: AdSeriesPoint;
 }
 
@@ -74,7 +76,9 @@ function ChartTooltip({ active, payload, metric }: { active?: boolean; payload?:
           {METRIC_META[metric].label}: <span className="font-semibold text-foreground">{formatMetric(metric, row.value)}</span>
         </p>
       ) : (
-        <p className="text-muted-foreground">{p.missing.length ? "Not reported" : "No numbers"}</p>
+        <p className="text-muted-foreground">
+          {p.missing.length ? "Not reported" : p.from === p.to && p.rest?.length ? "Sunday — optional, not tracked" : "No numbers"}
+        </p>
       )}
       {p.from !== p.to && p.missing.length > 0 && row.value != null && (
         <p className="text-amber-600 dark:text-amber-400">{p.missing.length} day{p.missing.length > 1 ? "s" : ""} not reported</p>
@@ -108,6 +112,7 @@ export function PerformanceOverview({ report, today, renderBelow }: {
     value: p.values?.[chosen] ?? null,
     missingMark: !p.values && p.missing.length ? 0 : null,
     editMark: p.edited.length ? 0 : null,
+    restMark: !p.values && !p.missing.length && p.rest?.length ? 0 : null,
     point: p,
   })), [data, granularity, chosen]);
 
@@ -211,6 +216,11 @@ export function PerformanceOverview({ report, today, renderBelow }: {
                   dot={(props: { cx?: number; cy?: number; index?: number }) =>
                     props.cx == null || rows[props.index ?? 0]?.missingMark == null ? <g key={props.index} /> :
                     <circle key={props.index} cx={props.cx} cy={props.cy} r={4} fill="var(--card)" stroke="currentColor" strokeWidth={1.5} className="text-muted-foreground" />} />
+                <Line dataKey="restMark" stroke="none" isAnimationActive={false} legendType="none" activeDot={false}
+                  dot={(props: { cx?: number; cy?: number; index?: number }) =>
+                    props.cx == null || rows[props.index ?? 0]?.restMark == null ? <g key={props.index} /> :
+                    <line key={props.index} x1={props.cx - 4} x2={props.cx + 4} y1={props.cy} y2={props.cy}
+                      stroke="currentColor" strokeWidth={2} strokeLinecap="round" className="text-muted-foreground/60" />} />
                 <Line dataKey="editMark" stroke="none" isAnimationActive={false} legendType="none" activeDot={false}
                   dot={(props: { cx?: number; cy?: number; index?: number }) =>
                     props.cx == null || rows[props.index ?? 0]?.editMark == null ? <g key={props.index} /> :
@@ -227,6 +237,9 @@ export function PerformanceOverview({ report, today, renderBelow }: {
           <span className="flex items-center gap-1.5"><span className="size-3 rounded-sm" style={{ background: LINE }} />{meta.label}</span>
           <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-full border-[1.5px] border-muted-foreground" />Not reported</span>
           <span className="flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400"><Pencil className="size-3" />Corrected</span>
+          {rows.some((r) => r.restMark != null) && (
+            <span className="flex items-center gap-1.5"><span className="h-0.5 w-2.5 rounded-full bg-muted-foreground/60" />Sunday off</span>
+          )}
           {data && data.reported_days > 0 && (
             <span>{data.reported_days} day{data.reported_days > 1 ? "s" : ""} reported</span>
           )}

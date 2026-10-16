@@ -67,6 +67,8 @@ export interface AdReport {
   currency: string;
   reminder_due: string;
   reminder_escalate: string;
+  /** Ads: Sundays aren't owed (no "missing", no reminders) — Sunday numbers stay optional. */
+  skip_sundays?: boolean;
   status: AdReportStatus;
   day_status: AdDayStatus;
   /** Owed days (up to yesterday) with no numbers yet, oldest first. */
@@ -114,6 +116,8 @@ export interface AdSeriesPoint {
   missing: string[];
   edited: string[];
   off: string[];
+  /** Sundays nobody owes (the ad skips Sundays) with no numbers — not a gap. */
+  rest?: string[];
 }
 
 /** One ad inside an account, totalled for the chosen range. */
@@ -167,6 +171,7 @@ export interface CreateAdReportPayload {
   extra_metrics?: AdExtraMetric[];
   reminder_due?: string;
   reminder_escalate?: string;
+  skip_sundays?: boolean;
 }
 
 export interface UpdateAdReportPayload {
@@ -182,6 +187,8 @@ export interface UpdateAdReportPayload {
   extra_metrics?: AdExtraMetric[];
   reminder_due?: string;
   reminder_escalate?: string;
+  /** Off: Sundays owed from today on (never a backlog of past ones). */
+  skip_sundays?: boolean;
 }
 
 /** DELETE /ad-reports/{id} — undo with the batch id. */

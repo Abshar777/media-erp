@@ -102,6 +102,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
   const [extras, setExtras] = useState<AdExtraMetric[]>([]);
   const [due, setDue] = useState("12:00");
   const [escalate, setEscalate] = useState("17:00");
+  const [skipSun, setSkipSun] = useState(true);
   const [picking, setPicking] = useState(true);
   const [everyone, setEveryone] = useState(false);
   const [teamsOpen, setTeamsOpen] = useState(false);
@@ -127,6 +128,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
     setExtras(report?.extra_metrics ?? []);
     setDue(report?.reminder_due ?? "12:00");
     setEscalate(report?.reminder_escalate ?? "17:00");
+    setSkipSun(report?.skip_sundays !== false);
     setPicking(!report && !selfOnly);
     setEveryone(false);
     setTeamsOpen(false);
@@ -241,6 +243,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
       await update.mutateAsync({
         id: report.id, name: name.trim(), team_ids: teamIds, assignees, extra_metrics: extras,
         reminder_due: due, reminder_escalate: escalate,
+        ...(skipSun !== (report.skip_sundays !== false) ? { skip_sundays: skipSun } : {}),
         ...(untilEnded ? { clear_end_date: true } : { end_date: end }),
         ...(accountId !== (report.account_id ?? "") ? (accountId ? { account_id: accountId } : { clear_account: true }) : {}),
       });
@@ -251,7 +254,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
       : await create.mutateAsync({
           kind: "ad", name: name.trim(), team_ids: teamIds, assignees, start_date: start,
           end_date: untilEnded ? null : end, extra_metrics: extras, reminder_due: due, reminder_escalate: escalate,
-          account_id: accountId || null,
+          skip_sundays: skipSun, account_id: accountId || null,
         });
     onCreated?.(r.id);
   };
@@ -522,6 +525,21 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
               </label>
             </div>
             {timesBad && <p className="text-xs text-red-600 dark:text-red-400">The leaders&apos; reminder must come after the first one.</p>}
+            {/* Sundays: off by default for the daily numbers */}
+            <label className="flex cursor-pointer items-center justify-between gap-3 border-t pt-2 text-sm select-none">
+              <span>
+                <span className="font-medium">Skip Sundays</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  {skipSun
+                    ? "Sunday is never missing or reminded — its numbers are optional and still count if added"
+                    : editing && report?.skip_sundays !== false
+                      ? "Sundays are owed from today on (earlier Sundays stay optional)"
+                      : "Every day is owed, Sundays included"}
+                </span>
+              </span>
+              <input type="checkbox" checked={skipSun} onChange={(e) => setSkipSun(e.target.checked)}
+                aria-label="Skip Sundays" className="size-4 shrink-0 rounded border accent-primary" />
+            </label>
           </div>
         </>
       )}
