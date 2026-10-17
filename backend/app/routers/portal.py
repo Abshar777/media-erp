@@ -26,6 +26,7 @@ from app.services.portal_service import (
     list_raised_for_portal,
     list_verifications_for_portal,
     pending_for_portal,
+    media_watch_for_portal,
     submit_verification_for_portal,
     list_roles_for_portal,
     provision_from_portal,
@@ -264,3 +265,19 @@ async def pending(
         return success_response(await pending_for_portal(db), "Pending")
     except PortalError as exc:
         return error_response(exc.message, status_code=exc.status_code)
+
+
+@router.get("/media-watch")
+async def media_watch(
+    x_portal_secret: str | None = Header(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Media Schedule, tasks and the Leader Desk waiting — and on whom — for Root's Pending → Media ERP tab."""
+    refused = _guard(x_portal_secret)
+    if refused:
+        return refused
+    try:
+        return success_response(await media_watch_for_portal(db), "Media watch")
+    except PortalError as exc:
+        return error_response(exc.message, status_code=exc.status_code)
+

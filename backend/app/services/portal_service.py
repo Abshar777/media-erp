@@ -12,6 +12,7 @@ scoped by tenant and no organization id is asked for.
 """
 
 import secrets
+from datetime import datetime, timezone
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -808,3 +809,144 @@ async def pending_for_portal(db: AsyncIOMotorDatabase) -> dict:
     people.sort(key=lambda p: (-p["total"], p["name"].lower()))
 
     return {"kinds": kinds, "people": people}
+
+
+_OPEN_TASK_STATUSES = ("pending", "started", "break", "reedit")
+_WATCH_LIMIT = 2000
+
+
+def _ymd(value) -> str:
+    """A stored date as YYYY-MM-DD: a datetime in IST days, a "YYYY-MM-DD…" string as written."""
+    from app.utils.timezone import IST
+    if value is None or value == "":
+        return ""
+    if isinstance(value, datetime):
+        aware = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return aware.astimezone(IST).date().isoformat()
+    text = str(value)
+    return text[:10] if len(text) >= 10 and text[4] == "-" else ""
+
+
+def _iso(value) -> str:
+    if isinstance(value, datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
+    return str(value or "")
+
+
+async def media_watch_for_portal(db: AsyncIOMotorDatabase) -> dict:
+    """
+    What is waiting in Media ERP, and on whom — the Root portal's Pending →
+    Media ERP tab (the user, 2026-10-17: "media pending, task pending, leader
+    desk pending"):
+
+      media        Media Schedule tasks not completed or cancelled — active now
+                   (overdue past their due date) and scheduled to start later
+      tasks        project tasks with somebody on them and not handed in yet —
+                   pending, started, on a break, or sent back to redo (reedit);
+                   overdue past their due date
+      leader_desk  what the Leader Desk queue holds: tasks in review, new work
+                   nobody has picked up, work sent back — and the team leaders
+                   it waits on (no team, or no leader: the admins)
+
+    Read-only. Days are IST, as everywhere else here.
+    """
+    from app.utils.timezone import today_ist
+
+    today = today_ist().isoformat()
+    users = await db["users"].find({}, {"name": 1, "email": 1, "is_active": 1, "role_id": 1}).to_list(None)
+    by_id = {str(u["_id"]): u for u in users}
+    role_ids = {u.get("role_id") for u in users if u.get("role_id") and ObjectId.is_valid(u.get("role_id"))}
+    roles = await db["roles"].find({"_id": {"$in": [ObjectId(r) for r in role_ids]}}, {"role_name": 1}).to_list(None)
+    role_name = {str(r["_id"]): r.get("role_name", "") for r in roles}
+    elevated = [uid for uid, u in by_id.items()
+                if u.get("is_active", True) and role_name.get(u.get("role_id") or "") in _ELEVATED_ROLE_NAMES]
+
+    teams = await db["teams"].find({}, {"name": 1, "members": 1}).to_list(None)
+    team_name = {str(t["_id"]): t.get("name", "") for t in teams}
+    leaders_of = {
+        str(t["_id"]): [m["user_id"] for m in (t.get("members") or []) if m.get("role") == "leader" and m.get("user_id") in by_id]
+        for t in teams
+    }
+
+    def person(uid) -> dict:
+        u = by_id.get(uid or "")
+        return {
+            "personId": uid or "",
+            "person": (u.get("name") or u.get("email", "")) if u else "",
+            "email": ((u or {}).get("email") or "").strip().lower(),
+            "active": bool((u or {}).get("is_active", True)),
+        }
+
+    # ── Media Schedule ───────────────────────────────────────────────────────
+    media_docs = await db["media_tasks"].find(
+        {"status": {"$in": ["active", "scheduled"]}}
+    ).sort("due_date", 1).to_list(_WATCH_LIMIT)
+    media = []
+    for t in media_docs:
+        due = _ymd(t.get("due_date"))
+        media.append({
+            "id": str(t["_id"]), "title": t.get("title", ""), "team": team_name.get(t.get("team_id") or "", ""),
+            **person(t.get("assigned_to")), "status": t.get("status", ""), "priority": t.get("priority", ""),
+            "start": _ymd(t.get("start_date")), "due": due,
+            "overdue": t.get("status") == "active" and bool(due) and due < today,
+        })
+
+    # ── Tasks ────────────────────────────────────────────────────────────────
+    task_docs = await db["project_tasks"].find(
+        {"status": {"$in": list(_OPEN_TASK_STATUSES)}, "assigned_to": {"$nin": ["", None]}},
+        {"title": 1, "team_id": 1, "assigned_to": 1, "assigned_to_name": 1, "status": 1, "due_date": 1, "priority": 1, "updated_at": 1},
+    ).sort("due_date", 1).to_list(_WATCH_LIMIT)
+    tasks = []
+    for t in task_docs:
+        due = _ymd(t.get("due_date"))
+        who = person(t.get("assigned_to"))
+        if not who["person"]:
+            who["person"] = t.get("assigned_to_name", "") or "Unknown"
+        tasks.append({
+            "id": str(t["_id"]), "title": t.get("title", ""), "team": team_name.get(t.get("team_id") or "", ""), **who,
+            "status": t.get("status", ""), "priority": t.get("priority", ""), "due": due, "overdue": bool(due) and due < today,
+            "since": _iso(t.get("updated_at")),
+        })
+
+    # ── Leader Desk ──────────────────────────────────────────────────────────
+    desk_docs = await db["project_tasks"].find(
+        {"$or": [
+            {"status": {"$in": ["pending_review", "reedit"]}},
+            {"status": "pending", "assigned_to": {"$in": ["", None]}},
+        ]},
+        {"title": 1, "team_id": 1, "assigned_to": 1, "assigned_to_name": 1, "status": 1, "due_date": 1, "updated_at": 1},
+    ).sort("updated_at", 1).to_list(_WATCH_LIMIT)
+    desk = []
+    for t in desk_docs:
+        team_id = t.get("team_id")
+        if team_id in ("", None):
+            waiting_on = elevated
+        elif team_id in leaders_of:
+            waiting_on = leaders_of[team_id] or elevated
+        else:
+            continue                                       # a team that is gone: on nobody's desk
+        stage = {"pending_review": "review", "reedit": "reedit"}.get(t.get("status"), "incoming")
+        who = person(t.get("assigned_to"))
+        desk.append({
+            "id": str(t["_id"]), "title": t.get("title", ""), "team": team_name.get(team_id or "", "") or ("No team" if not team_id else ""),
+            "stage": stage, "assignee": who["person"] or t.get("assigned_to_name", ""), "assigneeId": who["personId"],
+            "leaders": [{"id": uid, "name": person(uid)["person"]} for uid in waiting_on],
+            "due": _ymd(t.get("due_date")), "since": _iso(t.get("updated_at")),
+        })
+
+    return {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "today": today,
+        "counts": {
+            "media": sum(1 for m in media if m["status"] == "active"),
+            "media_overdue": sum(1 for m in media if m["overdue"]),
+            "media_upcoming": sum(1 for m in media if m["status"] == "scheduled"),
+            "tasks": len(tasks),
+            "tasks_overdue": sum(1 for t in tasks if t["overdue"]),
+            "leader_desk": len(desk),
+            "leader_desk_review": sum(1 for d in desk if d["stage"] == "review"),
+            "leader_desk_incoming": sum(1 for d in desk if d["stage"] == "incoming"),
+            "leader_desk_reedit": sum(1 for d in desk if d["stage"] == "reedit"),
+        },
+        "items": {"media": media, "tasks": tasks, "leaderDesk": desk},
+    }
