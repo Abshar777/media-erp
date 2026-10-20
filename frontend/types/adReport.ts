@@ -2,9 +2,10 @@
 
 import type { AdFlagSummary } from "@/types/adFlag";
 
-export type AdExtraMetric = "impressions" | "reach" | "clicks";
+export type AdExtraMetric = "impressions" | "reach" | "clicks" | "landing_page_views";
 export type AdMetric = "leads" | "spend" | AdExtraMetric;
-export type AdComputedMetric = "cpl" | "ctr" | "cpm" | "cpc";
+/** cplpv = cost per landing page view. */
+export type AdComputedMetric = "cpl" | "ctr" | "cpm" | "cpc" | "cplpv";
 export type AdDayStatus = "updated" | "due" | "missing" | "paused" | "ended" | "not_started";
 export type AdReportStatus = "active" | "paused" | "ended";
 export type AdGranularity = "day" | "week" | "month";
@@ -207,6 +208,7 @@ export interface AdEntryPayload {
   impressions?: number | null;
   reach?: number | null;
   clicks?: number | null;
+  landing_page_views?: number | null;
   campaign_off: boolean;
   note: string;
 }

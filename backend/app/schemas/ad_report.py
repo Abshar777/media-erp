@@ -3,7 +3,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, StrictBool
 
-Extra = Literal["impressions", "reach", "clicks"]
+Extra = Literal["impressions", "reach", "clicks", "landing_page_views"]
 
 
 class CreateAdReportRequest(BaseModel):
@@ -52,6 +52,7 @@ class EntryRequest(BaseModel):
     impressions: Optional[int] = None
     reach: Optional[int] = None
     clicks: Optional[int] = None
+    landing_page_views: Optional[int] = None
     campaign_off: bool = False
     note: str = ""
 

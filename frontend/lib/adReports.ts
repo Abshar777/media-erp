@@ -36,10 +36,12 @@ export const METRIC_META: Record<TileMetric, { label: string; hint: string; mone
   impressions: { label: "Impressions",   hint: "Times the ads were on screen." },
   reach:       { label: "Reach",         hint: "Daily reach added up. Meta's own total counts each person once, so it will be lower." },
   clicks:      { label: "Link clicks",   hint: "Clicks on links in the ads." },
+  landing_page_views: { label: "Landing page views", hint: "Times someone clicked the ad and the landing page loaded, as shown in Ads Manager." },
   cpl:         { label: "Per lead (form)", hint: "Amount spent ÷ leads — calculated, never typed.", money: true, lowerIsBetter: true },
   ctr:         { label: "CTR",           hint: "Link clicks ÷ impressions — calculated.", pct: true },
   cpm:         { label: "CPM",           hint: "Cost per 1,000 impressions — calculated.", money: true, lowerIsBetter: true },
   cpc:         { label: "CPC",           hint: "Cost per link click — calculated.", money: true, lowerIsBetter: true },
+  cplpv:       { label: "Per landing page view", hint: "Amount spent ÷ landing page views — calculated.", money: true, lowerIsBetter: true },
 };
 
 /** Tiles in Meta's order: Leads, Per lead, Amount spent, then any extras. */
@@ -51,6 +53,7 @@ export function tilesFor(metrics: AdMetric[]): TileMetric[] {
   if (metrics.includes("clicks") && metrics.includes("impressions")) t.push("ctr");
   if (metrics.includes("impressions")) t.push("cpm");
   if (metrics.includes("clicks")) t.push("cpc");
+  if (metrics.includes("landing_page_views")) t.push("landing_page_views", "cplpv");
   return t;
 }
 

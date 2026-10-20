@@ -26,6 +26,7 @@ const EXTRAS: { key: AdExtraMetric; label: string }[] = [
   { key: "impressions", label: "Impressions" },
   { key: "reach", label: "Reach" },
   { key: "clicks", label: "Link clicks" },
+  { key: "landing_page_views", label: "Landing page views" },
 ];
 const ELEVATED = ["Super Admin", "Admin", "Coordinator"];
 const MAX_PEOPLE = 6;
@@ -508,7 +509,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
                 );
               })}
             </div>
-            <p className="text-[11px] text-muted-foreground">Impressions add CPM · Link clicks add CPC — and CTR when both are on.</p>
+            <p className="text-[11px] text-muted-foreground">Impressions add CPM · Link clicks add CPC — and CTR when both are on · Landing page views add cost per view.</p>
           </div>
 
           {/* Reminders */}

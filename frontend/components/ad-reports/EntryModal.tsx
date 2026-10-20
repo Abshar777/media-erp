@@ -112,6 +112,7 @@ export function EntryModal({ report, open, onClose, today, initialDate }: Props)
       impressions: form.impressions ? Number(form.impressions) : null,
       reach: form.reach ? Number(form.reach) : null,
       clicks: form.clicks ? Number(form.clicks) : null,
+      landing_page_views: form.landing_page_views ? Number(form.landing_page_views) : null,
     };
     try {
       const res = await save.mutateAsync(p);

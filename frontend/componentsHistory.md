@@ -576,3 +576,10 @@ end-to-end, not just "the socket reconnects."
 - `EntryModal`: picking a Sunday on an ad that skips them shows "Sunday is optional for this ad — add it if the ad spent".
 - `types/adReport.ts`: `AdReport.skip_sundays`, `AdSeriesPoint.rest`, create / update `skip_sundays`.
 - QA pass (same day): `PerformanceOverview` draws a muted dash on a skipped Sunday with no numbers (`restMark`) and adds a "Sunday off" legend item when one is in range — without a point there the tooltip never showed.
+
+### Ad Reports — Landing page views (2026-10-20)
+- `ReportFormModal`: a "Landing page views" chip after Link clicks; the hint adds "Landing page views add cost per view".
+- `lib/adReports.ts`: `METRIC_META.landing_page_views` and `cplpv` ("Per landing page view", money, lower is better); `tilesFor` adds both after CPC.
+- `EntryModal`: sends `landing_page_views` (the field itself comes from the ad's metrics).
+- `types/adReport.ts`: `AdExtraMetric` + `"landing_page_views"`, `AdComputedMetric` + `"cplpv"`, `AdEntryPayload.landing_page_views`.
+- QA pass (2026-10-21): `PerformanceOverview` KPI tiles are a column whose label takes the spare height and whose info icon sits inline after the text — a wrapped label on a phone ("Landing page views", "Per landing page view") no longer pushes its number below the rest of the row.

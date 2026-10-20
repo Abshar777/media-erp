@@ -156,13 +156,15 @@ export function PerformanceOverview({ report, today, renderBelow }: {
               onClick={() => setMetric(m)}
               aria-pressed={active}
               className={cn(
-                "min-w-0 rounded-xl border p-3 text-left transition lg:p-4",
+                // A column whose label takes the spare height: when a long label wraps on a phone,
+                // the numbers in that row still line up.
+                "flex min-w-0 flex-col rounded-xl border p-3 text-left transition lg:p-4",
                 active ? "border-foreground/70 ring-1 ring-foreground/20" : "border-transparent hover:border-border hover:bg-muted/40",
               )}
             >
-              <span className="flex items-center gap-1 text-[13px] font-medium sm:whitespace-nowrap sm:text-sm">
+              <span className="flex-1 text-[13px] font-medium sm:whitespace-nowrap sm:text-sm">
                 {METRIC_META[m].label}
-                <span title={METRIC_META[m].hint} className="text-muted-foreground"><Info className="size-3.5" /></span>
+                <span title={METRIC_META[m].hint} className="ml-1 inline-block align-[-2px] text-muted-foreground"><Info className="size-3.5" /></span>
               </span>
               <span className={cn("mt-1 block whitespace-nowrap text-xl font-semibold tabular-nums tracking-tight sm:text-2xl xl:text-[1.75rem]", isLoading && "animate-pulse text-muted-foreground")}>
                 {isLoading ? "—" : formatMetric(m, v)}

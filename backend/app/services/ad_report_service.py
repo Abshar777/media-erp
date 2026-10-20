@@ -58,7 +58,7 @@ DELETED_REPORTS, DELETED_ENTRIES = "ad_reports_deleted", "ad_report_entries_dele
 
 ELEVATED_ROLES = ("Super Admin", "Admin", "Coordinator")
 BASE_METRICS = ("leads", "spend")
-EXTRA_METRICS = ("impressions", "reach", "clicks")
+EXTRA_METRICS = ("impressions", "reach", "clicks", "landing_page_views")
 MAX_ASSIGNEES = 6                 # the first one is the owner
 MAX_TEAMS = 5                     # team_ids[0] is the main team
 OWNER_EDIT_DAYS = 7               # the assigned person may correct the last 7 days
@@ -137,11 +137,14 @@ def computed(t: dict) -> dict:
         "ctr": div(t.get("clicks"), t.get("impressions"), 100),   # percent
         "cpm": div(t.get("spend"), t.get("impressions"), 1000),   # paise per 1,000
         "cpc": div(t.get("spend"), t.get("clicks")),              # paise per click
+        "cplpv": div(t.get("spend"), t.get("landing_page_views")),  # paise per landing page view
     }
 
 
 def metrics_of(report: dict) -> list[str]:
-    return list(BASE_METRICS) + [m for m in report.get("extra_metrics", []) if m in EXTRA_METRICS]
+    """Leads, spend, then the extras in Meta's order (whatever order they were ticked in)."""
+    extras = set(report.get("extra_metrics", []))
+    return list(BASE_METRICS) + [m for m in EXTRA_METRICS if m in extras]
 
 
 def is_account(report: dict) -> bool:
@@ -456,7 +459,8 @@ def validate_entry(report: dict, body: dict) -> dict:
             out[m] = to_paise(body.get("spend"))
             continue
         v = body.get(m)
-        label = {"leads": "Leads", "impressions": "Impressions", "reach": "Reach", "clicks": "Link clicks"}[m]
+        label = {"leads": "Leads", "impressions": "Impressions", "reach": "Reach", "clicks": "Link clicks",
+                 "landing_page_views": "Landing page views"}[m]
         if v is None or isinstance(v, bool):
             raise AdReportError(f"{label} is required.")
         if v < 0:
@@ -469,6 +473,8 @@ def validate_entry(report: dict, body: dict) -> dict:
             raise AdReportError("Reach can't be more than impressions — check the two numbers.")
         if out.get("clicks", 0) > out["impressions"]:
             raise AdReportError("Link clicks can't be more than impressions — check the two numbers.")
+        if out.get("landing_page_views", 0) > out["impressions"]:
+            raise AdReportError("Landing page views can't be more than impressions — check the two numbers.")
     return out
 
 
@@ -551,7 +557,8 @@ def _sum(rows: list[dict], metrics: list[str]) -> dict:
         num, den = _pair(rows, a, b)
         return round(num * k / den, 4) if num is not None and den else None
     return {**t, "cpl": ratio("spend", "leads"), "ctr": ratio("clicks", "impressions", 100),
-            "cpm": ratio("spend", "impressions", 1000), "cpc": ratio("spend", "clicks")}
+            "cpm": ratio("spend", "impressions", 1000), "cpc": ratio("spend", "clicks"),
+            "cplpv": ratio("spend", "landing_page_views")}
 
 
 async def series(db, report: dict, lo: date, hi: date, granularity: str, today: date | None = None,
