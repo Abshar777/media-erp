@@ -41,11 +41,19 @@ NOTIF_FLAGGED, NOTIF_UPDATE = "ad_flagged", "ad_flag_update"
 REASONS: dict[str, str] = {
     "high_cpl": "High cost per lead",
     "few_leads": "Too few leads",
+    # (keys stay; an ad whose result is landing page views reads them as such — reason_labels)
     "low_clicks": "Low clicks",
     "creative_tired": "Ad looks tired",
     "wrong_audience": "Wrong audience",
     "other": "Other",
 }
+def reason_labels(result: str = "leads") -> dict[str, str]:
+    """The reasons, worded for the ad's result (Meta's "cost per result")."""
+    if result != "landing_page_views":
+        return dict(REASONS)
+    return {**REASONS, "high_cpl": "High cost per landing page view", "few_leads": "Too few landing page views"}
+
+
 STATUS_LABEL = {
     "open": "Waiting", "in_progress": "Being recreated", "done": "Recreated",
     "declined": "Declined", "withdrawn": "Withdrawn",
@@ -108,7 +116,7 @@ async def default_recipient(db, report_id: str, flagger_id: str, directory: list
 # ── The numbers, frozen at the moment of flagging ─────────────────────────────
 
 async def snapshot(db, report: dict, today: date | None = None) -> dict:
-    """Last 7 complete days vs the 7 before (the Performance overview's own maths) + 14-day leads."""
+    """Last 7 complete days vs the 7 before (the Performance overview's own maths) + the 14-day trend of its result."""
     today = today or today_ist()
     hi = today - timedelta(days=1)
     lo = hi - timedelta(days=6)
@@ -116,11 +124,11 @@ async def snapshot(db, report: dict, today: date | None = None) -> dict:
     spark_lo = today - timedelta(days=14)
     rows = await db[ar.ENTRIES].find(
         {"report_id": str(report["_id"]), "date": {"$gte": spark_lo.isoformat(), "$lt": today.isoformat()}},
-        {"date": 1, "values.leads": 1},
+        {"date": 1, f"values.{s['metrics'][0]}": 1},
     ).to_list(20)
-    have = {x["date"]: x["values"].get("leads") for x in rows}
+    have = {x["date"]: x["values"].get(s["metrics"][0]) for x in rows}
     return {
-        "range": s["range"], "metrics": s["metrics"], "currency": report.get("currency", "INR"),
+        "range": s["range"], "metrics": s["metrics"], "result": s["metrics"][0], "currency": report.get("currency", "INR"),
         "totals": s["totals"], "previous": s["previous"], "reported_days": s["reported_days"],
         "sparkline": [have.get(d.isoformat()) for d in ar.days_between(spark_lo, hi)],
     }
@@ -184,7 +192,8 @@ async def create(db, user: dict, report: dict, recipient_id: str, recipient_team
     doc["_id"] = res.inserted_id
 
     first = doc["flagged_by_name"] or "Someone"
-    why = ", ".join(REASONS[r].lower() for r in reasons) or "see the note"
+    labels = reason_labels(ar.result_of(report))
+    why = ", ".join(labels[r].lower() for r in reasons) or "see the note"
     meta = {"flag_id": str(res.inserted_id), "report_id": doc["report_id"], "team_id": recipient_team_id,
             "link": f"/leader?tab=ads&flag={res.inserted_id}"}
     asyncio.create_task(ar.deliver(
@@ -222,7 +231,9 @@ async def serialize(db, flag: dict, user: dict, report: dict | None = None) -> d
         "account_name": flag.get("account_name", ""), "team_name": flag.get("team_name", ""),
         "status": flag["status"], "status_label": STATUS_LABEL.get(flag["status"], flag["status"]),
         "active": flag["status"] in ACTIVE,
-        "reasons": [{"key": r, "label": REASONS.get(r, r)} for r in flag.get("reasons", [])],
+        # Worded for the ad's result as it was when flagged (the frozen snapshot).
+        "reasons": [{"key": r, "label": reason_labels((flag.get("snapshot") or {}).get("result", "leads")).get(r, r)}
+                    for r in flag.get("reasons", [])],
         "note": flag.get("note", ""),
         "recipient": {"id": flag["recipient_id"], "name": flag.get("recipient_name", ""),
                       "team_name": flag.get("recipient_team_name", "")},

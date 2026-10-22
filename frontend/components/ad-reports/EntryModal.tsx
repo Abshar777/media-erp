@@ -15,7 +15,7 @@ import { CalendarCheck, Loader2, PencilLine, TriangleAlert } from "lucide-react"
 import { cn } from "@/lib/utils";
 import { ModalShell } from "./ModalShell";
 import { adErrorMessage, useAdEntries, useSaveAdEntry } from "@/hooks/useAdReports";
-import { METRIC_META, addDaysISO, cleanMoney, dayLabel, dayLabelW, formatINR, formatCount } from "@/lib/adReports";
+import { METRIC_META, RESULT_COST, addDaysISO, cleanMoney, dayLabel, dayLabelW, formatINR, formatCount, resultOf } from "@/lib/adReports";
 import type { AdEntry, AdMetric, AdReport } from "@/types/adReport";
 
 type Form = Partial<Record<AdMetric, string>> & { campaign_off: boolean; note: string };
@@ -83,8 +83,10 @@ export function EntryModal({ report, open, onClose, today, initialDate }: Props)
   }, [day, open, entries.length]);
 
   const spendPaise = toPaise(form.spend);
-  const leads = form.leads ? Number(form.leads) : null;
-  const cpl = form.campaign_off ? null : spendPaise != null && leads ? spendPaise / leads : null;
+  // The ad's result (leads or landing page views) and what each one cost — calculated as you type.
+  const result = resultOf(metrics);
+  const results = form[result] ? Number(form[result]) : null;
+  const cpl = form.campaign_off ? null : spendPaise != null && results ? spendPaise / results : null;
 
   // 5× either way from the previous day → ask once ("extra zero" typos).
   const odd = useMemo(() => {
@@ -211,7 +213,7 @@ export function EntryModal({ report, open, onClose, today, initialDate }: Props)
           </fieldset>
 
           <div className="flex items-center justify-between rounded-xl bg-muted/50 px-3 py-2.5 text-sm">
-            <span className="text-muted-foreground">Per lead (form) <span className="text-xs">· calculated</span></span>
+            <span className="text-muted-foreground">{METRIC_META[RESULT_COST[result]].label} <span className="text-xs">· calculated</span></span>
             <span className="font-semibold tabular-nums">{cpl != null ? formatINR(cpl) : "—"}</span>
           </div>
 

@@ -214,7 +214,8 @@ async def create_report(
         "kind": "ad", "account_id": body.account_id or None,
         "name": name, "platform": "meta", "team_id": team_ids[0], "team_ids": team_ids, "assignees": assignees,
         "start_date": start.isoformat(), "end_date": end.isoformat() if end else None,
-        "extra_metrics": [m for m in dict.fromkeys(body.extra_metrics)],
+        "result_metric": body.result_metric,
+        "extra_metrics": [m for m in dict.fromkeys(body.extra_metrics) if m != body.result_metric],
         "currency": "INR", "reminder_due": body.reminder_due, "reminder_escalate": body.reminder_escalate,
         "skip_sundays": body.skip_sundays,
         "status": "active", "pauses": [],
@@ -338,7 +339,7 @@ async def update_report(
     account = ar.is_account(r)
     if account and body.action in ("pause", "resume"):
         return error_response("Pause the ads inside the account instead.", status_code=409)
-    if account and (body.extra_metrics is not None or body.end_date is not None
+    if account and (body.extra_metrics is not None or body.result_metric is not None or body.end_date is not None
                     or body.reminder_due is not None or body.reminder_escalate is not None
                     or body.skip_sundays is not None or body.account_id or body.clear_account):
         return error_response("An account has no dates, numbers or reminders of its own — edit its ads.", status_code=422)
@@ -397,8 +398,14 @@ async def update_report(
             upd["name"] = name
         if body.assignees is not None:
             upd["assignees"], _ = await ar.validate_assignees(db, body.assignees, required=not account)
-        if body.extra_metrics is not None:
-            upd["extra_metrics"] = list(dict.fromkeys(body.extra_metrics))
+        if body.extra_metrics is not None or body.result_metric is not None:
+            res = body.result_metric or ar.result_of(r)
+            extras = body.extra_metrics if body.extra_metrics is not None else r.get("extra_metrics", [])
+            extras = [m for m in dict.fromkeys(extras) if m != res]       # the result is never also an extra
+            if res != ar.result_of(r):
+                upd["result_metric"] = res
+            if extras != r.get("extra_metrics", []):
+                upd["extra_metrics"] = extras
         if body.reminder_due is not None or body.reminder_escalate is not None:
             due = body.reminder_due or r.get("reminder_due", "12:00")
             esc = body.reminder_escalate or r.get("reminder_escalate", "17:00")

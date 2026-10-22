@@ -98,14 +98,14 @@ export function PerformanceOverview({ report, today, renderBelow }: {
   const [granularity, setGranularity] = useState<AdGranularity>("day");
   const [rangeKey, setRangeKey] = useState<RangeKey>("14");
   const [custom, setCustom] = useState(() => ({ from: addDaysISO(today, -14), to: addDaysISO(today, -1) }));
-  const [metric, setMetric] = useState<TileMetric>("leads");
+  const [metric, setMetric] = useState<TileMetric>(() => tilesFor(report.metrics)[0]);
 
   const { from, to } = rangeFor(rangeKey, report, today, custom);
   const validRange = !!from && !!to && from <= to;
   const { data, isLoading, isFetching } = useAdSeries(validRange ? report.id : null, from, to, granularity);
 
   const tiles = tilesFor(report.metrics);
-  const chosen = tiles.includes(metric) ? metric : "leads";
+  const chosen = tiles.includes(metric) ? metric : tiles[0];
 
   const rows: ChartRow[] = useMemo(() => (data?.points ?? []).map((p) => ({
     label: pointLabel(p, granularity),

@@ -2,7 +2,7 @@
  * Ad Reports helpers — Indian-format money and counts, metric labels, and the
  * small date maths the page needs. Money arrives as integer paise.
  */
-import type { AdComputedMetric, AdMetric, AdTotals } from "@/types/adReport";
+import type { AdComputedMetric, AdMetric, AdResultMetric, AdTotals } from "@/types/adReport";
 
 const INR = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const INR0 = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
@@ -44,16 +44,30 @@ export const METRIC_META: Record<TileMetric, { label: string; hint: string; mone
   cplpv:       { label: "Per landing page view", hint: "Amount spent ÷ landing page views — calculated.", money: true, lowerIsBetter: true },
 };
 
-/** Tiles in Meta's order: Leads, Per lead, Amount spent, then any extras. */
+/** Each result and its cost (Meta's "cost per result"). */
+export const RESULT_COST: Record<AdResultMetric, AdComputedMetric> = { leads: "cpl", landing_page_views: "cplpv" };
+/** Short words for tables and small cards. */
+export const RESULT_SHORT: Record<AdResultMetric, { label: string; per: string; unit: string }> = {
+  leads: { label: "Leads", per: "Per lead", unit: "leads" },
+  landing_page_views: { label: "Page views", per: "Per view", unit: "views" },
+};
+/** The result is always first in an ad's metrics (older payloads: leads). */
+export function resultOf(metrics: AdMetric[] | undefined): AdResultMetric {
+  return metrics?.[0] === "landing_page_views" ? "landing_page_views" : "leads";
+}
+
+/** Tiles in Meta's order: the result, its cost, Amount spent, the extras — and the other result last if tracked. */
 export function tilesFor(metrics: AdMetric[]): TileMetric[] {
-  const t: TileMetric[] = ["leads", "cpl", "spend"];
+  const res = resultOf(metrics);
+  const other: AdResultMetric = res === "leads" ? "landing_page_views" : "leads";
+  const t: TileMetric[] = [res, RESULT_COST[res], "spend"];
   if (metrics.includes("impressions")) t.push("impressions");
   if (metrics.includes("reach")) t.push("reach");
   if (metrics.includes("clicks")) t.push("clicks");
   if (metrics.includes("clicks") && metrics.includes("impressions")) t.push("ctr");
   if (metrics.includes("impressions")) t.push("cpm");
   if (metrics.includes("clicks")) t.push("cpc");
-  if (metrics.includes("landing_page_views")) t.push("landing_page_views", "cplpv");
+  if (metrics.includes(other)) t.push(other, RESULT_COST[other]);
   return t;
 }
 

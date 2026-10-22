@@ -1,4 +1,4 @@
-/** Tiny leads trend for a report card. Unreported days break the line. */
+/** Tiny trend of the ad's result (leads or landing page views) for a report card. Unreported days break the line. */
 export function Sparkline({ values, className }: { values: (number | null)[]; className?: string }) {
   const w = 96, h = 24;
   const nums = values.filter((v): v is number => v != null);

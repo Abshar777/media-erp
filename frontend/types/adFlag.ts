@@ -15,7 +15,9 @@ export interface AdFlagSnapshot {
   totals: AdTotals;
   previous: AdTotals | null;
   reported_days: number;
-  /** Leads for the last 14 days, null = not reported. */
+  /** The ad's result when flagged (older flags: leads). */
+  result?: "leads" | "landing_page_views";
+  /** The result for the last 14 days, null = not reported. */
   sparkline: (number | null)[];
 }
 

@@ -1,21 +1,22 @@
 "use client";
 
 /**
- * The "report" part of a flag: last 7 complete days vs the 7 before — leads,
- * amount spent, cost per lead — plus the 14-day leads trend. Same numbers and
+ * The "report" part of a flag: last 7 complete days vs the 7 before — the result
+ * (leads or landing page views), amount spent, cost per result — plus its 14-day trend. Same numbers and
  * formatting as the Performance overview.
  */
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { changePct, dayLabel, formatMetric, METRIC_META, type TileMetric } from "@/lib/adReports";
+import { changePct, dayLabel, formatMetric, METRIC_META, RESULT_COST, RESULT_SHORT, type TileMetric } from "@/lib/adReports";
 import { Sparkline } from "@/components/ad-reports/Sparkline";
 import type { AdFlagSnapshot } from "@/types/adFlag";
 
-const TILES: TileMetric[] = ["leads", "spend", "cpl"];
-
 export function FlagNumbers({ snap, compact }: { snap: AdFlagSnapshot | null; compact?: boolean }) {
   if (!snap) return null;
-  const label = { leads: "Leads", spend: "Spent", cpl: "Per lead" } as Record<string, string>;
+  // The ad's result when it was flagged (older flags: leads).
+  const res = snap.result ?? "leads";
+  const TILES: TileMetric[] = [res, "spend", RESULT_COST[res]];
+  const label = { [res]: RESULT_SHORT[res].label, spend: "Spent", [RESULT_COST[res]]: RESULT_SHORT[res].per } as Record<string, string>;
   return (
     <div className="space-y-2">
       <p className="text-[11px] text-muted-foreground">
@@ -56,7 +57,7 @@ export function FlagNumbers({ snap, compact }: { snap: AdFlagSnapshot | null; co
       )}
       {snap.sparkline.some((v) => v != null) && (
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-          <span>Leads, 14 days</span>
+          <span>{RESULT_SHORT[res].label}, 14 days</span>
           <Sparkline values={snap.sparkline} className="text-teal-500" />
         </div>
       )}

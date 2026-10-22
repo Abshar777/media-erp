@@ -3,7 +3,9 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, StrictBool
 
-Extra = Literal["impressions", "reach", "clicks", "landing_page_views"]
+Extra = Literal["impressions", "reach", "clicks", "landing_page_views", "leads"]
+# What the ad is for (Meta's "Result"): first, always typed, with its own cost.
+Result = Literal["leads", "landing_page_views"]
 
 
 class CreateAdReportRequest(BaseModel):
@@ -21,7 +23,9 @@ class CreateAdReportRequest(BaseModel):
     account_id: Optional[str] = None      # ads: the account it belongs to (same team), or none
     ad_account_ref: Optional[str] = None  # accounts: e.g. "act_1234567890" as shown in Ads Manager
     end_date: Optional[str] = None        # None = until someone ends it
-    # Leads + Amount spent are always tracked; these are optional extras.
+    # The result + Amount spent are always tracked; these are optional extras
+    # (the other result may be one of them — it is dropped if it's the result).
+    result_metric: Result = "leads"
     extra_metrics: list[Extra] = []
     reminder_due: str = "12:00"           # stage 1, IST HH:MM — the assigned people
     reminder_escalate: str = "17:00"      # stage 2, IST HH:MM — they and the team leader(s)
@@ -40,6 +44,7 @@ class UpdateAdReportRequest(BaseModel):
     end_date: Optional[str] = None
     clear_end_date: bool = False
     extra_metrics: Optional[list[Extra]] = None
+    result_metric: Optional[Result] = None
     reminder_due: Optional[str] = None
     reminder_escalate: Optional[str] = None
     skip_sundays: Optional[StrictBool] = None   # ads; off = Sundays owed from today on

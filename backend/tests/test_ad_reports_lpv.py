@@ -25,7 +25,7 @@ def test_the_maths():
     assert t["cplpv"] == 250, "₹500 over 200 views = ₹2.50 a view (paise)"
     assert ar.computed({"spend": 50000})["cplpv"] is None
     assert ar.computed({"spend": 50000, LPV: 0})["cplpv"] is None, "no division by zero"
-    assert ar.EXTRA_METRICS[-1] == LPV, "shown after Link clicks"
+    assert ar.EXTRA_METRICS.index(LPV) == ar.EXTRA_METRICS.index("clicks") + 1, "shown after Link clicks"
 
 
 async def test_create_and_track(world):

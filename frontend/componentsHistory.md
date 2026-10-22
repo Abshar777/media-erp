@@ -583,3 +583,9 @@ end-to-end, not just "the socket reconnects."
 - `EntryModal`: sends `landing_page_views` (the field itself comes from the ad's metrics).
 - `types/adReport.ts`: `AdExtraMetric` + `"landing_page_views"`, `AdComputedMetric` + `"cplpv"`, `AdEntryPayload.landing_page_views`.
 - QA pass (2026-10-21): `PerformanceOverview` KPI tiles are a column whose label takes the spare height and whose info icon sits inline after the text — a wrapped label on a phone ("Landing page views", "Per landing page view") no longer pushes its number below the rest of the row.
+
+### Ad Reports — Result: leads or landing page views (2026-10-22)
+- `ReportFormModal`: "Result — what this ad is for" (Leads (Form) · Lead form ads / Landing page views · Traffic ads) above Numbers to track; the sentence and hint follow it; the extras offer the other result (choosing a result removes it from the extras). Sends `result_metric` on create, on edit only when it changed.
+- `lib/adReports.ts`: `RESULT_COST`, `RESULT_SHORT`, `resultOf(metrics)`; `tilesFor` starts with the result and its cost, the other result last.
+- `EntryModal`: the calculated line is the result's cost. `PerformanceOverview`: starts on the result tile. Day-by-day table: "Leads / Per lead" or "Page views / Per view". `AccountView` breakdown: one header when the ads agree, else "Results" with a unit per line. `FlagNumbers`: result, spent, cost per result, and its trend.
+- Types: `AdResultMetric`, `AdReport.result_metric`, `AdBreakdownRow.result_metric`, payloads `result_metric`, `AdFlagSnapshot.result`.

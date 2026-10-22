@@ -64,7 +64,7 @@ async def flag_draft(
     return success_response(data={
         "recipients": directory,
         "default": await fl.default_recipient(db, report_id, uid, directory),
-        "reasons": [{"key": k, "label": v} for k, v in fl.REASONS.items()],
+        "reasons": [{"key": k, "label": v} for k, v in fl.reason_labels(ar.result_of(r)).items()],
         "snapshot": await fl.snapshot(db, r),
         "active_flag": await fl.serialize(db, active, current_user, r) if active else None,
     }, message="Ready")

@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import { Building2, CalendarRange, Flag, Hash, Megaphone, Plus, Settings2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUpdateAdReport } from "@/hooks/useAdReports";
-import { dayLabel, formatCount, formatINR, peopleLabel } from "@/lib/adReports";
+import { RESULT_COST, RESULT_SHORT, dayLabel, formatCount, formatINR, peopleLabel } from "@/lib/adReports";
 import { PerformanceOverview } from "./PerformanceOverview";
 import { StatusChip } from "./StatusChip";
 import { CreativeThumb } from "./CreativeShowcase";
@@ -153,6 +153,10 @@ function Breakdown({ series, onOpenAd }: { series: AdSeries; onOpenAd: (id: stri
   if (!rows.length) return null;
   const totalSpend = rows.reduce((n, r) => n + (r.totals.spend ?? 0), 0);
   const sorted = [...rows].sort((x, y) => (y.totals.spend ?? 0) - (x.totals.spend ?? 0));
+  // Ads after leads and ads after landing page views can share an account: one column
+  // header when they agree, otherwise "Results" with the unit on each line.
+  const kinds = new Set(rows.map((r) => r.result_metric ?? "leads"));
+  const same = kinds.size <= 1 ? RESULT_SHORT[[...kinds][0] ?? "leads"] : null;
   return (
     <div className="mt-6 border-t pt-5">
       <div className="mb-3 flex items-baseline justify-between gap-2">
@@ -165,9 +169,9 @@ function Breakdown({ series, onOpenAd }: { series: AdSeries; onOpenAd: (id: stri
             <tr className="text-left text-xs text-muted-foreground">
               <th className="px-2 py-1.5 font-medium">Ad</th>
               <th className="px-2 py-1.5 font-medium">Today</th>
-              <th className="px-2 py-1.5 text-right font-medium">Leads</th>
+              <th className="px-2 py-1.5 text-right font-medium">{same ? same.label : "Results"}</th>
               <th className="px-2 py-1.5 text-right font-medium">Spent</th>
-              <th className="px-2 py-1.5 text-right font-medium">Per lead</th>
+              <th className="px-2 py-1.5 text-right font-medium">{same ? same.per : "Per result"}</th>
               <th className="w-36 px-2 py-1.5 font-medium">Share of spend</th>
             </tr>
           </thead>
@@ -190,9 +194,14 @@ function Breakdown({ series, onOpenAd }: { series: AdSeries; onOpenAd: (id: stri
                     </div>
                   </td>
                   <td className="px-2 py-2"><StatusChip status={r.day_status} /></td>
-                  <td className="px-2 py-2 text-right tabular-nums">{r.totals.leads == null ? "—" : formatCount(r.totals.leads)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">
+                    {r.totals[r.result_metric ?? "leads"] == null ? "—" : formatCount(r.totals[r.result_metric ?? "leads"])}
+                    {!same && <span className="ml-1 text-[11px] text-muted-foreground">{RESULT_SHORT[r.result_metric ?? "leads"].unit}</span>}
+                  </td>
                   <td className="px-2 py-2 text-right tabular-nums">{r.totals.spend == null ? "—" : formatINR(spend)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums">{r.totals.cpl == null ? "—" : formatINR(r.totals.cpl)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">
+                    {r.totals[RESULT_COST[r.result_metric ?? "leads"]] == null ? "—" : formatINR(r.totals[RESULT_COST[r.result_metric ?? "leads"]])}
+                  </td>
                   <td className="px-2 py-2">
                     <div className="flex items-center gap-2">
                       <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">

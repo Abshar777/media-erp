@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { SelectField } from "@/components/ui/select-field";
 import { istTodayKey } from "@/lib/datetime";
 import { useAdEntries, useAdReports, useAdToday, useRemindAdReport, useUpdateAdReport } from "@/hooks/useAdReports";
-import { dayLabel, formatCount, formatINR, missingPhrase, peopleLabel, teamsLabel } from "@/lib/adReports";
+import { RESULT_SHORT, dayLabel, formatCount, formatINR, missingPhrase, peopleLabel, resultOf, teamsLabel } from "@/lib/adReports";
 import { PerformanceOverview } from "@/components/ad-reports/PerformanceOverview";
 import { EntryModal } from "@/components/ad-reports/EntryModal";
 import { ReportFormModal } from "@/components/ad-reports/ReportFormModal";
@@ -206,6 +206,8 @@ function LeaderStrip({ onOpen }: { onOpen: (id: string) => void }) {
 
 function History({ report, today, onEdit }: { report: AdReport; today: string; onEdit: (d: string) => void }) {
   const { data: rows = [], isLoading } = useAdEntries(report.id);
+  const res = report.result_metric ?? resultOf(report.metrics);
+  const word = RESULT_SHORT[res];
   const canEditDay = (d: string) =>
     !!report.can_enter && (report.can_manage || (report.status !== "ended" && d >= dayAgo(today, 7)));
   return (
@@ -221,30 +223,31 @@ function History({ report, today, onEdit }: { report: AdReport; today: string; o
             <thead>
               <tr className="text-left text-xs text-muted-foreground">
                 <th className="px-2 py-1.5 font-medium">Day</th>
-                <th className="px-2 py-1.5 text-right font-medium">Leads</th>
+                <th className="px-2 py-1.5 text-right font-medium">{word.label}</th>
                 <th className="px-2 py-1.5 text-right font-medium">Spent</th>
-                <th className="px-2 py-1.5 text-right font-medium">Per lead</th>
+                <th className="px-2 py-1.5 text-right font-medium">{word.per}</th>
                 <th className="px-2 py-1.5 font-medium">Entered by</th>
                 <th className="px-2 py-1.5" />
               </tr>
             </thead>
             <tbody>
               {rows.map((e) => {
-                const leads = e.values.leads ?? 0, spend = e.values.spend ?? 0;
+                // A day typed before the result changed may not have it: "—", not 0.
+                const got = e.values[res], spend = e.values.spend ?? 0;
                 return (
                   <tr key={e.date} className="border-t">
                     <td className="px-2 py-2 font-medium">
                       {dayLabel(e.date)}
                       {e.campaign_off && <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">off</span>}
                     </td>
-                    <td className="px-2 py-2 text-right tabular-nums">{formatCount(leads)}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{got == null ? "—" : formatCount(got)}</td>
                     <td className="px-2 py-2 text-right tabular-nums">{formatINR(spend)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{leads ? formatINR(spend / leads) : "—"}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{got ? formatINR(spend / got) : "—"}</td>
                     <td className="px-2 py-2 text-xs text-muted-foreground">
                       {e.entered_by_name}
                       {e.edits.length > 0 && (
                         <span className="ml-1 text-indigo-600 dark:text-indigo-400"
-                          title={e.edits.map((x) => `${x.by_name}: ${formatCount(x.old.leads)} → ${formatCount(x.new.leads)} leads, ${formatINR(x.old.spend)} → ${formatINR(x.new.spend)}`).join("\n")}>
+                          title={e.edits.map((x) => `${x.by_name}: ${formatCount(x.old[res])} → ${formatCount(x.new[res])} ${word.unit}, ${formatINR(x.old.spend)} → ${formatINR(x.new.spend)}`).join("\n")}>
                           ✎ corrected
                         </span>
                       )}
@@ -461,7 +464,7 @@ function AdReportsInner() {
             <BarChart3 className="size-6 text-primary" /> Ad Reports
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Meta campaign numbers, entered daily by the team — Leads, Amount spent and Cost per lead.
+            Meta campaign numbers, entered daily by the team — results (leads or landing page views), amount spent and cost per result.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

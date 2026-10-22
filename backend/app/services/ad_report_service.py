@@ -57,8 +57,12 @@ REPORTS, ENTRIES, REMINDERS = "ad_reports", "ad_report_entries", "ad_report_remi
 DELETED_REPORTS, DELETED_ENTRIES = "ad_reports_deleted", "ad_report_entries_deleted"
 
 ELEVATED_ROLES = ("Super Admin", "Admin", "Coordinator")
-BASE_METRICS = ("leads", "spend")
-EXTRA_METRICS = ("impressions", "reach", "clicks", "landing_page_views")
+BASE_METRICS = ("leads", "spend")               # an ad whose result is leads (the default)
+# What the ad is for — Meta's "Result": it comes first, is always typed, and its
+# cost (per lead / per landing page view) is the second tile. The other result
+# can still be tracked as an extra.
+RESULT_METRICS = ("leads", "landing_page_views")
+EXTRA_METRICS = ("impressions", "reach", "clicks", "landing_page_views", "leads")
 MAX_ASSIGNEES = 6                 # the first one is the owner
 MAX_TEAMS = 5                     # team_ids[0] is the main team
 OWNER_EDIT_DAYS = 7               # the assigned person may correct the last 7 days
@@ -141,10 +145,17 @@ def computed(t: dict) -> dict:
     }
 
 
+def result_of(report: dict) -> str:
+    """The ad's result: leads unless it was set to landing page views (older ads: leads)."""
+    r = report.get("result_metric")
+    return r if r in RESULT_METRICS else "leads"
+
+
 def metrics_of(report: dict) -> list[str]:
-    """Leads, spend, then the extras in Meta's order (whatever order they were ticked in)."""
+    """The result, spend, then the extras in Meta's order (whatever order they were ticked in)."""
+    res = result_of(report)
     extras = set(report.get("extra_metrics", []))
-    return list(BASE_METRICS) + [m for m in EXTRA_METRICS if m in extras]
+    return [res, "spend"] + [m for m in EXTRA_METRICS if m in extras and m != res]
 
 
 def is_account(report: dict) -> bool:
@@ -161,8 +172,11 @@ async def children_of(db, account: dict) -> list[dict]:
 
 
 def union_metrics(children: list[dict]) -> list[str]:
-    extras = {m for c in children for m in c.get("extra_metrics", []) if m in EXTRA_METRICS}
-    return list(BASE_METRICS) + [m for m in EXTRA_METRICS if m in extras]
+    """An account: everything its ads track. Its result is leads if any ad is after leads
+    (or it has no ads yet), else landing page views."""
+    tracked = {m for c in children for m in metrics_of(c)}
+    res = "landing_page_views" if children and all(result_of(c) == "landing_page_views" for c in children) else "leads"
+    return [res, "spend"] + [m for m in EXTRA_METRICS if m in tracked and m != res]
 
 
 # ── Which days are owed ───────────────────────────────────────────────────────
@@ -658,6 +672,7 @@ async def _breakdown(db, children: list[dict], rows: list[dict], today: date) ->
             "day_status": day_status(c, missing, now_on(today)), "missing": missing,
             "owners": [names.get(a, "") for a in c.get("assignees", [])],
             "totals": _sum(by_ad.get(cid, []), metrics_of(c)),
+            "result_metric": result_of(c),
             "cover": cover[0] if cover else None,
         })
     return out
@@ -706,11 +721,12 @@ async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[
                 "metrics": union_metrics(kids),
                 "start": min((k["start_date"] for k in kids), default=r.get("start_date"))}
     spark_lo = today - timedelta(days=14)
+    res = acct["metrics"][0] if acct else result_of(r)        # the card's trend follows the ad's result
     spark_rows = await db[ENTRIES].find(
         {"report_id": str(r["_id"]), "date": {"$gte": spark_lo.isoformat(), "$lt": today.isoformat()}},
-        {"date": 1, "values.leads": 1},
+        {"date": 1, f"values.{res}": 1},
     ).to_list(20)
-    have = {x["date"]: x["values"].get("leads") for x in spark_rows}
+    have = {x["date"]: x["values"].get(res) for x in spark_rows}
     out = {
         "id": str(r["_id"]),
         "name": r.get("name", ""),
@@ -723,6 +739,7 @@ async def serialize_report(db, r: dict, names: dict[str, str], team_names: dict[
         "start_date": (acct["start"] if acct else r.get("start_date")),
         "end_date": r.get("end_date"),
         "metrics": acct["metrics"] if acct else metrics_of(r),
+        "result_metric": res,
         "extra_metrics": r.get("extra_metrics", []),
         "kind": "account" if acct else "ad",
         "account_id": r.get("account_id"),

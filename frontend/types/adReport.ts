@@ -2,7 +2,9 @@
 
 import type { AdFlagSummary } from "@/types/adFlag";
 
-export type AdExtraMetric = "impressions" | "reach" | "clicks" | "landing_page_views";
+export type AdExtraMetric = "impressions" | "reach" | "clicks" | "landing_page_views" | "leads";
+/** What the ad is for (Meta's "Result"): first, always typed, with its own cost per result. */
+export type AdResultMetric = "leads" | "landing_page_views";
 export type AdMetric = "leads" | "spend" | AdExtraMetric;
 /** cplpv = cost per landing page view. */
 export type AdComputedMetric = "cpl" | "ctr" | "cpm" | "cpc" | "cplpv";
@@ -68,6 +70,8 @@ export interface AdReport {
   currency: string;
   reminder_due: string;
   reminder_escalate: string;
+  /** The ad's result (an account: leads if any ad is after leads). `metrics[0]` is the same. */
+  result_metric?: AdResultMetric;
   /** Ads: Sundays aren't owed (no "missing", no reminders) — Sunday numbers stay optional. */
   skip_sundays?: boolean;
   status: AdReportStatus;
@@ -130,6 +134,7 @@ export interface AdBreakdownRow {
   missing: string[];
   owners: string[];
   totals: AdTotals;
+  result_metric?: AdResultMetric;
   cover: AdCreative | null;
 }
 
@@ -173,6 +178,7 @@ export interface CreateAdReportPayload {
   reminder_due?: string;
   reminder_escalate?: string;
   skip_sundays?: boolean;
+  result_metric?: AdResultMetric;
 }
 
 export interface UpdateAdReportPayload {
@@ -190,6 +196,7 @@ export interface UpdateAdReportPayload {
   reminder_escalate?: string;
   /** Off: Sundays owed from today on (never a backlog of past ones). */
   skip_sundays?: boolean;
+  result_metric?: AdResultMetric;
 }
 
 /** DELETE /ad-reports/{id} — undo with the batch id. */

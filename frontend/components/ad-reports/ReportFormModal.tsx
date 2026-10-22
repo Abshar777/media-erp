@@ -20,14 +20,24 @@ import { UserPicker } from "@/components/teams/UserPicker";
 import { useAssignableUsers, useTeams, type AssignableUser, type Team } from "@/hooks/useTeams";
 import { useCreateAdReport, useUpdateAdReport } from "@/hooks/useAdReports";
 import { useAuthStore } from "@/stores/authStore";
-import type { AdExtraMetric, AdReport, AdReportKind } from "@/types/adReport";
+import { resultOf } from "@/lib/adReports";
+import type { AdExtraMetric, AdReport, AdReportKind, AdResultMetric } from "@/types/adReport";
 
-const EXTRAS: { key: AdExtraMetric; label: string }[] = [
+/** What the ad is for — Meta's "Result". It comes first, is always typed, and has its own cost. */
+const RESULTS: { key: AdResultMetric; label: string; per: string; hint: string }[] = [
+  { key: "leads", label: "Leads (Form)", per: "Cost per lead", hint: "Lead form ads" },
+  { key: "landing_page_views", label: "Landing page views", per: "Cost per landing page view", hint: "Traffic ads" },
+];
+const BASE_EXTRAS: { key: AdExtraMetric; label: string }[] = [
   { key: "impressions", label: "Impressions" },
   { key: "reach", label: "Reach" },
   { key: "clicks", label: "Link clicks" },
-  { key: "landing_page_views", label: "Landing page views" },
 ];
+/** The extras for a result: the usual three, plus the other result (so a traffic ad can still count form leads). */
+function extrasFor(result: AdResultMetric): { key: AdExtraMetric; label: string }[] {
+  const other = RESULTS.find((r) => r.key !== result)!;
+  return [...BASE_EXTRAS, { key: other.key, label: other.label }];
+}
 const ELEVATED = ["Super Admin", "Admin", "Coordinator"];
 const MAX_PEOPLE = 6;
 const MAX_TEAMS = 5;
@@ -101,6 +111,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
   const [untilEnded, setUntilEnded] = useState(true);
   const [end, setEnd] = useState("");
   const [extras, setExtras] = useState<AdExtraMetric[]>([]);
+  const [result, setResult] = useState<AdResultMetric>("leads");
   const [due, setDue] = useState("12:00");
   const [escalate, setEscalate] = useState("17:00");
   const [skipSun, setSkipSun] = useState(true);
@@ -127,6 +138,7 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
     setUntilEnded(!report?.end_date);
     setEnd(report?.end_date ?? "");
     setExtras(report?.extra_metrics ?? []);
+    setResult(report?.result_metric ?? resultOf(report?.metrics));
     setDue(report?.reminder_due ?? "12:00");
     setEscalate(report?.reminder_escalate ?? "17:00");
     setSkipSun(report?.skip_sundays !== false);
@@ -242,7 +254,9 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
         return;
       }
       await update.mutateAsync({
-        id: report.id, name: name.trim(), team_ids: teamIds, assignees, extra_metrics: extras,
+        id: report.id, name: name.trim(), team_ids: teamIds, assignees,
+        extra_metrics: extras.filter((m) => m !== result),
+        ...(result !== (report.result_metric ?? resultOf(report.metrics)) ? { result_metric: result } : {}),
         reminder_due: due, reminder_escalate: escalate,
         ...(skipSun !== (report.skip_sundays !== false) ? { skip_sundays: skipSun } : {}),
         ...(untilEnded ? { clear_end_date: true } : { end_date: end }),
@@ -254,8 +268,8 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
       ? await create.mutateAsync({ kind: "account", name: name.trim(), team_ids: teamIds, assignees, ad_account_ref: adRef.trim() })
       : await create.mutateAsync({
           kind: "ad", name: name.trim(), team_ids: teamIds, assignees, start_date: start,
-          end_date: untilEnded ? null : end, extra_metrics: extras, reminder_due: due, reminder_escalate: escalate,
-          skip_sundays: skipSun, account_id: accountId || null,
+          end_date: untilEnded ? null : end, result_metric: result, extra_metrics: extras.filter((m) => m !== result),
+          reminder_due: due, reminder_escalate: escalate, skip_sundays: skipSun, account_id: accountId || null,
         });
     onCreated?.(r.id);
   };
@@ -489,15 +503,35 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
             </div>
           </div>
 
+          {/* Result: what the ad is for */}
+          <div className="space-y-1.5">
+            <span className={label}>Result — what this ad is for</span>
+            <div role="radiogroup" aria-label="Result" className="grid grid-cols-2 gap-2">
+              {RESULTS.map((r) => {
+                const on = result === r.key;
+                return (
+                  <button key={r.key} type="button" role="radio" aria-checked={on}
+                    onClick={() => { setResult(r.key); setExtras((e) => e.filter((k) => k !== r.key)); }}
+                    className={cn("rounded-xl border px-3 py-2 text-left transition",
+                      on ? "border-primary bg-primary/10 ring-1 ring-primary/30" : "hover:bg-muted")}>
+                    <span className={cn("block text-sm font-medium", on && "text-primary")}>{r.label}</span>
+                    <span className="block text-[11px] text-muted-foreground">{r.hint}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Metrics */}
           <div className="space-y-1.5">
             <span className={label}>Numbers to track</span>
             <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">Leads (Form)</span> and <span className="font-medium text-foreground">Amount spent</span> always —
-              Cost per lead is calculated. Extras:
+              <span className="font-medium text-foreground">{RESULTS.find((r) => r.key === result)!.label}</span> and{" "}
+              <span className="font-medium text-foreground">Amount spent</span> always —
+              {" "}{RESULTS.find((r) => r.key === result)!.per} is calculated. Extras:
             </p>
             <div className="flex flex-wrap gap-2">
-              {EXTRAS.map((x) => {
+              {extrasFor(result).map((x) => {
                 const on = extras.includes(x.key);
                 return (
                   <button key={x.key} type="button" aria-pressed={on}
@@ -509,7 +543,10 @@ export function ReportFormModal({ open, onClose, today, report, onCreated, all =
                 );
               })}
             </div>
-            <p className="text-[11px] text-muted-foreground">Impressions add CPM · Link clicks add CPC — and CTR when both are on · Landing page views add cost per view.</p>
+            <p className="text-[11px] text-muted-foreground">
+              Impressions add CPM · Link clicks add CPC — and CTR when both are on ·{" "}
+              {result === "leads" ? "Landing page views add cost per view." : "Leads add cost per lead."}
+            </p>
           </div>
 
           {/* Reminders */}
