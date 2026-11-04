@@ -114,3 +114,11 @@
 - **Endpoint:** GET /standin · PUT /standin · DELETE /standin
 - **Query key:** `["standin"]`
 - **Purpose:** A leader's hand-over of their Leader Desk to a teammate while away, and where the current user stands in. Also exports `standinDay(iso)` ("Tue 20 Oct").
+
+### useWallet / walletThisMonth / useViewingAsSomeoneElse (2026-11-04)
+- **File:** `hooks/useWallet.ts`
+- **Type:** useQuery
+- **Endpoint:** GET /wallet?month=YYYY-MM
+- **Query key:** `["wallet", month]` (staleTime 1 min, no retry)
+- **Purpose:** your own month from the HRMS — the `Wallet` in `types/wallet.ts` (days, reconcile, items, commission, payments, totals, finance). `walletThisMonth()` is this month in Dubai (the HRMS's months). `useViewingAsSomeoneElse()` is true while impersonating; the wallet isn't asked for then.
+

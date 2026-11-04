@@ -13,6 +13,7 @@ import { useTasks } from "@/hooks/useProjects";
 import { useTeams } from "@/hooks/useTeams";
 import { MemberScopePicker, type ScopeGroup, type ScopeMember } from "@/components/dashboard/MemberScopePicker";
 import { AdReportsBanner } from "@/components/ad-reports/AdReportsBanner";
+import { WalletCard } from "@/components/wallet/WalletCard";
 import { DateRangeFilter } from "@/components/dashboard/DateRangeFilter";
 import { OverviewPdfButton } from "@/components/dashboard/OverviewPdfButton";
 import { useAuthStore } from "@/stores/authStore";
@@ -450,6 +451,10 @@ export default function DashboardPage() {
           />
         </div>
       </motion.div>
+
+      {/* First in the row: your own pay this month from the HRMS — earned, deducted, paid (2026-11-04).
+          Always the signed-in person's, so not while viewing somebody else's overview. */}
+      {!viewingMember && <WalletCard />}
 
       {/* Only when one of *your* ad reports is waiting for numbers. */}
       {!viewingMember && <AdReportsBanner />}

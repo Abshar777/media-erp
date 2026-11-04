@@ -33,6 +33,7 @@ import {
   Users,
   UsersRound,
   Wallet,
+  WalletCards,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -68,6 +69,8 @@ const NAV_ITEMS = [
   { label: "Verifications", href: "/verify",         icon: ShieldCheck },
   { label: "Performance",   href: "/performance",    icon: Trophy },
   { label: "Fund Requests", href: "/fund-requests",  icon: Wallet,          module: "fund_requests" },
+  // My Wallet, from the HRMS (2026-11-04): salary a day at a time, deductions and why, commission, what finance paid — everyone's own.
+  { label: "My Wallet",     href: "/wallet",         icon: WalletCards },
   { label: "AI Queries",    href: "/ai",             icon: Sparkles,        module: "ai", hidden: true },
   { label: "Publish",       href: "/social",         icon: Share2,                              hidden: true },
   { label: "Send DM",       href: "/social/dm",      icon: Send,                                hidden: true },

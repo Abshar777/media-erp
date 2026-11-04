@@ -589,3 +589,10 @@ end-to-end, not just "the socket reconnects."
 - `lib/adReports.ts`: `RESULT_COST`, `RESULT_SHORT`, `resultOf(metrics)`; `tilesFor` starts with the result and its cost, the other result last.
 - `EntryModal`: the calculated line is the result's cost. `PerformanceOverview`: starts on the result tile. Day-by-day table: "Leads / Per lead" or "Page views / Per view". `AccountView` breakdown: one header when the ads agree, else "Results" with a unit per line. `FlagNumbers`: result, spent, cost per result, and its trend.
 - Types: `AdResultMetric`, `AdReport.result_metric`, `AdBreakdownRow.result_metric`, payloads `result_metric`, `AdFlagSnapshot.result`.
+
+### My Wallet (2026-11-04)
+- `app/(dashboard)/wallet/page.tsx`: "My Wallet" — a month at a time (‹ November 2026 ›, back to the month you joined, never past this one); your own only; says so instead while viewing as someone else.
+- `components/wallet/WalletView.tsx`: the headline (earned so far / waiting for payroll / still to be paid / paid in full / pay stopped), Credited · Deducted · Paid to you · Balance, Salary day by day (each day's in/out times, its credit, what came off and why; newest first, "Show all N days"), Commission (Earned → Approved by finance → On payroll → Paid), Everything else this month, Payments from finance (part payments and reversals marked, "Not paid yet"). Ported from the sales CRMs' — same layout and words; a local `Card` is this app's `rounded-xl border bg-card delta-shadow`.
+- `components/wallet/WalletCard.tsx`: the dashboard's first card — this month's headline figure, credited / deducted / paid, days of pay lost; links to /wallet; nothing at all when there is no wallet (no HRMS record, not linked, viewing as someone).
+- Sidebar: "My Wallet" (`WalletCards`), no module — everyone. Overview: the card under the greeting, before the ad-reports banner and the KPI cards; not while viewing somebody else's overview.
+

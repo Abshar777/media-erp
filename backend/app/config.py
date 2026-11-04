@@ -47,6 +47,18 @@ class Settings(BaseSettings):
     finance_department_id: str = ""
     finance_currency: str = "AED"
 
+    # ── HRMS (My Wallet) ──────────────────────────────────────────────────────
+    # Where somebody's wallet comes from (2026-11-04): the HRMS's signed
+    # integration API, asked for the signed-in person's own by the email they
+    # sign in with — salary a day at a time, what came off and why, commission,
+    # what finance has paid. The URL is the HRMS API's base (a trailing /api/v1
+    # is fine); the client id and secret are the HRMS's INTEGRATION_CLIENT_ID /
+    # INTEGRATION_SECRET — the same pair the sales CRMs, Root and CS Portal use.
+    # Any of them blank means My Wallet says this server isn't linked yet.
+    hrms_api_url: str = ""
+    hrms_client_id: str = ""
+    hrms_integration_secret: str = ""
+
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15

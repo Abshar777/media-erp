@@ -72,6 +72,7 @@ from app.routers import task_presets as task_presets_router
 from app.routers import task_projects as task_projects_router
 from app.routers import auto_approve as auto_approve_router
 from app.routers import standin as standin_router
+from app.routers import wallet as wallet_router
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.utils.response import success_response
 
@@ -218,6 +219,8 @@ app.include_router(task_presets_router.router)
 app.include_router(task_projects_router.router)
 app.include_router(auto_approve_router.router)
 app.include_router(standin_router.router)
+# My Wallet, from the HRMS (2026-11-04) — everyone's own.
+app.include_router(wallet_router.router)
 
 # Serve uploaded files at /uploads/<filename>
 # These are publicly reachable via ngrok so Instagram can fetch images.

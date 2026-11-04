@@ -79,3 +79,7 @@ Always use `app.dependency_overrides[get_db] = fn` — never `patch()` on a `Dep
 
 ### Rate limiter — per bucket and per user (2026-10-09)
 - **File:** `app/middleware/rate_limit.py`. Buckets counted separately: `signin` (login, register, refresh, forgot/reset password, sso-login — 60/min per IP), `auth` (other /auth — 60/min per user), `sync` (30/min per user), `api` (300/min per user). Identity = verified access-token `sub` (hashed) else client IP. Fixes production 429s on /auth/impersonate: all users share one IP behind the Next.js rewrite, and ordinary traffic used to fill the /auth counter. Tests: `tests/test_rate_limit.py`.
+
+### My Wallet — GET /api/v1/wallet (2026-11-04)
+- **Chain:** `get_current_user` only — open to every signed-in user, no `require_permission`; the email asked for is always the signed-in user's own, never one from the request. A Super Admin's impersonation token is the other person's own, so the server can't tell it apart: the frontend doesn't ask while `originalAuth` is set.
+

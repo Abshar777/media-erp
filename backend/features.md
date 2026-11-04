@@ -215,6 +215,15 @@ Marks all notifications for the user as read.
 
 ---
 
+## My Wallet — `app/routers/wallet.py`  *(2026-11-04)*
+
+### GET /api/v1/wallet?month=YYYY-MM
+- **Auth:** any signed-in user (`get_current_user`); no module — only ever your own.
+- **What:** your month from the HRMS (`GET /api/v1/integrations/wallet?email=&month=`, signed): salary a day at a time, what came off on which day and why, commission, everything else on the payslip, what finance has paid and what is still to come. Found by the email you sign in with; `month` defaults to this one.
+- **Errors:** 400 bad month / no email on the account · 503 `HRMS_*` not set ("isn't linked to the HRMS yet") or the HRMS down · the HRMS's own refusal as it is (404 "No HRMS employee has this email.") · 502 the HRMS refused this server's credentials or answered with something that isn't its API.
+
+---
+
 ## MongoDB Collections
 
 | Collection | Purpose | Key Indexes |
