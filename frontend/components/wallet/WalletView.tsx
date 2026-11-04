@@ -141,7 +141,7 @@ function CommissionRows({ w }: { w: Wallet }) {
   return (
     <Section title="Commission" sub="from finance" icon={Coins}>
       {w.finance.crmError && (
-        <p className="mb-2 text-xs text-amber-700 dark:text-amber-300">The sales CRMs' commission couldn't be read just now: {w.finance.crmError}</p>
+        <p className="mb-2 text-xs text-amber-700 dark:text-amber-300">The sales CRMs&apos; commission couldn&apos;t be read just now: {w.finance.crmError}</p>
       )}
       <div className="divide-y divide-border/60">
         {w.commission.map((c, i) => {
@@ -246,7 +246,7 @@ export function WalletView({ w }: { w: Wallet }) {
       {!w.finance.connected && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>Finance couldn't be asked, so payments and commission may be missing. {w.finance.error}</span>
+          <span>Finance couldn&apos;t be asked, so payments and commission may be missing. {w.finance.error}</span>
         </div>
       )}
       {w.finance.onHold && (
