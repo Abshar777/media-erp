@@ -1,21 +1,20 @@
 "use client";
 import Link from "next/link";
 import { ArrowUpRight, WalletCards } from "lucide-react";
-import { useViewingAsSomeoneElse, useWallet, walletThisMonth } from "@/hooks/useWallet";
+import { useWallet, walletThisMonth } from "@/hooks/useWallet";
 import { cn } from "@/lib/utils";
 
 /*
  * The wallet on the dashboard, first in its row (2026-11-04): this month so far from the HRMS — earned, deducted,
- * paid — and a way into My Wallet. Nothing when there is no wallet to show (no HRMS record, not linked, viewing as
- * someone): the dashboard is not where to say why.
+ * paid — and a way into My Wallet. Nothing when there is no wallet to show (no HRMS record, not linked): the dashboard
+ * is not where to say why. While impersonating, the impersonated person's (2026-11-04).
  */
 
 const money = (n: number, c: string) => `${c} ${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function WalletCard({ className }: { className?: string }) {
-  const viewingAs = useViewingAsSomeoneElse();
-  const { data: w } = useWallet(walletThisMonth(), { enabled: !viewingAs });
-  if (viewingAs || !w) return null;
+  const { data: w } = useWallet(walletThisMonth());
+  if (!w) return null;
   const c = w.currency;
   const [label, figure] =
     w.status === "paid" ? ["Paid in full", w.totals.paid]

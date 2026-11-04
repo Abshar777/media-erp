@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ChevronLeft, ChevronRight, Loader2, WalletCards } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WalletView } from "@/components/wallet/WalletView";
-import { useViewingAsSomeoneElse, useWallet, walletThisMonth } from "@/hooks/useWallet";
+import { useWallet, walletThisMonth } from "@/hooks/useWallet";
 
 /**
  * My Wallet (2026-11-04) — the same wallet as in the HRMS: salary a day at a time, what came off and why, your
@@ -20,8 +20,7 @@ const monthLabel = (month: string) =>
 
 export default function WalletPage() {
   const [month, setMonth] = useState(walletThisMonth);
-  const viewingAs = useViewingAsSomeoneElse();
-  const { data: w, isLoading, isFetching, error } = useWallet(month, { enabled: !viewingAs });
+  const { data: w, isLoading, isFetching, error } = useWallet(month);
   const first = w?.firstMonth ?? shift(walletThisMonth(), -12);
   const message = (error as { response?: { data?: { message?: string } } } | null)?.response?.data?.message;
 
@@ -50,11 +49,7 @@ export default function WalletPage() {
         </div>
       </div>
 
-      {viewingAs ? (
-        <div className="rounded-xl border bg-card p-6 text-center text-sm text-muted-foreground">
-          Your wallet isn&apos;t shown while you&apos;re viewing Media ERP as someone else.
-        </div>
-      ) : isLoading ? (
+      {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>
       ) : error || !w ? (
         <div className="rounded-xl border bg-card p-6 text-center text-sm text-muted-foreground">
